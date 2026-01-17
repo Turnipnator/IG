@@ -5,11 +5,13 @@ Automated spread betting platform using IG Markets API.
 Runs on a schedule, analyzing markets and executing trades.
 """
 
+import asyncio
 import logging
 import signal
 import sys
+import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import schedule
 
@@ -23,7 +25,7 @@ from config import (
 from src.client import IGClient
 from src.strategy import TradingStrategy, Signal, should_close_position
 from src.risk_manager import RiskManager
-from src.telegram_bot import TelegramNotifier
+from src.telegram_bot import TelegramBot
 from src.utils import setup_logging, is_market_open, get_market_type, RateLimiter
 
 # Globals
@@ -31,7 +33,7 @@ logger = logging.getLogger(__name__)
 client: IGClient = None
 strategy: TradingStrategy = None
 risk_manager: RiskManager = None
-telegram: TelegramNotifier = None
+telegram: TelegramBot = None
 rate_limiter: RateLimiter = None
 running = True
 
@@ -49,21 +51,21 @@ def initialize() -> bool:
     client = IGClient(ig_config)
     strategy = TradingStrategy(STRATEGY_PARAMS)
     risk_manager = RiskManager(trading_config)
-    telegram = TelegramNotifier(telegram_config)
-    rate_limiter = RateLimiter(requests_per_minute=25)  # Stay under limit
+    telegram = TelegramBot(telegram_config)
+    rate_limiter = RateLimiter(requests_per_minute=25)
 
     # Login to IG
     if not client.login():
         logger.error("Failed to login to IG")
-        telegram.send_error("Failed to login to IG API")
         return False
+
+    # Set IG client reference in telegram bot
+    telegram.set_ig_client(client)
 
     # Get account balance
     balance = client.get_balance()
     if balance:
         logger.info(f"Account balance: £{balance:,.2f}")
-        market_names = [m.name for m in MARKETS]
-        telegram.send_startup_message(balance, market_names)
     else:
         logger.warning("Could not retrieve account balance")
 
@@ -72,17 +74,18 @@ def initialize() -> bool:
 
 def check_and_close_positions() -> None:
     """Check if any open positions should be closed based on strategy."""
+    if not telegram.trading_enabled:
+        return
+
     positions = client.get_positions()
 
     for position in positions:
-        # Get market config
         market = next((m for m in MARKETS if m.epic == position.epic), None)
         if not market:
             continue
 
         rate_limiter.wait_if_needed()
 
-        # Get latest price data
         df = client.get_historical_prices(
             position.epic,
             resolution="MINUTE_5",
@@ -92,7 +95,6 @@ def check_and_close_positions() -> None:
         if df is None or df.empty:
             continue
 
-        # Check if should close
         should_close, reason = should_close_position(
             df, position.direction, STRATEGY_PARAMS
         )
@@ -107,17 +109,28 @@ def check_and_close_positions() -> None:
             )
 
             if result:
-                telegram.send_trade_closed(
-                    market.name,
-                    position.direction,
-                    position.profit_loss,
-                    reason,
-                )
+                # Update telegram stats
+                telegram.daily_pnl += position.profit_loss
                 risk_manager.update_daily_pnl(position.profit_loss)
+
+                # Send notification via async
+                asyncio.run_coroutine_threadsafe(
+                    telegram.notify_trade_closed(
+                        market.name,
+                        position.direction,
+                        position.profit_loss,
+                        reason,
+                    ),
+                    telegram_loop,
+                )
 
 
 def analyze_markets() -> None:
     """Analyze all configured markets and generate signals."""
+    if not telegram.trading_enabled:
+        logger.info("Trading paused - skipping market analysis")
+        return
+
     balance = client.get_balance()
     if not balance:
         logger.error("Could not get account balance")
@@ -127,7 +140,6 @@ def analyze_markets() -> None:
     trading_config = load_trading_config()
 
     for market in MARKETS:
-        # Check if market is open
         market_type = get_market_type(market.epic)
         if not is_market_open(market_type):
             logger.debug(f"{market.name} market appears closed")
@@ -135,7 +147,6 @@ def analyze_markets() -> None:
 
         rate_limiter.wait_if_needed()
 
-        # Get market info
         market_info = client.get_market_info(market.epic)
         if not market_info:
             logger.warning(f"Could not get market info for {market.epic}")
@@ -147,7 +158,6 @@ def analyze_markets() -> None:
 
         rate_limiter.wait_if_needed()
 
-        # Get historical prices
         df = client.get_historical_prices(
             market.epic,
             resolution="MINUTE_5",
@@ -158,7 +168,6 @@ def analyze_markets() -> None:
             logger.warning(f"No price data for {market.epic}")
             continue
 
-        # Analyze and get signal
         current_price = (market_info.bid + market_info.offer) / 2
         trade_signal = strategy.analyze(df, market, current_price)
 
@@ -167,11 +176,9 @@ def analyze_markets() -> None:
             f"(confidence: {trade_signal.confidence:.0%}) - {trade_signal.reason}"
         )
 
-        # Skip HOLD signals
         if trade_signal.signal == Signal.HOLD:
             continue
 
-        # Validate trade
         is_valid, reason = risk_manager.validate_trade(
             positions,
             market.epic,
@@ -183,7 +190,6 @@ def analyze_markets() -> None:
             logger.info(f"Trade not validated: {reason}")
             continue
 
-        # Only trade with sufficient confidence
         min_confidence = 0.5
         if trade_signal.confidence < min_confidence:
             logger.info(
@@ -191,7 +197,6 @@ def analyze_markets() -> None:
             )
             continue
 
-        # Calculate position size
         position_size = risk_manager.calculate_position_size(
             balance,
             trade_signal.stop_distance,
@@ -203,9 +208,16 @@ def analyze_markets() -> None:
             continue
 
         # Send signal notification
-        telegram.send_trade_signal(trade_signal)
+        asyncio.run_coroutine_threadsafe(
+            telegram.notify_signal(
+                market.name,
+                trade_signal.signal.value,
+                trade_signal.confidence,
+                trade_signal.reason,
+            ),
+            telegram_loop,
+        )
 
-        # Execute trade
         logger.info(
             f"Opening {trade_signal.signal.value} position on {market.name}: "
             f"size={position_size.size}, stop={trade_signal.stop_distance}, "
@@ -221,23 +233,28 @@ def analyze_markets() -> None:
         )
 
         if result:
-            telegram.send_trade_opened(
-                market.name,
-                trade_signal.signal.value,
-                position_size.size,
-                trade_signal.entry_price,
-                trade_signal.stop_distance,
-                trade_signal.limit_distance,
+            telegram.trades_today += 1
+            asyncio.run_coroutine_threadsafe(
+                telegram.notify_trade_opened(
+                    market.name,
+                    trade_signal.signal.value,
+                    position_size.size,
+                    trade_signal.entry_price,
+                    trade_signal.stop_distance,
+                    trade_signal.limit_distance,
+                ),
+                telegram_loop,
             )
-
-            # Update positions list
             positions = client.get_positions()
         else:
-            telegram.send_error(f"Failed to open position on {market.name}")
+            asyncio.run_coroutine_threadsafe(
+                telegram.notify_error(f"Failed to open position on {market.name}"),
+                telegram_loop,
+            )
 
 
 def run_trading_cycle() -> None:
-    """Run a complete trading cycle: check positions, analyze markets."""
+    """Run a complete trading cycle."""
     global running
 
     if not running:
@@ -247,17 +264,17 @@ def run_trading_cycle() -> None:
     logger.info(f"Trading cycle started at {datetime.now()}")
 
     try:
-        # First, check existing positions for exit signals
         check_and_close_positions()
-
-        # Then analyze markets for new opportunities
         analyze_markets()
-
         logger.info("Trading cycle completed")
 
     except Exception as e:
         logger.exception(f"Error in trading cycle: {e}")
-        telegram.send_error(f"Trading cycle error: {str(e)}")
+        if telegram and telegram.app:
+            asyncio.run_coroutine_threadsafe(
+                telegram.notify_error(f"Trading cycle error: {str(e)}"),
+                telegram_loop,
+            )
 
 
 def send_daily_summary() -> None:
@@ -265,18 +282,19 @@ def send_daily_summary() -> None:
     balance = client.get_balance()
     positions = client.get_positions()
 
-    if balance:
-        # Note: Proper trade counting would need tracking throughout the day
-        telegram.send_daily_summary(
-            account_balance=balance,
-            daily_pnl=risk_manager.daily_pnl,
-            trades_count=0,  # Would need proper tracking
-            winning_trades=0,
-            open_positions=positions,
+    if balance and telegram and telegram.app:
+        asyncio.run_coroutine_threadsafe(
+            telegram.notify_daily_summary(
+                balance,
+                telegram.daily_pnl,
+                telegram.trades_today,
+                positions,
+            ),
+            telegram_loop,
         )
 
-    # Reset daily P&L
     risk_manager.reset_daily_pnl()
+    telegram.reset_daily_stats()
 
 
 def refresh_session() -> None:
@@ -284,7 +302,22 @@ def refresh_session() -> None:
     logger.info("Refreshing IG session...")
     if not client.login():
         logger.error("Failed to refresh session")
-        telegram.send_error("Failed to refresh IG session")
+        if telegram and telegram.app:
+            asyncio.run_coroutine_threadsafe(
+                telegram.notify_error("Failed to refresh IG session"),
+                telegram_loop,
+            )
+
+
+def run_scheduler():
+    """Run the schedule in a separate thread."""
+    while running:
+        try:
+            schedule.run_pending()
+            time.sleep(1)
+        except Exception as e:
+            logger.exception(f"Error in scheduler: {e}")
+            time.sleep(60)
 
 
 def signal_handler(signum, frame):
@@ -294,9 +327,16 @@ def signal_handler(signum, frame):
     running = False
 
 
-def main():
-    """Main entry point."""
-    global running
+# Global event loop for telegram
+telegram_loop = None
+
+
+async def main_async():
+    """Async main entry point."""
+    global running, telegram_loop
+
+    # Store the event loop
+    telegram_loop = asyncio.get_event_loop()
 
     # Setup logging
     setup_logging(
@@ -315,36 +355,52 @@ def main():
         logger.error("Initialization failed")
         sys.exit(1)
 
+    # Start Telegram bot
+    await telegram.start()
+
+    # Send startup notification
+    balance = client.get_balance() or 0
+    market_names = [m.name for m in MARKETS]
+    await telegram.notify_startup(balance, market_names)
+
     # Load trading config for interval
     trading_config = load_trading_config()
     check_interval = trading_config.check_interval
 
     # Schedule jobs
     schedule.every(check_interval).minutes.do(run_trading_cycle)
-    schedule.every(6).hours.do(refresh_session)  # Refresh session periodically
-    schedule.every().day.at("21:00").do(send_daily_summary)  # Daily summary at 9pm
+    schedule.every(6).hours.do(refresh_session)
+    schedule.every().day.at("21:00").do(send_daily_summary)
 
-    # Run first cycle immediately
+    # Run first cycle
     run_trading_cycle()
 
     logger.info(f"Bot running. Checking markets every {check_interval} minutes.")
 
-    # Main loop
+    # Run scheduler in background thread
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+
+    # Keep async loop running for Telegram
     while running:
-        try:
-            schedule.run_pending()
-            time.sleep(1)
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            logger.exception(f"Error in main loop: {e}")
-            time.sleep(60)  # Wait a minute before retrying
+        await asyncio.sleep(1)
 
     # Cleanup
     logger.info("Shutting down...")
-    telegram.send_shutdown_message("Bot stopped")
+    await telegram.stop()
     client.logout()
     logger.info("Goodbye!")
+
+
+def main():
+    """Main entry point."""
+    try:
+        asyncio.run(main_async())
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+    except Exception as e:
+        logger.exception(f"Fatal error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
