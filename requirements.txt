@@ -1,0 +1,17 @@
+# Core
+python-dotenv>=1.0.0
+requests>=2.31.0
+pandas>=2.1.0
+numpy>=1.24.0
+
+# Telegram
+python-telegram-bot>=20.7
+
+# Scheduling
+schedule>=1.2.0
+
+# Async support
+aiohttp>=3.9.0
+
+# Type hints
+typing-extensions>=4.8.0

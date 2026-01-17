@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  ig-bot:
+    build: .
+    container_name: ig-trading-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      - TZ=Europe/London
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
