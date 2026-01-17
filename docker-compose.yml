@@ -8,11 +8,30 @@ services:
     env_file:
       - .env
     volumes:
+      # Persist logs outside container
       - ./logs:/app/logs
     environment:
       - TZ=Europe/London
+      - PYTHONUNBUFFERED=1  # Ensure logs appear immediately
+    # Docker-level log rotation (catches stdout/stderr)
+    # Combined with Python's RotatingFileHandler for app logs
+    # Total max disk: Docker 30MB + Python 25MB = 55MB
     logging:
       driver: "json-file"
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: "10m"   # 10MB per file
+        max-file: "3"     # Keep 3 files (30MB total)
+    # Resource limits to prevent runaway memory on VPS
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    # Health check - ensures container restarts if unhealthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('https://demo-api.ig.com', timeout=10)"]
+      interval: 5m
+      timeout: 30s
+      retries: 3
+      start_period: 30s
