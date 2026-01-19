@@ -40,6 +40,8 @@ class TradingConfig:
     max_positions: int     # Maximum concurrent positions
     trading_enabled: bool  # Kill switch
     check_interval: int    # Minutes between market checks
+    price_data_points: int # Number of historical data points to fetch
+    cache_ttl_minutes: int # How long to cache price data
 
 
 @dataclass
@@ -75,7 +77,9 @@ def load_trading_config() -> TradingConfig:
         risk_per_trade=float(os.getenv("RISK_PER_TRADE", "0.01")),
         max_positions=int(os.getenv("MAX_POSITIONS", "5")),
         trading_enabled=os.getenv("TRADING_ENABLED", "true").lower() == "true",
-        check_interval=int(os.getenv("CHECK_INTERVAL", "5")),
+        check_interval=int(os.getenv("CHECK_INTERVAL", "60")),  # 60 mins to conserve API allowance
+        price_data_points=int(os.getenv("PRICE_DATA_POINTS", "50")),  # 50 points (saves 50% vs 100)
+        cache_ttl_minutes=int(os.getenv("CACHE_TTL_MINUTES", "55")),  # Cache for 55 mins
     )
 
 

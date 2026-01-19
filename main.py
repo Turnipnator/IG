@@ -47,8 +47,8 @@ def initialize() -> bool:
     telegram_config = load_telegram_config()
     trading_config = load_trading_config()
 
-    # Initialize components
-    client = IGClient(ig_config)
+    # Initialize components (pass cache TTL to client)
+    client = IGClient(ig_config, cache_ttl_minutes=trading_config.cache_ttl_minutes)
     strategy = TradingStrategy(STRATEGY_PARAMS)
     risk_manager = RiskManager(trading_config)
     telegram = TelegramBot(telegram_config)
@@ -77,6 +77,7 @@ def check_and_close_positions() -> None:
     if not telegram.trading_enabled:
         return
 
+    trading_config = load_trading_config()
     positions = client.get_positions()
 
     for position in positions:
@@ -89,7 +90,7 @@ def check_and_close_positions() -> None:
         df = client.get_historical_prices(
             position.epic,
             resolution="MINUTE_5",
-            num_points=100,
+            num_points=trading_config.price_data_points,
         )
 
         if df is None or df.empty:
@@ -161,7 +162,7 @@ def analyze_markets() -> None:
         df = client.get_historical_prices(
             market.epic,
             resolution="MINUTE_5",
-            num_points=100,
+            num_points=trading_config.price_data_points,
         )
 
         if df is None or df.empty:

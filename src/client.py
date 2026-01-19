@@ -6,7 +6,7 @@ Handles authentication, market data, and order execution.
 import logging
 from typing import Optional
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 import pandas as pd
@@ -14,6 +14,14 @@ import pandas as pd
 from config import IGConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CachedPriceData:
+    """Cached price data with timestamp."""
+    data: pd.DataFrame
+    fetched_at: datetime
+    epic: str
 
 
 @dataclass
@@ -48,13 +56,17 @@ class MarketInfo:
 class IGClient:
     """Client for interacting with IG Markets REST API."""
 
-    def __init__(self, config: IGConfig):
+    def __init__(self, config: IGConfig, cache_ttl_minutes: int = 55):
         self.config = config
         self.session = requests.Session()
         self.cst: Optional[str] = None
         self.security_token: Optional[str] = None
         self.account_id: Optional[str] = None
         self._logged_in = False
+        self._price_cache: dict[str, CachedPriceData] = {}
+        self._cache_ttl = timedelta(minutes=cache_ttl_minutes)
+        self._api_calls_today = 0
+        self._last_reset_date = datetime.now().date()
 
     @property
     def is_logged_in(self) -> bool:
@@ -201,25 +213,98 @@ class IGClient:
             logger.error(f"Market info request failed: {e}")
             return None
 
+    def _is_cache_valid(self, epic: str) -> bool:
+        """Check if cached data for an epic is still valid."""
+        if epic not in self._price_cache:
+            return False
+        cached = self._price_cache[epic]
+        age = datetime.now() - cached.fetched_at
+        return age < self._cache_ttl
+
+    def _get_cached_prices(self, epic: str) -> Optional[pd.DataFrame]:
+        """Get cached price data if valid."""
+        if self._is_cache_valid(epic):
+            cached = self._price_cache[epic]
+            age_mins = (datetime.now() - cached.fetched_at).total_seconds() / 60
+            logger.debug(f"Using cached data for {epic} (age: {age_mins:.1f} mins)")
+            return cached.data.copy()
+        return None
+
+    def _cache_prices(self, epic: str, df: pd.DataFrame) -> None:
+        """Store price data in cache."""
+        self._price_cache[epic] = CachedPriceData(
+            data=df.copy(),
+            fetched_at=datetime.now(),
+            epic=epic
+        )
+        logger.debug(f"Cached price data for {epic}")
+
+    def clear_cache(self, epic: Optional[str] = None) -> None:
+        """Clear price cache for a specific epic or all."""
+        if epic:
+            self._price_cache.pop(epic, None)
+            logger.info(f"Cleared cache for {epic}")
+        else:
+            self._price_cache.clear()
+            logger.info("Cleared all price cache")
+
+    def get_cache_status(self) -> dict:
+        """Get cache status for monitoring."""
+        status = {}
+        for epic, cached in self._price_cache.items():
+            age = datetime.now() - cached.fetched_at
+            status[epic] = {
+                "age_minutes": age.total_seconds() / 60,
+                "valid": age < self._cache_ttl,
+                "rows": len(cached.data)
+            }
+        return status
+
+    def is_weekend(self) -> bool:
+        """Check if it's currently weekend (markets closed)."""
+        now = datetime.now()
+        # Markets closed from Friday ~10pm to Sunday ~10pm UTC
+        # Simplify: Saturday and Sunday before 10pm are definitely closed
+        return now.weekday() >= 5  # Saturday=5, Sunday=6
+
     def get_historical_prices(
         self,
         epic: str,
         resolution: str = "MINUTE_5",
-        num_points: int = 100,
+        num_points: int = 50,
+        use_cache: bool = True,
     ) -> Optional[pd.DataFrame]:
         """
-        Fetch historical price data.
+        Fetch historical price data with caching.
 
         Args:
             epic: Instrument identifier
             resolution: Time resolution (MINUTE_5, HOUR, DAY, etc.)
-            num_points: Number of data points to fetch
+            num_points: Number of data points to fetch (default 50 to conserve allowance)
+            use_cache: Whether to use cached data if available
 
         Returns:
             DataFrame with OHLCV data or None if failed
+
+        Note:
+            IG API has a 10,000 data points/week limit. This method uses caching
+            to minimize API calls. Cache TTL is configurable (default 55 mins).
         """
         if not self.is_logged_in:
             logger.error("Not logged in")
+            return None
+
+        # Check cache first
+        if use_cache:
+            cached_df = self._get_cached_prices(epic)
+            if cached_df is not None:
+                return cached_df
+
+        # Skip API call on weekends to save allowance
+        if self.is_weekend():
+            logger.info(f"Weekend - skipping API call for {epic}, using stale cache if available")
+            if epic in self._price_cache:
+                return self._price_cache[epic].data.copy()
             return None
 
         try:
@@ -256,10 +341,22 @@ class IGClient:
 
                 df["date"] = pd.to_datetime(df["date"])
                 df = df.sort_values("date").reset_index(drop=True)
+
+                # Cache the result
+                self._cache_prices(epic, df)
+                self._api_calls_today += 1
+                logger.info(f"Fetched {len(df)} price points for {epic} (API calls today: {self._api_calls_today})")
+
                 return df
 
             else:
-                logger.error(f"Failed to get prices for {epic}: {response.text}")
+                error_msg = response.text
+                if "exceeded-account-historical-data-allowance" in error_msg:
+                    logger.error(f"Historical data allowance exceeded! Using stale cache for {epic}")
+                    if epic in self._price_cache:
+                        return self._price_cache[epic].data.copy()
+                else:
+                    logger.error(f"Failed to get prices for {epic}: {error_msg}")
                 return None
 
         except requests.RequestException as e:
