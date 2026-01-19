@@ -4,6 +4,9 @@ requests>=2.31.0
 pandas>=2.1.0
 numpy>=1.24.0
 
+# Streaming (Lightstreamer)
+lightstreamer-client-lib>=1.0.0
+
 # Telegram
 python-telegram-bot>=20.7
 
