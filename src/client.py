@@ -62,6 +62,7 @@ class IGClient:
         self.cst: Optional[str] = None
         self.security_token: Optional[str] = None
         self.account_id: Optional[str] = None
+        self.accounts: list = []
         self._logged_in = False
         self._price_cache: dict[str, CachedPriceData] = {}
         self._cache_ttl = timedelta(minutes=cache_ttl_minutes)
@@ -96,12 +97,22 @@ class IGClient:
                 self.cst = response.headers.get("CST")
                 self.security_token = response.headers.get("X-SECURITY-TOKEN")
 
+                # Debug: log token status
+                logger.debug(f"CST token: {'OK' if self.cst else 'MISSING'} ({len(self.cst) if self.cst else 0} chars)")
+                logger.debug(f"Security token: {'OK' if self.security_token else 'MISSING'} ({len(self.security_token) if self.security_token else 0} chars)")
+
                 data = response.json()
                 self.account_id = data.get("currentAccountId")
+                self.accounts = data.get("accounts", [])
 
                 self._logged_in = True
                 logger.info(f"Successfully logged in to IG ({self.config.acc_type})")
                 logger.info(f"Account ID: {self.account_id}")
+
+                # Log available accounts
+                for acc in self.accounts:
+                    logger.info(f"  Available: {acc.get('accountId')} ({acc.get('accountType')})")
+
                 return True
             else:
                 logger.error(f"Login failed: {response.status_code} - {response.text}")
@@ -132,6 +143,52 @@ class IGClient:
             logger.error(f"Logout failed: {e}")
             return False
 
+    def switch_account(self, account_id: str) -> bool:
+        """
+        Switch to a different account.
+
+        Required for streaming - must switch to SPREADBET account
+        before Lightstreamer will work.
+        """
+        if not self.is_logged_in:
+            logger.error("Not logged in")
+            return False
+
+        try:
+            response = self.session.put(
+                f"{self.config.base_url}/session",
+                json={"accountId": account_id},
+                headers=self._get_headers(version="1"),
+                timeout=30,
+            )
+
+            if response.status_code == 200:
+                # Update tokens if new ones provided
+                new_cst = response.headers.get("CST")
+                new_token = response.headers.get("X-SECURITY-TOKEN")
+                if new_cst:
+                    self.cst = new_cst
+                if new_token:
+                    self.security_token = new_token
+
+                self.account_id = account_id
+                logger.info(f"Switched to account: {account_id}")
+                return True
+            else:
+                logger.error(f"Failed to switch account: {response.text}")
+                return False
+
+        except requests.RequestException as e:
+            logger.error(f"Account switch failed: {e}")
+            return False
+
+    def get_spreadbet_account_id(self) -> Optional[str]:
+        """Get the SPREADBET account ID if available."""
+        for acc in getattr(self, 'accounts', []):
+            if acc.get('accountType') == 'SPREADBET':
+                return acc.get('accountId')
+        return None
+
     def _get_headers(self, version: str = "2") -> dict:
         """Get authenticated request headers."""
         return {
@@ -149,9 +206,12 @@ class IGClient:
             return None
 
         try:
+            headers = self._get_headers(version="1")
+            logger.debug(f"Account info request - CST length: {len(headers.get('CST', ''))}, Token length: {len(headers.get('X-SECURITY-TOKEN', ''))}")
+
             response = self.session.get(
                 f"{self.config.base_url}/accounts",
-                headers=self._get_headers(version="1"),
+                headers=headers,
                 timeout=30,
             )
 

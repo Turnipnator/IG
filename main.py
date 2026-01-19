@@ -92,6 +92,15 @@ def initialize_streaming() -> bool:
         ig_config = load_ig_config()
         is_demo = ig_config.acc_type.upper() == "DEMO"
 
+        # Switch to SPREADBET account for streaming (CFD accounts don't support streaming)
+        spreadbet_id = client.get_spreadbet_account_id()
+        if spreadbet_id and spreadbet_id != client.account_id:
+            logger.info(f"Switching to SPREADBET account ({spreadbet_id}) for streaming...")
+            if not client.switch_account(spreadbet_id):
+                logger.warning("Failed to switch to SPREADBET account")
+        elif not spreadbet_id:
+            logger.warning("No SPREADBET account found - streaming may not work")
+
         stream_service = IGStreamService(
             cst=client.cst,
             security_token=client.security_token,
