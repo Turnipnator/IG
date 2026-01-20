@@ -287,6 +287,12 @@ class IGStreamService:
             # Create credentials string
             password = f"CST-{self.cst}|XST-{self.security_token}"
 
+            # Debug: log connection details (mask sensitive parts)
+            logger.info(f"Streaming connect - Account: {self.account_id}")
+            logger.info(f"Streaming connect - Endpoint: {self.endpoint}")
+            logger.info(f"Streaming connect - CST length: {len(self.cst) if self.cst else 0}")
+            logger.info(f"Streaming connect - XST length: {len(self.security_token) if self.security_token else 0}")
+
             # Create client
             self.client = LightstreamerClient(self.endpoint, "DEFAULT")
             self.client.connectionDetails.setUser(self.account_id)

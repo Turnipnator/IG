@@ -166,10 +166,17 @@ class IGClient:
                 # Update tokens if new ones provided
                 new_cst = response.headers.get("CST")
                 new_token = response.headers.get("X-SECURITY-TOKEN")
+
+                logger.debug(f"Switch account response - New CST: {'YES' if new_cst else 'NO'}, New XST: {'YES' if new_token else 'NO'}")
+
                 if new_cst:
+                    old_len = len(self.cst) if self.cst else 0
                     self.cst = new_cst
+                    logger.info(f"CST token updated ({old_len} -> {len(new_cst)} chars)")
                 if new_token:
+                    old_len = len(self.security_token) if self.security_token else 0
                     self.security_token = new_token
+                    logger.info(f"Security token updated ({old_len} -> {len(new_token)} chars)")
 
                 self.account_id = account_id
                 logger.info(f"Switched to account: {account_id}")
