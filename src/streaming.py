@@ -359,8 +359,10 @@ class IGStreamService:
                 self.markets[epic] = MarketStream(epic=epic, name=name)
 
             # Create subscription using L1 (Level 1) prefix for price data
-            # L1: is the standard format for market prices on IG
+            # Note: "Invalid account type" errors may occur if IG hasn't fully enabled
+            # streaming for the account. Contact IG helpdesk if this persists.
             items = [f"L1:{epic}" for epic in epics]
+            logger.info(f"Subscribing to items: {items[:2]}...")
 
             self.subscription = Subscription(
                 mode="MERGE",
