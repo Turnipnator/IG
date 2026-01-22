@@ -451,15 +451,29 @@ class IGClient:
                     position = pos.get("position", {})
                     market = pos.get("market", {})
 
+                    # Calculate P&L from current market prices
+                    direction = position.get("direction", "")
+                    open_level = position.get("level", 0.0)
+                    size = position.get("size", 0.0)
+                    bid = market.get("bid", 0.0)
+                    offer = market.get("offer", 0.0)
+
+                    if direction == "BUY":
+                        pnl = (bid - open_level) * size if bid and open_level else 0.0
+                    elif direction == "SELL":
+                        pnl = (open_level - offer) * size if offer and open_level else 0.0
+                    else:
+                        pnl = 0.0
+
                     positions.append(Position(
                         deal_id=position.get("dealId", ""),
                         epic=market.get("epic", ""),
-                        direction=position.get("direction", ""),
-                        size=position.get("size", 0.0),
-                        open_level=position.get("openLevel", 0.0),
+                        direction=direction,
+                        size=size,
+                        open_level=open_level,
                         stop_level=position.get("stopLevel"),
                         limit_level=position.get("limitLevel"),
-                        profit_loss=position.get("profit", 0.0),
+                        profit_loss=round(pnl, 2),
                         created_date=position.get("createdDate", ""),
                     ))
 
@@ -480,6 +494,7 @@ class IGClient:
         stop_distance: Optional[float] = None,
         limit_distance: Optional[float] = None,
         guaranteed_stop: bool = False,
+        expiry: str = "DFB",
     ) -> Optional[dict]:
         """
         Open a new spread bet position.
@@ -507,7 +522,7 @@ class IGClient:
             "guaranteedStop": guaranteed_stop,
             "forceOpen": True,
             "currencyCode": "GBP",
-            "expiry": "DFB",  # Daily Funded Bet - required for spread betting (not "-")
+            "expiry": expiry,
         }
 
         if stop_distance:

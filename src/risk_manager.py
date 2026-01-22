@@ -52,6 +52,9 @@ class RiskManager:
         - Size = stake per point
         - Risk = size * stop_distance
 
+        Risk budget is divided by max_positions so all slots can
+        be filled simultaneously without exceeding available margin.
+
         Args:
             account_balance: Current account balance in GBP
             stop_distance: Stop loss distance in points
@@ -60,8 +63,8 @@ class RiskManager:
         Returns:
             PositionSize with calculated stake
         """
-        # Calculate risk amount
-        risk_amount = account_balance * self.config.risk_per_trade
+        # Divide risk across max positions so all can coexist
+        risk_amount = (account_balance * self.config.risk_per_trade) / self.config.max_positions
 
         # Calculate size (stake per point)
         # Risk = Size * Stop Distance

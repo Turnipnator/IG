@@ -52,6 +52,7 @@ class MarketConfig:
     sector: str
     min_stop_distance: float
     default_size: float
+    expiry: str = "DFB"  # DFB for daily funded bets, or specific like "MAR-26"
 
 
 # Load configurations from environment
@@ -107,6 +108,7 @@ MARKETS = [
         sector="Commodities",
         min_stop_distance=12.0,
         default_size=0.1,
+        expiry="MAR-26",  # Monthly contract, not DFB
     ),
     MarketConfig(
         epic="CO.D.DX.Month1.IP",  # Changed from CC.D.DX.UMP.IP - CC.D EPICs don't support SPREADBET streaming
@@ -114,6 +116,7 @@ MARKETS = [
         sector="Forex",
         min_stop_distance=20.0,
         default_size=1.0,
+        expiry="MAR-26",  # Monthly contract, not DFB
     ),
     MarketConfig(
         epic="CS.D.EURUSD.TODAY.IP",

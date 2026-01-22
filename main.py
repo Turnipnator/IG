@@ -280,6 +280,7 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             size=position_size.size,
             stop_distance=trade_signal.stop_distance,
             limit_distance=trade_signal.limit_distance,
+            expiry=market_config.expiry,
         )
 
         if result:
@@ -343,15 +344,18 @@ def check_positions_from_stream() -> None:
                 market_config = next((m for m in MARKETS if m.epic == position.epic), None)
                 market_name = market_config.name if market_config else position.epic
 
-                telegram.daily_pnl += position.profit_loss
-                risk_manager.update_daily_pnl(position.profit_loss)
+                # Get P&L from close confirmation (more accurate than position snapshot)
+                pnl = result.get("profit", 0.0) or position.profit_loss
+
+                telegram.daily_pnl += pnl
+                risk_manager.update_daily_pnl(pnl)
 
                 if telegram_loop:
                     asyncio.run_coroutine_threadsafe(
                         telegram.notify_trade_closed(
                             market_name,
                             position.direction,
-                            position.profit_loss,
+                            pnl,
                             reason,
                         ),
                         telegram_loop,
