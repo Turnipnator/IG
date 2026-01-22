@@ -507,7 +507,7 @@ class IGClient:
             "guaranteedStop": guaranteed_stop,
             "forceOpen": True,
             "currencyCode": "GBP",
-            "expiry": "-",  # No fixed expiry for DFB (Daily Funded Bet)
+            "expiry": "DFB",  # Daily Funded Bet - required for spread betting (not "-")
         }
 
         if stop_distance:
