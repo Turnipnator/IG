@@ -102,14 +102,14 @@ MARKETS = [
         default_size=0.2,
     ),
     MarketConfig(
-        epic="CC.D.CL.UNC.IP",
+        epic="EN.D.CL.Month1.IP",  # Changed from CC.D.CL.UNC.IP - CC.D EPICs don't support SPREADBET streaming
         name="Crude Oil",
         sector="Commodities",
         min_stop_distance=12.0,
         default_size=0.1,
     ),
     MarketConfig(
-        epic="CC.D.DX.UMP.IP",
+        epic="CO.D.DX.Month1.IP",  # Changed from CC.D.DX.UMP.IP - CC.D EPICs don't support SPREADBET streaming
         name="Dollar Index (DXY)",
         sector="Forex",
         min_stop_distance=20.0,
