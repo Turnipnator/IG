@@ -120,18 +120,24 @@ class TradingStrategy:
         stop_distance = max(atr * atr_multiplier, market.min_stop_distance)
         limit_distance = stop_distance * 1.5  # 1.5:1 reward/risk ratio
 
+        # RSI entry ranges - avoid entering when move is already exhausted
+        # Buy: RSI must be between oversold and 60 (momentum up, not extended)
+        # Sell: RSI must be between 40 and overbought (momentum down, not extended)
+        rsi_buy_max = self.params.get("rsi_buy_max", 60)
+        rsi_sell_min = self.params.get("rsi_sell_min", 40)
+
         # Check for bullish setup
         bullish_ema = ema_fast > ema_medium > ema_slow
         price_above_ema = close > ema_slow
-        rsi_not_overbought = rsi < rsi_overbought
+        rsi_buy_valid = rsi_oversold < rsi < rsi_buy_max
 
         # Check for bearish setup
         bearish_ema = ema_fast < ema_medium < ema_slow
         price_below_ema = close < ema_slow
-        rsi_not_oversold = rsi > rsi_oversold
+        rsi_sell_valid = rsi_sell_min < rsi < rsi_overbought
 
         # Generate signal with multi-timeframe confirmation
-        if bullish_ema and price_above_ema and rsi_not_overbought:
+        if bullish_ema and price_above_ema and rsi_buy_valid:
             # Multi-timeframe filter: don't buy against hourly downtrend
             if htf_trend == "BEARISH":
                 return TradeSignal(
@@ -159,7 +165,7 @@ class TradingStrategy:
                 reason=f"Bullish EMA alignment, RSI={rsi:.1f}, ADX={adx:.1f}, HTF={htf_trend}",
             )
 
-        elif bearish_ema and price_below_ema and rsi_not_oversold:
+        elif bearish_ema and price_below_ema and rsi_sell_valid:
             # Multi-timeframe filter: don't sell against hourly uptrend
             if htf_trend == "BULLISH":
                 return TradeSignal(
@@ -280,10 +286,17 @@ class TradingStrategy:
         if adx < adx_threshold:
             reasons.append(f"ADX weak ({adx:.1f})")
 
+        rsi_buy_max = self.params.get("rsi_buy_max", 60)
+        rsi_sell_min = self.params.get("rsi_sell_min", 40)
+
         if rsi >= rsi_overbought:
             reasons.append(f"RSI overbought ({rsi:.1f})")
         elif rsi <= rsi_oversold:
             reasons.append(f"RSI oversold ({rsi:.1f})")
+        elif bullish_ema and rsi >= rsi_buy_max:
+            reasons.append(f"RSI too extended for buy ({rsi:.1f})")
+        elif bearish_ema and rsi <= rsi_sell_min:
+            reasons.append(f"RSI too exhausted for sell ({rsi:.1f})")
 
         if not reasons:
             reasons.append("No clear signal")

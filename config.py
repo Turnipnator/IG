@@ -146,5 +146,7 @@ STRATEGY_PARAMS = {
     "rsi_period": 7,
     "rsi_overbought": 70,
     "rsi_oversold": 30,
+    "rsi_buy_max": 60,    # Don't buy when RSI already above 60 (move exhausted)
+    "rsi_sell_min": 40,   # Don't sell when RSI already below 40 (move exhausted)
     "adx_threshold": 25,  # Minimum ADX for trend confirmation (below = ranging)
 }
