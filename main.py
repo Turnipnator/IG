@@ -20,7 +20,7 @@ from config import (
     MARKETS,
     STRATEGY_PARAMS,
 )
-from src.client import IGClient
+from src.client import IGClient, Position
 from src.strategy import TradingStrategy, Signal, should_close_position
 from src.risk_manager import RiskManager
 from src.telegram_bot import TelegramBot
@@ -43,6 +43,9 @@ last_analysis: dict[str, datetime] = {}
 
 # Track when positions were last closed - cooldown prevents immediate re-entry
 last_close_time: dict[str, datetime] = {}
+
+# Track known open positions to detect external closes (stop/limit hit by IG)
+known_positions: dict[str, Position] = {}  # deal_id -> Position
 
 
 def initialize() -> bool:
@@ -302,6 +305,22 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
 
         if result:
             telegram.trades_today += 1
+
+            # Track in known_positions for external close detection
+            deal_id = result.get("dealId", "")
+            if deal_id:
+                known_positions[deal_id] = Position(
+                    deal_id=deal_id,
+                    epic=epic,
+                    direction=trade_signal.signal.value,
+                    size=position_size.size,
+                    open_level=result.get("level", current_price),
+                    stop_level=result.get("stopLevel"),
+                    limit_level=result.get("limitLevel"),
+                    profit_loss=0.0,
+                    created_date=datetime.now().isoformat(),
+                )
+
             if telegram_loop:
                 asyncio.run_coroutine_threadsafe(
                     telegram.notify_trade_opened(
@@ -334,6 +353,36 @@ def check_positions_from_stream() -> None:
         return
 
     positions = client.get_positions()
+    current_deal_ids = {p.deal_id for p in positions}
+
+    # Detect positions closed externally (stop/limit hit by IG)
+    for deal_id, known_pos in list(known_positions.items()):
+        if deal_id not in current_deal_ids:
+            # Position disappeared - closed by IG (stop or limit hit)
+            market_config = next((m for m in MARKETS if m.epic == known_pos.epic), None)
+            market_name = market_config.name if market_config else known_pos.epic
+
+            logger.info(f"Position {deal_id} closed externally (stop/limit hit): {market_name}")
+
+            # Record close time for cooldown
+            last_close_time[known_pos.epic] = datetime.now()
+
+            if telegram_loop:
+                asyncio.run_coroutine_threadsafe(
+                    telegram.notify_trade_closed(
+                        market_name,
+                        known_pos.direction,
+                        known_pos.profit_loss,
+                        "Stop/limit hit",
+                    ),
+                    telegram_loop,
+                )
+
+            del known_positions[deal_id]
+
+    # Update known positions with current state
+    for position in positions:
+        known_positions[position.deal_id] = position
 
     for position in positions:
         market = stream_service.get_market_data(position.epic)
@@ -360,6 +409,9 @@ def check_positions_from_stream() -> None:
             if result:
                 market_config = next((m for m in MARKETS if m.epic == position.epic), None)
                 market_name = market_config.name if market_config else position.epic
+
+                # Remove from known_positions so it's not flagged as external close
+                known_positions.pop(position.deal_id, None)
 
                 # Record close time for cooldown
                 last_close_time[position.epic] = datetime.now()
