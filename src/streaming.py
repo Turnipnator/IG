@@ -337,13 +337,14 @@ class IGStreamService:
         self.client = None
         self.subscription = None
 
-    def subscribe_markets(self, epics: list[str], names: list[str] = None) -> bool:
+    def subscribe_markets(self, epics: list[str], names: list[str] = None, candle_intervals: list[int] = None) -> bool:
         """
         Subscribe to market price updates.
 
         Args:
             epics: List of market EPICs to subscribe to
             names: Optional list of market names (for logging)
+            candle_intervals: Optional list of candle intervals in minutes per market
 
         Returns:
             True if subscription successful
@@ -355,8 +356,9 @@ class IGStreamService:
         try:
             # Initialize market streams
             names = names or epics
-            for epic, name in zip(epics, names):
-                self.markets[epic] = MarketStream(epic=epic, name=name)
+            candle_intervals = candle_intervals or [5] * len(epics)
+            for epic, name, interval in zip(epics, names, candle_intervals):
+                self.markets[epic] = MarketStream(epic=epic, name=name, candle_interval=interval)
 
             # Create subscription using L1 (Level 1) prefix for price data
             # Note: "Invalid account type" errors may occur if IG hasn't fully enabled

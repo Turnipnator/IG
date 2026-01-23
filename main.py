@@ -41,6 +41,9 @@ telegram_loop = None
 # Track last analysis time per market to avoid duplicate signals
 last_analysis: dict[str, datetime] = {}
 
+# Track when positions were last closed - cooldown prevents immediate re-entry
+last_close_time: dict[str, datetime] = {}
+
 
 def initialize() -> bool:
     """Initialize all components."""
@@ -121,8 +124,9 @@ def initialize_streaming() -> bool:
         # Subscribe to markets
         epics = [m.epic for m in MARKETS]
         names = [m.name for m in MARKETS]
+        candle_intervals = [m.candle_interval for m in MARKETS]
 
-        if not stream_service.subscribe_markets(epics, names):
+        if not stream_service.subscribe_markets(epics, names, candle_intervals):
             logger.error("Failed to subscribe to markets")
             return False
 
@@ -132,9 +136,10 @@ def initialize_streaming() -> bool:
 
         for market in MARKETS:
             rate_limiter.wait_if_needed()
+            resolution = f"MINUTE_{market.candle_interval}"
             df = client.get_historical_prices(
                 market.epic,
-                resolution="MINUTE_5",
+                resolution=resolution,
                 num_points=trading_config.price_data_points,
                 use_cache=False,  # Force fresh data at startup
             )
@@ -244,6 +249,18 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             )
             return
 
+        # Check cooldown - don't re-enter same market too quickly after closing
+        cooldown_candles = 3
+        cooldown_mins = market_config.candle_interval * cooldown_candles
+        if epic in last_close_time:
+            elapsed = (datetime.now() - last_close_time[epic]).total_seconds() / 60
+            if elapsed < cooldown_mins:
+                logger.info(
+                    f"Cooldown active for {market_config.name}: "
+                    f"{elapsed:.0f}/{cooldown_mins} mins elapsed"
+                )
+                return
+
         # Calculate position size
         position_size = risk_manager.calculate_position_size(
             balance,
@@ -343,6 +360,9 @@ def check_positions_from_stream() -> None:
             if result:
                 market_config = next((m for m in MARKETS if m.epic == position.epic), None)
                 market_name = market_config.name if market_config else position.epic
+
+                # Record close time for cooldown
+                last_close_time[position.epic] = datetime.now()
 
                 # Get P&L from close confirmation (more accurate than position snapshot)
                 pnl = result.get("profit", 0.0) or position.profit_loss

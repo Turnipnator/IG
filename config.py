@@ -53,6 +53,7 @@ class MarketConfig:
     min_stop_distance: float
     default_size: float
     expiry: str = "DFB"  # DFB for daily funded bets, or specific like "MAR-26"
+    candle_interval: int = 5  # Candle duration in minutes (5 for indices/commodities, 15 for forex)
 
 
 # Load configurations from environment
@@ -117,6 +118,7 @@ MARKETS = [
         min_stop_distance=20.0,
         default_size=1.0,
         expiry="MAR-26",  # Monthly contract, not DFB
+        candle_interval=15,  # Forex needs longer timeframe to avoid chop
     ),
     MarketConfig(
         epic="CS.D.EURUSD.TODAY.IP",
@@ -124,6 +126,7 @@ MARKETS = [
         sector="Forex",
         min_stop_distance=2.0,
         default_size=0.5,
+        candle_interval=15,  # Forex needs longer timeframe to avoid chop
     ),
     MarketConfig(
         epic="CS.D.USCGC.TODAY.IP",

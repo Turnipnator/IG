@@ -234,6 +234,10 @@ def should_close_position(
     """
     Check if an existing position should be closed.
 
+    Requires 3 consecutive candles with MACD histogram against the
+    position direction to confirm momentum has truly shifted,
+    avoiding premature exits on noise.
+
     Args:
         df: DataFrame with indicators
         direction: Current position direction ("BUY" or "SELL")
@@ -245,26 +249,32 @@ def should_close_position(
     params = params or STRATEGY_PARAMS
     df = add_all_indicators(df, params)
 
+    if len(df) < 3:
+        return False, ""
+
     latest = df.iloc[-1]
     rsi = latest["rsi"]
-    macd_hist = latest["macd_hist"]
-    prev_macd_hist = df.iloc[-2]["macd_hist"] if len(df) > 1 else macd_hist
 
     rsi_overbought = params.get("rsi_overbought", 70)
     rsi_oversold = params.get("rsi_oversold", 30)
 
+    # Check last 3 candles for sustained MACD histogram against position
+    last_3_macd = [df.iloc[-i]["macd_hist"] for i in range(1, 4)]
+
     if direction == "BUY":
-        # Close long if RSI overbought or MACD histogram turns negative
+        # Close long if RSI overbought
         if rsi > rsi_overbought:
             return True, f"RSI overbought ({rsi:.1f})"
-        if macd_hist < 0 < prev_macd_hist:
-            return True, "MACD histogram crossed below zero"
+        # Close long if MACD histogram negative for 3 consecutive candles
+        if all(h < 0 for h in last_3_macd):
+            return True, "MACD histogram negative for 3 candles"
 
     elif direction == "SELL":
-        # Close short if RSI oversold or MACD histogram turns positive
+        # Close short if RSI oversold
         if rsi < rsi_oversold:
             return True, f"RSI oversold ({rsi:.1f})"
-        if macd_hist > 0 > prev_macd_hist:
-            return True, "MACD histogram crossed above zero"
+        # Close short if MACD histogram positive for 3 consecutive candles
+        if all(h > 0 for h in last_3_macd):
+            return True, "MACD histogram positive for 3 candles"
 
     return False, ""
