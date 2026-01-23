@@ -25,6 +25,7 @@ from src.strategy import TradingStrategy, Signal, should_close_position
 from src.risk_manager import RiskManager
 from src.telegram_bot import TelegramBot
 from src.streaming import IGStreamService, MarketStream, LIGHTSTREAMER_AVAILABLE
+from src.calendar import EconomicCalendar
 from src.utils import setup_logging, RateLimiter
 
 # Globals
@@ -35,6 +36,7 @@ risk_manager: RiskManager = None
 telegram: TelegramBot = None
 stream_service: IGStreamService = None
 rate_limiter: RateLimiter = None
+calendar: EconomicCalendar = None
 running = True
 telegram_loop = None
 
@@ -47,10 +49,13 @@ last_close_time: dict[str, datetime] = {}
 # Track known open positions to detect external closes (stop/limit hit by IG)
 known_positions: dict[str, Position] = {}  # deal_id -> Position
 
+# Higher timeframe trend per market (updated hourly from 1H candles)
+htf_trends: dict[str, str] = {}  # epic -> "BULLISH"/"BEARISH"/"NEUTRAL"
+
 
 def initialize() -> bool:
     """Initialize all components."""
-    global client, strategy, risk_manager, telegram, rate_limiter
+    global client, strategy, risk_manager, telegram, rate_limiter, calendar
 
     # Load configs
     ig_config = load_ig_config()
@@ -63,6 +68,7 @@ def initialize() -> bool:
     risk_manager = RiskManager(trading_config)
     telegram = TelegramBot(telegram_config)
     rate_limiter = RateLimiter(requests_per_minute=25)
+    calendar = EconomicCalendar(buffer_minutes=30)
 
     # Login to IG
     if not client.login():
@@ -159,6 +165,52 @@ def initialize_streaming() -> bool:
         return False
 
 
+def update_htf_trends() -> None:
+    """
+    Fetch 1H candles and determine higher timeframe trend for each market.
+    Called at startup and every hour thereafter.
+    """
+    from src.indicators import calculate_ema
+
+    logger.info("Updating higher timeframe trends (1H candles)...")
+
+    for market in MARKETS:
+        try:
+            rate_limiter.wait_if_needed()
+            df = client.get_historical_prices(
+                market.epic,
+                resolution="HOUR",
+                num_points=50,
+                use_cache=False,
+            )
+
+            if df is None or len(df) < 21:
+                htf_trends[market.epic] = "NEUTRAL"
+                continue
+
+            # Calculate EMAs on hourly data
+            ema_9 = calculate_ema(df["close"], 9)
+            ema_21 = calculate_ema(df["close"], 21)
+
+            latest_ema_9 = ema_9.iloc[-1]
+            latest_ema_21 = ema_21.iloc[-1]
+            latest_close = df["close"].iloc[-1]
+
+            # Determine trend
+            if latest_ema_9 > latest_ema_21 and latest_close > latest_ema_21:
+                htf_trends[market.epic] = "BULLISH"
+            elif latest_ema_9 < latest_ema_21 and latest_close < latest_ema_21:
+                htf_trends[market.epic] = "BEARISH"
+            else:
+                htf_trends[market.epic] = "NEUTRAL"
+
+            logger.info(f"  {market.name}: HTF trend = {htf_trends[market.epic]}")
+
+        except Exception as e:
+            logger.warning(f"Failed to get HTF trend for {market.name}: {e}")
+            htf_trends[market.epic] = "NEUTRAL"
+
+
 def on_price_update(epic: str, market: MarketStream) -> None:
     """Callback for real-time price updates."""
     # This fires frequently - use for monitoring/logging only
@@ -213,8 +265,11 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         # Calculate current price from stream
         current_price = market.mid_price
 
-        # Analyze
-        trade_signal = strategy.analyze(df, market_config, current_price)
+        # Get higher timeframe trend for this market
+        htf_trend = htf_trends.get(epic, "NEUTRAL")
+
+        # Analyze with multi-timeframe context
+        trade_signal = strategy.analyze(df, market_config, current_price, htf_trend)
 
         logger.info(
             f"[STREAM] {market.name}: {trade_signal.signal.value} "
@@ -262,6 +317,13 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                     f"Cooldown active for {market_config.name}: "
                     f"{elapsed:.0f}/{cooldown_mins} mins elapsed"
                 )
+                return
+
+        # Check economic calendar - avoid trading around high-impact events
+        if calendar:
+            is_safe, cal_reason = calendar.is_safe_to_trade(epic)
+            if not is_safe:
+                logger.info(f"Calendar block for {market_config.name}: {cal_reason}")
                 return
 
         # Calculate position size
@@ -546,6 +608,11 @@ async def main_async():
             "Lightstreamer not installed. Install with: pip install lightstreamer-client-lib"
         )
 
+    # Initialize higher timeframe trends and economic calendar
+    update_htf_trends()
+    if calendar:
+        calendar.refresh()
+
     # Send startup notification
     balance = client.get_balance() or 0
     market_names = [m.name for m in MARKETS]
@@ -566,10 +633,11 @@ async def main_async():
         periodic_thread = threading.Thread(target=periodic_tasks, daemon=True)
         periodic_thread.start()
 
-        # Schedule session refresh and daily summary
+        # Schedule session refresh, HTF trends, and daily summary
         import schedule
 
         schedule.every(6).hours.do(refresh_session)
+        schedule.every(1).hours.do(update_htf_trends)
         schedule.every().day.at("21:00").do(send_daily_summary)
 
         # Run scheduler in background

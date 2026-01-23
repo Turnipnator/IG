@@ -146,4 +146,5 @@ STRATEGY_PARAMS = {
     "rsi_period": 7,
     "rsi_overbought": 70,
     "rsi_oversold": 30,
+    "adx_threshold": 25,  # Minimum ADX for trend confirmation (below = ranging)
 }

@@ -59,6 +59,7 @@ class TradingStrategy:
         df: pd.DataFrame,
         market: MarketConfig,
         current_price: float,
+        htf_trend: str = "NEUTRAL",
     ) -> TradeSignal:
         """
         Analyze market data and generate a trading signal.
@@ -67,6 +68,7 @@ class TradingStrategy:
             df: DataFrame with OHLCV data
             market: Market configuration
             current_price: Current market price
+            htf_trend: Higher timeframe trend ("BULLISH", "BEARISH", "NEUTRAL")
 
         Returns:
             TradeSignal with recommendation
@@ -93,10 +95,25 @@ class TradingStrategy:
         ema_slow = latest["ema_slow"]
         rsi = latest["rsi"]
         atr = latest["atr"]
+        adx = latest["adx"]
         close = latest["close"]
 
         rsi_overbought = self.params.get("rsi_overbought", 70)
         rsi_oversold = self.params.get("rsi_oversold", 30)
+        adx_threshold = self.params.get("adx_threshold", 25)
+
+        # ADX filter: skip if market is ranging (no clear trend)
+        if adx < adx_threshold:
+            return TradeSignal(
+                signal=Signal.HOLD,
+                epic=market.epic,
+                market_name=market.name,
+                confidence=0.0,
+                entry_price=current_price,
+                stop_distance=market.min_stop_distance,
+                limit_distance=market.min_stop_distance,
+                reason=f"ADX too low ({adx:.1f} < {adx_threshold}), market ranging",
+            )
 
         # Calculate dynamic stop/limit based on ATR
         atr_multiplier = 2.0
@@ -113,10 +130,23 @@ class TradingStrategy:
         price_below_ema = close < ema_slow
         rsi_not_oversold = rsi > rsi_oversold
 
-        # Generate signal
+        # Generate signal with multi-timeframe confirmation
         if bullish_ema and price_above_ema and rsi_not_overbought:
+            # Multi-timeframe filter: don't buy against hourly downtrend
+            if htf_trend == "BEARISH":
+                return TradeSignal(
+                    signal=Signal.HOLD,
+                    epic=market.epic,
+                    market_name=market.name,
+                    confidence=0.0,
+                    entry_price=current_price,
+                    stop_distance=round(stop_distance, 2),
+                    limit_distance=round(limit_distance, 2),
+                    reason=f"Bullish on LTF but hourly trend bearish",
+                )
+
             confidence = self._calculate_confidence(
-                df, "bullish", rsi, rsi_overbought
+                df, "bullish", rsi, rsi_overbought, adx, htf_trend
             )
             return TradeSignal(
                 signal=Signal.BUY,
@@ -126,12 +156,25 @@ class TradingStrategy:
                 entry_price=current_price,
                 stop_distance=round(stop_distance, 2),
                 limit_distance=round(limit_distance, 2),
-                reason=f"Bullish EMA alignment, RSI={rsi:.1f}",
+                reason=f"Bullish EMA alignment, RSI={rsi:.1f}, ADX={adx:.1f}, HTF={htf_trend}",
             )
 
         elif bearish_ema and price_below_ema and rsi_not_oversold:
+            # Multi-timeframe filter: don't sell against hourly uptrend
+            if htf_trend == "BULLISH":
+                return TradeSignal(
+                    signal=Signal.HOLD,
+                    epic=market.epic,
+                    market_name=market.name,
+                    confidence=0.0,
+                    entry_price=current_price,
+                    stop_distance=round(stop_distance, 2),
+                    limit_distance=round(limit_distance, 2),
+                    reason=f"Bearish on LTF but hourly trend bullish",
+                )
+
             confidence = self._calculate_confidence(
-                df, "bearish", rsi, rsi_oversold
+                df, "bearish", rsi, rsi_oversold, adx, htf_trend
             )
             return TradeSignal(
                 signal=Signal.SELL,
@@ -141,7 +184,7 @@ class TradingStrategy:
                 entry_price=current_price,
                 stop_distance=round(stop_distance, 2),
                 limit_distance=round(limit_distance, 2),
-                reason=f"Bearish EMA alignment, RSI={rsi:.1f}",
+                reason=f"Bearish EMA alignment, RSI={rsi:.1f}, ADX={adx:.1f}, HTF={htf_trend}",
             )
 
         else:
@@ -155,7 +198,7 @@ class TradingStrategy:
                 limit_distance=round(limit_distance, 2),
                 reason=self._get_hold_reason(
                     bullish_ema, bearish_ema, rsi,
-                    rsi_overbought, rsi_oversold
+                    rsi_overbought, rsi_oversold, adx, adx_threshold
                 ),
             )
 
@@ -165,6 +208,8 @@ class TradingStrategy:
         direction: str,
         rsi: float,
         threshold: float,
+        adx: float = 25.0,
+        htf_trend: str = "NEUTRAL",
     ) -> float:
         """
         Calculate confidence score for a signal (0-1).
@@ -173,32 +218,47 @@ class TradingStrategy:
         - EMA separation (stronger trend = higher confidence)
         - RSI distance from threshold
         - MACD confirmation
+        - ADX trend strength
+        - Higher timeframe alignment
         """
         latest = df.iloc[-1]
 
-        # EMA separation factor (0-0.4)
+        # EMA separation factor (0-0.25)
         ema_fast = latest["ema_fast"]
         ema_slow = latest["ema_slow"]
         ema_separation = abs(ema_fast - ema_slow) / ema_slow
-        ema_factor = min(ema_separation * 10, 0.4)
+        ema_factor = min(ema_separation * 10, 0.25)
 
-        # RSI factor (0-0.3)
+        # RSI factor (0-0.2)
         if direction == "bullish":
             rsi_distance = (threshold - rsi) / threshold
         else:
             rsi_distance = (rsi - threshold) / (100 - threshold)
-        rsi_factor = max(0, min(rsi_distance, 0.3))
+        rsi_factor = max(0, min(rsi_distance, 0.2))
 
-        # MACD confirmation factor (0-0.3)
+        # MACD confirmation factor (0-0.2)
         macd_hist = latest["macd_hist"]
         if direction == "bullish" and macd_hist > 0:
-            macd_factor = 0.3
+            macd_factor = 0.2
         elif direction == "bearish" and macd_hist < 0:
-            macd_factor = 0.3
+            macd_factor = 0.2
         else:
             macd_factor = 0.0
 
-        confidence = ema_factor + rsi_factor + macd_factor
+        # ADX strength factor (0-0.15)
+        # Stronger trend = higher confidence
+        adx_factor = min((adx - 25) / 50, 0.15) if adx > 25 else 0.0
+
+        # Higher timeframe alignment factor (0-0.2)
+        if (direction == "bullish" and htf_trend == "BULLISH") or \
+           (direction == "bearish" and htf_trend == "BEARISH"):
+            htf_factor = 0.2
+        elif htf_trend == "NEUTRAL":
+            htf_factor = 0.1
+        else:
+            htf_factor = 0.0
+
+        confidence = ema_factor + rsi_factor + macd_factor + adx_factor + htf_factor
         return round(min(confidence, 1.0), 2)
 
     def _get_hold_reason(
@@ -208,12 +268,17 @@ class TradingStrategy:
         rsi: float,
         rsi_overbought: float,
         rsi_oversold: float,
+        adx: float = 0.0,
+        adx_threshold: float = 25.0,
     ) -> str:
         """Generate explanation for HOLD signal."""
         reasons = []
 
         if not bullish_ema and not bearish_ema:
             reasons.append("EMAs not aligned")
+
+        if adx < adx_threshold:
+            reasons.append(f"ADX weak ({adx:.1f})")
 
         if rsi >= rsi_overbought:
             reasons.append(f"RSI overbought ({rsi:.1f})")

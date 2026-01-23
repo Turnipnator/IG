@@ -144,6 +144,56 @@ def calculate_atr(
     return atr
 
 
+def calculate_adx(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    period: int = 14,
+) -> pd.Series:
+    """
+    Calculate Average Directional Index (ADX).
+
+    ADX measures trend strength regardless of direction.
+    Values above 25 indicate a strong trend, below 20 indicates ranging.
+
+    Args:
+        high: High price series
+        low: Low price series
+        close: Close price series
+        period: ADX period (default 14)
+
+    Returns:
+        ADX series (0-100)
+    """
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    prev_close = close.shift(1)
+
+    # True Range
+    tr1 = high - low
+    tr2 = abs(high - prev_close)
+    tr3 = abs(low - prev_close)
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    # Directional Movement
+    plus_dm = high - prev_high
+    minus_dm = prev_low - low
+
+    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+
+    # Smoothed averages (Wilder's smoothing)
+    atr = true_range.ewm(alpha=1/period, min_periods=period).mean()
+    plus_di = 100 * plus_dm.ewm(alpha=1/period, min_periods=period).mean() / atr
+    minus_di = 100 * minus_dm.ewm(alpha=1/period, min_periods=period).mean() / atr
+
+    # DX and ADX
+    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+    adx = dx.ewm(alpha=1/period, min_periods=period).mean()
+
+    return adx
+
+
 def calculate_stochastic(
     high: pd.Series,
     low: pd.Series,
@@ -204,6 +254,9 @@ def add_all_indicators(df: pd.DataFrame, params: dict) -> pd.DataFrame:
 
     # ATR for volatility-based stops
     df["atr"] = calculate_atr(df["high"], df["low"], df["close"])
+
+    # ADX (trend strength)
+    df["adx"] = calculate_adx(df["high"], df["low"], df["close"])
 
     # Stochastic
     df["stoch_k"], df["stoch_d"] = calculate_stochastic(
