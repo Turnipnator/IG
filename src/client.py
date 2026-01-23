@@ -68,6 +68,7 @@ class IGClient:
         self._cache_ttl = timedelta(minutes=cache_ttl_minutes)
         self._api_calls_today = 0
         self._last_reset_date = datetime.now().date()
+        self.last_error: Optional[str] = None
 
     @property
     def is_logged_in(self) -> bool:
@@ -544,12 +545,19 @@ class IGClient:
                 logger.info(f"Position opened: {deal_ref} - {direction} {size} {epic}")
 
                 # Confirm the deal
+                self.last_error = None
                 return self._confirm_deal(deal_ref)
             else:
-                logger.error(f"Failed to open position: {response.text}")
+                try:
+                    error_data = response.json()
+                    self.last_error = error_data.get("errorCode", response.text)
+                except Exception:
+                    self.last_error = response.text
+                logger.error(f"Failed to open position: {self.last_error}")
                 return None
 
         except requests.RequestException as e:
+            self.last_error = str(e)
             logger.error(f"Open position request failed: {e}")
             return None
 
@@ -623,16 +631,20 @@ class IGClient:
 
                 if status == "ACCEPTED":
                     logger.info(f"Deal confirmed: {confirmation.get('dealId')}")
+                    self.last_error = None
                     return confirmation
                 else:
                     reason = confirmation.get("reason", "Unknown")
+                    self.last_error = reason
                     logger.error(f"Deal rejected: {reason}")
                     return None
             else:
+                self.last_error = f"Confirmation failed: HTTP {response.status_code}"
                 logger.error(f"Failed to confirm deal: {response.text}")
                 return None
 
         except requests.RequestException as e:
+            self.last_error = str(e)
             logger.error(f"Deal confirmation failed: {e}")
             return None
 

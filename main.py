@@ -396,9 +396,12 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                     telegram_loop,
                 )
         else:
+            error_reason = client.last_error or "Unknown error"
             if telegram_loop:
                 asyncio.run_coroutine_threadsafe(
-                    telegram.notify_error(f"Failed to open position on {market.name}"),
+                    telegram.notify_error(
+                        f"Failed to open position on {market.name}: {error_reason}"
+                    ),
                     telegram_loop,
                 )
 
