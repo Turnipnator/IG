@@ -136,8 +136,27 @@ class TradingStrategy:
         price_below_ema = close < ema_slow
         rsi_sell_valid = rsi_sell_min < rsi < rsi_overbought
 
+        # MACD pre-check: don't enter if exit condition is already true
+        # This prevents opening and immediately closing (losing the spread)
+        last_3_macd = [df.iloc[-i]["macd_hist"] for i in range(1, 4)] if len(df) >= 4 else [0]
+        macd_already_bearish = all(h < 0 for h in last_3_macd)
+        macd_already_bullish = all(h > 0 for h in last_3_macd)
+
         # Generate signal with multi-timeframe confirmation
         if bullish_ema and price_above_ema and rsi_buy_valid:
+            # MACD pre-check: don't buy if exit would trigger immediately
+            if macd_already_bearish:
+                return TradeSignal(
+                    signal=Signal.HOLD,
+                    epic=market.epic,
+                    market_name=market.name,
+                    confidence=0.0,
+                    entry_price=current_price,
+                    stop_distance=round(stop_distance, 2),
+                    limit_distance=round(limit_distance, 2),
+                    reason=f"MACD already bearish (would exit immediately)",
+                )
+
             # Multi-timeframe filter: don't buy against hourly downtrend
             if htf_trend == "BEARISH":
                 return TradeSignal(
@@ -166,6 +185,19 @@ class TradingStrategy:
             )
 
         elif bearish_ema and price_below_ema and rsi_sell_valid:
+            # MACD pre-check: don't sell if exit would trigger immediately
+            if macd_already_bullish:
+                return TradeSignal(
+                    signal=Signal.HOLD,
+                    epic=market.epic,
+                    market_name=market.name,
+                    confidence=0.0,
+                    entry_price=current_price,
+                    stop_distance=round(stop_distance, 2),
+                    limit_distance=round(limit_distance, 2),
+                    reason=f"MACD already bullish (would exit immediately)",
+                )
+
             # Multi-timeframe filter: don't sell against hourly uptrend
             if htf_trend == "BULLISH":
                 return TradeSignal(
