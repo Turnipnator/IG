@@ -54,7 +54,8 @@ htf_trends: dict[str, str] = {}  # epic -> "BULLISH"/"BEARISH"/"NEUTRAL"
 
 # Market regime based on S&P 500 - determines allowed trade direction
 # BULLISH = longs only, BEARISH = shorts only, NEUTRAL = no trades
-market_regime: str = "NEUTRAL"
+market_regime: str = "BULLISH"  # Default to BULLISH until we have real data
+market_regime_confirmed: bool = False  # True when we've successfully fetched S&P 500 data
 SP500_EPIC = "IX.D.SPTRD.DAILY.IP"
 
 # Track loss cooldowns separately (1hr after loss vs 15min after any close)
@@ -177,10 +178,10 @@ def initialize_streaming() -> bool:
 def update_htf_trends() -> None:
     """
     Fetch 1H candles and determine higher timeframe trend for each market.
-    Called at startup and every hour thereafter.
+    Called at startup and every 4 hours thereafter.
     Also updates the market regime based on S&P 500 trend.
     """
-    global market_regime
+    global market_regime, market_regime_confirmed
     from src.indicators import calculate_ema
 
     logger.info("Updating higher timeframe trends (1H candles)...")
@@ -196,7 +197,8 @@ def update_htf_trends() -> None:
             )
 
             if df is None or len(df) < 21:
-                htf_trends[market.epic] = "NEUTRAL"
+                # Don't set a value - leave it unset so we know fetch failed
+                logger.warning(f"  {market.name}: Insufficient data for HTF trend")
                 continue
 
             # Calculate EMAs on hourly data
@@ -219,12 +221,22 @@ def update_htf_trends() -> None:
 
         except Exception as e:
             logger.warning(f"Failed to get HTF trend for {market.name}: {e}")
-            htf_trends[market.epic] = "NEUTRAL"
+            # Don't set a value - leave it unset so we know fetch failed
 
     # Update market regime based on S&P 500 trend
-    sp500_trend = htf_trends.get(SP500_EPIC, "NEUTRAL")
-    market_regime = sp500_trend
-    logger.info(f"Market regime (S&P 500): {market_regime} - {'Longs only' if market_regime == 'BULLISH' else 'Shorts only' if market_regime == 'BEARISH' else 'No trades'}")
+    sp500_trend = htf_trends.get(SP500_EPIC, None)
+
+    if sp500_trend is not None:
+        # Successfully fetched S&P 500 data - use real trend
+        market_regime = sp500_trend
+        market_regime_confirmed = True
+        logger.info(f"Market regime (S&P 500): {market_regime} - {'Longs only' if market_regime == 'BULLISH' else 'Shorts only' if market_regime == 'BEARISH' else 'No trades'}")
+    else:
+        # Couldn't fetch S&P data (e.g., API allowance exceeded) - default to BULLISH
+        # This allows longs while blocking riskier shorts until we have real data
+        if not market_regime_confirmed:
+            market_regime = "BULLISH"
+            logger.info(f"Market regime: Defaulting to BULLISH (S&P 500 data unavailable - API allowance likely exceeded)")
 
 
 def on_price_update(epic: str, market: MarketStream) -> None:
