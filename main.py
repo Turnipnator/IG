@@ -191,7 +191,7 @@ def update_htf_trends() -> None:
             df = client.get_historical_prices(
                 market.epic,
                 resolution="HOUR",
-                num_points=50,
+                num_points=25,  # Reduced from 50 to conserve API allowance (enough for EMA 9/21)
                 use_cache=False,
             )
 
@@ -691,7 +691,7 @@ async def main_async():
         import schedule
 
         schedule.every(6).hours.do(refresh_session)
-        schedule.every(1).hours.do(update_htf_trends)
+        schedule.every(4).hours.do(update_htf_trends)  # Was 1 hour - reduced to conserve API allowance
         schedule.every().day.at("21:00").do(send_daily_summary)
 
         # Run scheduler in background
