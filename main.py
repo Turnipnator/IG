@@ -11,7 +11,7 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config import (
     load_ig_config,
@@ -51,6 +51,15 @@ known_positions: dict[str, Position] = {}  # deal_id -> Position
 
 # Higher timeframe trend per market (updated hourly from 1H candles)
 htf_trends: dict[str, str] = {}  # epic -> "BULLISH"/"BEARISH"/"NEUTRAL"
+
+# Market regime based on S&P 500 - determines allowed trade direction
+# BULLISH = longs only, BEARISH = shorts only, NEUTRAL = no trades
+market_regime: str = "NEUTRAL"
+SP500_EPIC = "IX.D.SPTRD.DAILY.IP"
+
+# Track loss cooldowns separately (1hr after loss vs 15min after any close)
+loss_cooldown_until: dict[str, datetime] = {}  # epic -> datetime when cooldown ends
+LOSS_COOLDOWN_MINUTES = 60
 
 
 def initialize() -> bool:
@@ -169,7 +178,9 @@ def update_htf_trends() -> None:
     """
     Fetch 1H candles and determine higher timeframe trend for each market.
     Called at startup and every hour thereafter.
+    Also updates the market regime based on S&P 500 trend.
     """
+    global market_regime
     from src.indicators import calculate_ema
 
     logger.info("Updating higher timeframe trends (1H candles)...")
@@ -209,6 +220,11 @@ def update_htf_trends() -> None:
         except Exception as e:
             logger.warning(f"Failed to get HTF trend for {market.name}: {e}")
             htf_trends[market.epic] = "NEUTRAL"
+
+    # Update market regime based on S&P 500 trend
+    sp500_trend = htf_trends.get(SP500_EPIC, "NEUTRAL")
+    market_regime = sp500_trend
+    logger.info(f"Market regime (S&P 500): {market_regime} - {'Longs only' if market_regime == 'BULLISH' else 'Shorts only' if market_regime == 'BEARISH' else 'No trades'}")
 
 
 def on_price_update(epic: str, market: MarketStream) -> None:
@@ -279,6 +295,17 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         if trade_signal.signal == Signal.HOLD:
             return
 
+        # Market regime filter: align trade direction with S&P 500 trend
+        if market_regime == "NEUTRAL":
+            logger.info(f"Market regime NEUTRAL (S&P sideways) - no trades allowed")
+            return
+        elif market_regime == "BULLISH" and trade_signal.signal == Signal.SELL:
+            logger.info(f"Market regime BULLISH - blocking SELL on {market.name}")
+            return
+        elif market_regime == "BEARISH" and trade_signal.signal == Signal.BUY:
+            logger.info(f"Market regime BEARISH - blocking BUY on {market.name}")
+            return
+
         # Get balance and positions (REST API calls)
         balance = client.get_balance()
         if not balance:
@@ -307,7 +334,20 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             )
             return
 
-        # Check cooldown - don't re-enter same market too quickly after closing
+        # Check loss cooldown - 1 hour after a losing trade
+        if epic in loss_cooldown_until:
+            if datetime.now() < loss_cooldown_until[epic]:
+                remaining = (loss_cooldown_until[epic] - datetime.now()).total_seconds() / 60
+                logger.info(
+                    f"Loss cooldown active for {market_config.name}: "
+                    f"{remaining:.0f} mins remaining"
+                )
+                return
+            else:
+                # Cooldown expired, remove it
+                del loss_cooldown_until[epic]
+
+        # Check general cooldown - don't re-enter same market too quickly after closing
         cooldown_candles = 3
         cooldown_mins = market_config.candle_interval * cooldown_candles
         if epic in last_close_time:
@@ -432,6 +472,12 @@ def check_positions_from_stream() -> None:
             # Record close time for cooldown
             last_close_time[known_pos.epic] = datetime.now()
 
+            # If it was a loss (likely stop hit), set extended loss cooldown
+            # Note: profit_loss from known_positions may be stale, but if stop hit it's negative
+            if known_pos.profit_loss < 0:
+                loss_cooldown_until[known_pos.epic] = datetime.now() + timedelta(minutes=LOSS_COOLDOWN_MINUTES)
+                logger.info(f"Loss cooldown set for {market_name}: {LOSS_COOLDOWN_MINUTES} mins")
+
             if telegram_loop:
                 asyncio.run_coroutine_threadsafe(
                     telegram.notify_trade_closed(
@@ -483,6 +529,11 @@ def check_positions_from_stream() -> None:
 
                 # Get P&L from close confirmation (more accurate than position snapshot)
                 pnl = result.get("profit", 0.0) or position.profit_loss
+
+                # If it was a loss, set extended loss cooldown
+                if pnl < 0:
+                    loss_cooldown_until[position.epic] = datetime.now() + timedelta(minutes=LOSS_COOLDOWN_MINUTES)
+                    logger.info(f"Loss cooldown set for {market_name}: {LOSS_COOLDOWN_MINUTES} mins")
 
                 telegram.daily_pnl += pnl
                 risk_manager.update_daily_pnl(pnl)

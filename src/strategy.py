@@ -116,9 +116,9 @@ class TradingStrategy:
             )
 
         # Calculate dynamic stop/limit based on ATR
-        atr_multiplier = 2.0
+        atr_multiplier = 1.5
         stop_distance = max(atr * atr_multiplier, market.min_stop_distance)
-        limit_distance = stop_distance * 1.5  # 1.5:1 reward/risk ratio
+        limit_distance = stop_distance * 2.0  # 2:1 reward/risk ratio
 
         # RSI entry ranges - avoid entering when move is already exhausted
         # Buy: RSI must be between oversold and 60 (momentum up, not extended)
