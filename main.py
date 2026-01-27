@@ -98,8 +98,14 @@ def initialize() -> bool:
     return True
 
 
-def initialize_streaming() -> bool:
-    """Initialize Lightstreamer streaming connection."""
+def initialize_streaming(preserved_candles: dict = None) -> bool:
+    """
+    Initialize Lightstreamer streaming connection.
+
+    Args:
+        preserved_candles: Optional dict of epic -> DataFrame with candle data
+                          to restore from a previous session (avoids data loss on refresh)
+    """
     global stream_service
 
     if not LIGHTSTREAMER_AVAILABLE:
@@ -149,11 +155,20 @@ def initialize_streaming() -> bool:
             logger.error("Failed to subscribe to markets")
             return False
 
-        # Initialize candles with historical data (one-time API usage)
-        logger.info("Initializing candle history from REST API (one-time)...")
+        # Initialize candles - prefer preserved data, then API, then start fresh
+        logger.info("Initializing candle history...")
         trading_config = load_trading_config()
 
         for market in MARKETS:
+            # First try preserved candles from previous session
+            if preserved_candles and market.epic in preserved_candles:
+                df = preserved_candles[market.epic]
+                if df is not None and not df.empty:
+                    stream_service.initialize_candles(market.epic, df)
+                    logger.info(f"  {market.name}: Restored {len(df)} candles from previous session")
+                    continue
+
+            # Fall back to API
             rate_limiter.wait_if_needed()
             resolution = f"MINUTE_{market.candle_interval}"
             df = client.get_historical_prices(
@@ -608,13 +623,22 @@ def send_daily_summary() -> None:
 
 
 def refresh_session() -> None:
-    """Refresh IG session and reconnect streaming."""
+    """Refresh IG session and reconnect streaming, preserving candle data."""
     global stream_service
 
     logger.info("Refreshing IG session...")
 
-    # Disconnect streaming
+    # Preserve existing candle data before disconnecting
+    preserved_candles = {}
     if stream_service:
+        for market in MARKETS:
+            market_data = stream_service.get_market_data(market.epic)
+            if market_data:
+                df = market_data.to_dataframe()
+                if df is not None and not df.empty:
+                    preserved_candles[market.epic] = df
+                    logger.debug(f"Preserved {len(df)} candles for {market.name}")
+
         stream_service.disconnect()
 
     # Re-login
@@ -627,9 +651,9 @@ def refresh_session() -> None:
             )
         return
 
-    # Reconnect streaming with new tokens
+    # Reconnect streaming with new tokens, restoring preserved candles
     if LIGHTSTREAMER_AVAILABLE:
-        initialize_streaming()
+        initialize_streaming(preserved_candles)
 
 
 def signal_handler(signum, frame):
