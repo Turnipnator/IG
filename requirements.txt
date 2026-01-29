@@ -18,3 +18,6 @@ aiohttp>=3.9.0
 
 # Type hints
 typing-extensions>=4.8.0
+
+# Backtesting (optional - for local testing)
+yfinance>=0.2.0

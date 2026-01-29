@@ -54,6 +54,7 @@ class MarketConfig:
     default_size: float
     expiry: str = "DFB"  # DFB for daily funded bets, or specific like "MAR-26"
     candle_interval: int = 5  # Candle duration in minutes (5 for indices/commodities, 15 for forex)
+    min_confidence: float = 0.5  # Minimum confidence to enter (higher = more selective)
 
 
 # Load configurations from environment
@@ -110,6 +111,7 @@ MARKETS = [
         min_stop_distance=12.0,
         default_size=0.1,
         expiry="MAR-26",  # Monthly contract, not DFB
+        min_confidence=0.7,  # Higher threshold - backtest showed poor performance at 0.5
     ),
     MarketConfig(
         epic="CO.D.DX.Month1.IP",  # Changed from CC.D.DX.UMP.IP - CC.D EPICs don't support SPREADBET streaming

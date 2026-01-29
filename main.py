@@ -353,11 +353,11 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             logger.info(f"Trade not validated: {reason}")
             return
 
-        # Check confidence
-        min_confidence = 0.5
+        # Check confidence (market-specific threshold)
+        min_confidence = market_config.min_confidence
         if trade_signal.confidence < min_confidence:
             logger.info(
-                f"Confidence too low: {trade_signal.confidence:.0%} < {min_confidence:.0%}"
+                f"Confidence too low for {market_config.name}: {trade_signal.confidence:.0%} < {min_confidence:.0%}"
             )
             return
 

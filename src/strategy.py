@@ -157,8 +157,9 @@ class TradingStrategy:
                     reason=f"MACD already bearish (would exit immediately)",
                 )
 
-            # Multi-timeframe filter: don't buy against hourly downtrend
-            if htf_trend == "BEARISH":
+            # Multi-timeframe filter: require HTF alignment for entries
+            # Only BUY when hourly trend is BULLISH (not just "not bearish")
+            if htf_trend != "BULLISH":
                 return TradeSignal(
                     signal=Signal.HOLD,
                     epic=market.epic,
@@ -167,7 +168,7 @@ class TradingStrategy:
                     entry_price=current_price,
                     stop_distance=round(stop_distance, 2),
                     limit_distance=round(limit_distance, 2),
-                    reason=f"Bullish on LTF but hourly trend bearish",
+                    reason=f"HTF not aligned for BUY (HTF={htf_trend}, need BULLISH)",
                 )
 
             confidence = self._calculate_confidence(
@@ -198,8 +199,9 @@ class TradingStrategy:
                     reason=f"MACD already bullish (would exit immediately)",
                 )
 
-            # Multi-timeframe filter: don't sell against hourly uptrend
-            if htf_trend == "BULLISH":
+            # Multi-timeframe filter: require HTF alignment for entries
+            # Only SELL when hourly trend is BEARISH (not just "not bullish")
+            if htf_trend != "BEARISH":
                 return TradeSignal(
                     signal=Signal.HOLD,
                     epic=market.epic,
@@ -208,7 +210,7 @@ class TradingStrategy:
                     entry_price=current_price,
                     stop_distance=round(stop_distance, 2),
                     limit_distance=round(limit_distance, 2),
-                    reason=f"Bearish on LTF but hourly trend bullish",
+                    reason=f"HTF not aligned for SELL (HTF={htf_trend}, need BEARISH)",
                 )
 
             confidence = self._calculate_confidence(
