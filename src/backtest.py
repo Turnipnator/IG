@@ -25,6 +25,12 @@ from src.indicators import (
     calculate_macd,
     calculate_atr,
 )
+from src.regime import (
+    MarketRegime,
+    classify_regime,
+    get_regime_params,
+    TrendState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -553,13 +559,44 @@ class Backtester:
                 row, htf_trend, require_htf_alignment
             )
 
-            if direction and confidence >= min_confidence:
+            # Classify market regime (need at least 20 candles for ATR median)
+            regime = None
+            regime_params = None
+            if i >= 20:
+                try:
+                    regime_df = df.iloc[:i+1].copy()
+                    regime = classify_regime(regime_df)
+                    regime_params = get_regime_params(regime)
+                except (ValueError, KeyError):
+                    pass  # Not enough data or missing columns
+
+            # Apply regime filters
+            if regime_params:
+                # Block trades in untradeable regimes (RANGING_HIGH)
+                if not regime.is_tradeable:
+                    continue
+
+                # Block trend-following in ranging regimes
+                if direction and not regime_params.allow_trend_follow:
+                    continue
+
+                # Adjust min_confidence based on regime
+                effective_min_confidence = max(min_confidence, regime_params.min_confidence)
+            else:
+                effective_min_confidence = min_confidence
+
+            if direction and confidence >= effective_min_confidence:
                 # Calculate stop and limit
                 if pd.isna(atr):
                     continue
 
+                # Get ATR multiplier (regime-adjusted if available)
+                stop_atr_mult = self.params["stop_atr_multiplier"]
+                if regime_params:
+                    stop_atr_mult = regime_params.stop_atr_multiplier
+
                 # Calculate ATR-based stop, but respect minimum stop distance from config
-                atr_stop = atr * self.params["stop_atr_multiplier"]
+                atr_stop = atr * stop_atr_mult
                 min_stop = MIN_STOP_DISTANCE_MAP.get(market, 0.0)
                 stop_distance = max(atr_stop, min_stop)
 
@@ -574,9 +611,13 @@ class Backtester:
                     stop_price = close + stop_distance
                     limit_price = close - limit_distance
 
-                # Calculate position size (risk-based)
+                # Calculate position size (risk-based, regime-adjusted)
                 risk_amount = account_size * risk_per_trade
                 size = risk_amount / stop_distance if stop_distance > 0 else 0
+
+                # Apply regime size multiplier
+                if regime_params:
+                    size = size * regime_params.size_multiplier
 
                 position = Trade(
                     entry_time=current_time,
