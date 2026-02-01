@@ -4,10 +4,13 @@ Risk management for position sizing and trade validation.
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from config import TradingConfig, MarketConfig
 from src.client import Position
+
+if TYPE_CHECKING:
+    from src.regime import MarketRegime
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,7 @@ class RiskManager:
         account_balance: float,
         stop_distance: float,
         market: MarketConfig,
+        regime: Optional["MarketRegime"] = None,
     ) -> PositionSize:
         """
         Calculate appropriate position size based on risk parameters.
@@ -59,6 +63,7 @@ class RiskManager:
             account_balance: Current account balance in GBP
             stop_distance: Stop loss distance in points
             market: Market configuration
+            regime: Optional market regime for size adjustment
 
         Returns:
             PositionSize with calculated stake
@@ -81,6 +86,28 @@ class RiskManager:
 
         raw_size = risk_amount / stop_distance
 
+        # Apply regime-based size multiplier
+        size_multiplier = 1.0
+        regime_info = ""
+        if regime:
+            from src.regime import get_regime_params
+            regime_params = get_regime_params(regime)
+            size_multiplier = regime_params.size_multiplier
+            regime_info = f" (regime: {regime.code}, multiplier: {size_multiplier})"
+
+            # Block trade entirely if size_multiplier is 0
+            if size_multiplier <= 0:
+                return PositionSize(
+                    size=0.0,
+                    risk_amount=risk_amount,
+                    stop_distance=stop_distance,
+                    max_loss=0.0,
+                    approved=False,
+                    reason=f"Regime {regime.code} blocks new positions",
+                )
+
+        raw_size = raw_size * size_multiplier
+
         # Round to appropriate precision
         # Most markets allow 0.1 increments, some allow smaller
         size = round(raw_size, 1)
@@ -99,7 +126,7 @@ class RiskManager:
             stop_distance=stop_distance,
             max_loss=max_loss,
             approved=True,
-            reason="Position size calculated",
+            reason=f"Position size calculated{regime_info}",
         )
 
     def validate_trade(

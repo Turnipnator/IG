@@ -27,6 +27,12 @@ from src.telegram_bot import TelegramBot
 from src.streaming import IGStreamService, MarketStream, LIGHTSTREAMER_AVAILABLE
 from src.calendar import EconomicCalendar
 from src.utils import setup_logging, RateLimiter
+from src.regime import (
+    MarketRegime,
+    classify_regime,
+    get_regime_params,
+    format_regime_status,
+)
 
 # Globals
 logger = logging.getLogger(__name__)
@@ -57,6 +63,10 @@ htf_trends: dict[str, str] = {}  # epic -> "BULLISH"/"BEARISH"/"NEUTRAL"
 market_regime: str = "BULLISH"  # Default to BULLISH until we have real data
 market_regime_confirmed: bool = False  # True when we've successfully fetched S&P 500 data
 SP500_EPIC = "IX.D.SPTRD.DAILY.IP"
+
+# Per-market regime classification (trend strength + volatility)
+# Used for position sizing and strategy selection
+market_regimes: dict[str, MarketRegime] = {}  # epic -> MarketRegime
 
 # Track loss cooldowns separately (1hr after loss vs 15min after any close)
 loss_cooldown_until: dict[str, datetime] = {}  # epic -> datetime when cooldown ends
@@ -197,7 +207,7 @@ def update_htf_trends() -> None:
     Also updates the market regime based on S&P 500 trend.
     """
     global market_regime, market_regime_confirmed
-    from src.indicators import calculate_ema
+    from src.indicators import calculate_ema, add_all_indicators
 
     logger.info("Updating higher timeframe trends (1H candles)...")
 
@@ -233,6 +243,15 @@ def update_htf_trends() -> None:
                 htf_trends[market.epic] = "NEUTRAL"
 
             logger.info(f"  {market.name}: HTF trend = {htf_trends[market.epic]}")
+
+            # Classify market regime using hourly data (has ADX and ATR)
+            try:
+                df_with_indicators = add_all_indicators(df, STRATEGY_PARAMS)
+                regime = classify_regime(df_with_indicators)
+                market_regimes[market.epic] = regime
+                logger.info(f"  {market.name}: Regime = {format_regime_status(regime)}")
+            except Exception as re:
+                logger.warning(f"  {market.name}: Could not classify regime: {re}")
 
         except Exception as e:
             logger.warning(f"Failed to get HTF trend for {market.name}: {e}")
@@ -333,6 +352,30 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             logger.info(f"Market regime BEARISH - blocking BUY on {market.name}")
             return
 
+        # Per-market regime filter: check if regime allows trading
+        per_market_regime = market_regimes.get(epic)
+        if per_market_regime:
+            if not per_market_regime.is_tradeable:
+                logger.info(
+                    f"{market.name}: Regime {per_market_regime.code} not tradeable - skipping"
+                )
+                return
+
+            # Get regime-adjusted parameters
+            regime_params = get_regime_params(per_market_regime)
+
+            # Check if strategy type is allowed in this regime
+            if trade_signal.signal == Signal.BUY and not regime_params.allow_trend_follow:
+                logger.info(
+                    f"{market.name}: Trend-follow (BUY) blocked in {per_market_regime.code} regime"
+                )
+                return
+            if trade_signal.signal == Signal.SELL and not regime_params.allow_trend_follow:
+                logger.info(
+                    f"{market.name}: Trend-follow (SELL) blocked in {per_market_regime.code} regime"
+                )
+                return
+
         # Get balance and positions (REST API calls)
         balance = client.get_balance()
         if not balance:
@@ -353,8 +396,13 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             logger.info(f"Trade not validated: {reason}")
             return
 
-        # Check confidence (market-specific threshold)
+        # Check confidence (market-specific threshold, regime-adjusted)
         min_confidence = market_config.min_confidence
+        if per_market_regime:
+            regime_params = get_regime_params(per_market_regime)
+            # Use the higher of market config or regime requirement
+            min_confidence = max(min_confidence, regime_params.min_confidence)
+
         if trade_signal.confidence < min_confidence:
             logger.info(
                 f"Confidence too low for {market_config.name}: {trade_signal.confidence:.0%} < {min_confidence:.0%}"
@@ -377,12 +425,18 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         # Check general cooldown - don't re-enter same market too quickly after closing
         cooldown_candles = 3
         cooldown_mins = market_config.candle_interval * cooldown_candles
+
+        # Apply regime cooldown multiplier (longer cooldowns in uncertain regimes)
+        if per_market_regime:
+            regime_params = get_regime_params(per_market_regime)
+            cooldown_mins = cooldown_mins * regime_params.cooldown_multiplier
+
         if epic in last_close_time:
             elapsed = (datetime.now() - last_close_time[epic]).total_seconds() / 60
             if elapsed < cooldown_mins:
                 logger.info(
                     f"Cooldown active for {market_config.name}: "
-                    f"{elapsed:.0f}/{cooldown_mins} mins elapsed"
+                    f"{elapsed:.0f}/{cooldown_mins:.0f} mins elapsed"
                 )
                 return
 
@@ -393,11 +447,12 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 logger.info(f"Calendar block for {market_config.name}: {cal_reason}")
                 return
 
-        # Calculate position size
+        # Calculate position size (regime-adjusted)
         position_size = risk_manager.calculate_position_size(
             balance,
             trade_signal.stop_distance,
             market_config,
+            regime=per_market_regime,
         )
 
         if not position_size.approved:
@@ -707,12 +762,22 @@ async def main_async():
     balance = client.get_balance() or 0
     market_names = [m.name for m in MARKETS]
 
+    # Build regime summary for notification
+    regime_lines = []
+    for m in MARKETS:
+        regime = market_regimes.get(m.epic)
+        if regime:
+            regime_lines.append(f"  {m.name}: {regime.code}")
+
+    regime_summary = "\n".join(regime_lines) if regime_lines else "  (pending)"
+
     mode = "STREAMING" if streaming_enabled else "POLLING"
     await telegram.send_notification(
         f"🚀 *IG Trading Bot Started*\n\n"
         f"Mode: {mode}\n"
         f"Balance: £{balance:,.2f}\n"
         f"Markets: {', '.join(market_names)}\n\n"
+        f"*Regimes:*\n{regime_summary}\n\n"
         f"{'Real-time price streaming active!' if streaming_enabled else 'Using scheduled polling (API limited)'}"
     )
 
