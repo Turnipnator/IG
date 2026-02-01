@@ -39,6 +39,43 @@ TICKER_MAP = {
     "Dollar Index": "DX-Y.NYB",
 }
 
+# Minimum stop distances per market in PRICE UNITS (not IG points)
+# These ensure reasonable stop distances that align with each market's volatility
+# Calculated as approximately 0.5% of typical price for each instrument
+MIN_STOP_DISTANCE_MAP = {
+    "S&P 500": 30.0,      # ~0.5% of 6000 = 30 pts
+    "NASDAQ 100": 100.0,  # ~0.5% of 20000 = 100 pts
+    "Gold": 25.0,         # ~0.5% of 5000 = 25 pts (~$25)
+    "Crude Oil": 0.35,    # ~0.5% of 70 = 0.35 (~35 cents)
+    "EUR/USD": 0.005,     # ~0.5% of 1.08 = 0.005 (~50 pips)
+    "Dollar Index": 0.50, # ~0.5% of 108 = 0.54
+}
+
+# Minimum confidence thresholds per market (matching config.py)
+MIN_CONFIDENCE_MAP = {
+    "S&P 500": 0.5,
+    "NASDAQ 100": 0.5,
+    "Gold": 0.5,
+    "Crude Oil": 0.7,  # Higher threshold due to choppiness
+    "EUR/USD": 0.5,
+    "Dollar Index": 0.5,
+}
+
+# Market-specific reward:risk ratios
+# Lower ratio for markets with smaller typical moves
+REWARD_RISK_MAP = {
+    "S&P 500": 2.0,
+    "NASDAQ 100": 2.0,
+    "Gold": 2.0,
+    "Crude Oil": 1.5,  # Reduced - typical moves don't reach 2:1 targets
+    "EUR/USD": 2.0,
+    "Dollar Index": 2.0,
+}
+
+# Markets where MACD exit should be disabled (rely on stop/TP only)
+# Currently empty - MACD exits help overall performance
+DISABLE_MACD_EXIT: set[str] = set()
+
 # Default strategy parameters (matching config.py)
 DEFAULT_PARAMS = {
     "ema_fast": 9,
@@ -380,7 +417,7 @@ class Backtester:
         days: int = 30,
         interval: str = "5m",
         require_htf_alignment: bool = False,
-        min_confidence: float = 0.5,
+        min_confidence: Optional[float] = None,
         account_size: float = 10000,
         risk_per_trade: float = 0.01,
     ) -> BacktestResult:
@@ -392,7 +429,7 @@ class Backtester:
             days: Days of history to test
             interval: Candle interval for entries
             require_htf_alignment: If True, require HTF trend to match direction
-            min_confidence: Minimum confidence to take trade
+            min_confidence: Minimum confidence to take trade (uses market default if None)
             account_size: Starting account size
             risk_per_trade: Risk per trade as fraction of account
 
@@ -400,6 +437,10 @@ class Backtester:
             BacktestResult with performance metrics
         """
         self.trades = []
+
+        # Use market-specific min_confidence if not explicitly provided
+        if min_confidence is None:
+            min_confidence = MIN_CONFIDENCE_MAP.get(market, 0.5)
 
         # Fetch main timeframe data
         df = self.fetch_data(market, days, interval)
@@ -456,21 +497,22 @@ class Backtester:
                     exit_reason = "Take profit"
                     exit_price = position.limit_price
 
-                # Check MACD exit
-                macd_hist = row["macd_hist"]
-                if position.direction == "BUY" and macd_hist < 0:
-                    # Check 3 consecutive negative
-                    if i >= 3:
-                        last_3 = [df.iloc[i-j]["macd_hist"] for j in range(3)]
-                        if all(h < 0 for h in last_3 if not pd.isna(h)):
-                            exit_reason = "MACD bearish"
-                            exit_price = close
-                elif position.direction == "SELL" and macd_hist > 0:
-                    if i >= 3:
-                        last_3 = [df.iloc[i-j]["macd_hist"] for j in range(3)]
-                        if all(h > 0 for h in last_3 if not pd.isna(h)):
-                            exit_reason = "MACD bullish"
-                            exit_price = close
+                # Check MACD exit (unless disabled for this market)
+                if market not in DISABLE_MACD_EXIT:
+                    macd_hist = row["macd_hist"]
+                    if position.direction == "BUY" and macd_hist < 0:
+                        # Check 3 consecutive negative
+                        if i >= 3:
+                            last_3 = [df.iloc[i-j]["macd_hist"] for j in range(3)]
+                            if all(h < 0 for h in last_3 if not pd.isna(h)):
+                                exit_reason = "MACD bearish"
+                                exit_price = close
+                    elif position.direction == "SELL" and macd_hist > 0:
+                        if i >= 3:
+                            last_3 = [df.iloc[i-j]["macd_hist"] for j in range(3)]
+                            if all(h > 0 for h in last_3 if not pd.isna(h)):
+                                exit_reason = "MACD bullish"
+                                exit_price = close
 
                 # Close position if exit triggered
                 if exit_reason:
@@ -516,8 +558,14 @@ class Backtester:
                 if pd.isna(atr):
                     continue
 
-                stop_distance = atr * self.params["stop_atr_multiplier"]
-                limit_distance = stop_distance * self.params["reward_risk_ratio"]
+                # Calculate ATR-based stop, but respect minimum stop distance from config
+                atr_stop = atr * self.params["stop_atr_multiplier"]
+                min_stop = MIN_STOP_DISTANCE_MAP.get(market, 0.0)
+                stop_distance = max(atr_stop, min_stop)
+
+                # Use market-specific reward:risk ratio
+                rr_ratio = REWARD_RISK_MAP.get(market, self.params["reward_risk_ratio"])
+                limit_distance = stop_distance * rr_ratio
 
                 if direction == "BUY":
                     stop_price = close - stop_distance

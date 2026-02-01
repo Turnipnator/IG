@@ -111,6 +111,7 @@ MARKETS = [
         min_stop_distance=12.0,
         default_size=0.1,
         expiry="MAR-26",  # Monthly contract, not DFB
+        candle_interval=15,  # 15-min candles - backtest showed 5m too choppy (50% win -> 67% win)
         min_confidence=0.7,  # Higher threshold - backtest showed poor performance at 0.5
     ),
     MarketConfig(
