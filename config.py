@@ -96,6 +96,7 @@ MARKETS = [
         sector="Indices",
         min_stop_distance=1.0,
         default_size=1.0,
+        min_confidence=0.4,  # Lowered from 0.5 - backtest showed more trades with better P&L
     ),
     MarketConfig(
         epic="IX.D.NASDAQ.CASH.IP",
@@ -103,6 +104,7 @@ MARKETS = [
         sector="Indices",
         min_stop_distance=4.0,
         default_size=0.2,
+        min_confidence=0.4,  # Lowered from 0.5 - backtest showed more trades with better P&L
     ),
     MarketConfig(
         epic="EN.D.CL.Month1.IP",  # Changed from CC.D.CL.UNC.IP - CC.D EPICs don't support SPREADBET streaming
