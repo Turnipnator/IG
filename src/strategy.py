@@ -1,6 +1,10 @@
 """
 Trading strategy and decision engine.
 Combines technical indicators to generate trading signals.
+
+Supports multiple strategy profiles:
+- "default" (Big Winners): High R:R, no MACD exit - for Gold, Forex, Crude Oil
+- "indices" (Momentum): Fast EMAs, MACD exit ON - for S&P 500, NASDAQ 100
 """
 
 import logging
@@ -11,7 +15,7 @@ from typing import Optional
 import pandas as pd
 
 from src.indicators import add_all_indicators
-from config import STRATEGY_PARAMS, MarketConfig
+from config import STRATEGY_PARAMS, MarketConfig, StrategyConfig, get_strategy_for_market
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +68,10 @@ class TradingStrategy:
         """
         Analyze market data and generate a trading signal.
 
+        Uses market-specific strategy configuration for different approaches:
+        - Indices (S&P 500, NASDAQ): Fast momentum strategy with MACD exits
+        - Others (Gold, Forex): Big Winners strategy with high R:R
+
         Args:
             df: DataFrame with OHLCV data
             market: Market configuration
@@ -73,10 +81,26 @@ class TradingStrategy:
         Returns:
             TradeSignal with recommendation
         """
-        # Add indicators
-        df = add_all_indicators(df, self.params)
+        # Get market-specific strategy configuration
+        strategy = get_strategy_for_market(market)
 
-        if len(df) < self.params["ema_slow"]:
+        # Build params dict for indicators (merge strategy config)
+        params = {
+            "ema_fast": strategy.ema_fast,
+            "ema_medium": strategy.ema_medium,
+            "ema_slow": strategy.ema_slow,
+            "rsi_period": strategy.rsi_period,
+            "rsi_overbought": strategy.rsi_overbought,
+            "rsi_oversold": strategy.rsi_oversold,
+            "rsi_buy_max": strategy.rsi_buy_max,
+            "rsi_sell_min": strategy.rsi_sell_min,
+            "adx_threshold": strategy.adx_threshold,
+        }
+
+        # Add indicators with strategy-specific parameters
+        df = add_all_indicators(df, params)
+
+        if len(df) < strategy.ema_slow:
             return TradeSignal(
                 signal=Signal.HOLD,
                 epic=market.epic,
@@ -98,9 +122,9 @@ class TradingStrategy:
         adx = latest["adx"]
         close = latest["close"]
 
-        rsi_overbought = self.params.get("rsi_overbought", 70)
-        rsi_oversold = self.params.get("rsi_oversold", 30)
-        adx_threshold = self.params.get("adx_threshold", 25)
+        rsi_overbought = strategy.rsi_overbought
+        rsi_oversold = strategy.rsi_oversold
+        adx_threshold = strategy.adx_threshold
 
         # ADX filter: skip if market is ranging (no clear trend)
         if adx < adx_threshold:
@@ -115,16 +139,13 @@ class TradingStrategy:
                 reason=f"ADX too low ({adx:.1f} < {adx_threshold}), market ranging",
             )
 
-        # Calculate dynamic stop/limit based on ATR
-        atr_multiplier = 1.5
-        stop_distance = max(atr * atr_multiplier, market.min_stop_distance)
-        limit_distance = stop_distance * 2.0  # 2:1 reward/risk ratio
+        # Calculate dynamic stop/limit based on ATR and strategy R:R
+        stop_distance = max(atr * strategy.stop_atr_mult, market.min_stop_distance)
+        limit_distance = stop_distance * strategy.reward_risk  # Strategy-specific R:R
 
-        # RSI entry ranges - avoid entering when move is already exhausted
-        # Buy: RSI must be between oversold and 60 (momentum up, not extended)
-        # Sell: RSI must be between 40 and overbought (momentum down, not extended)
-        rsi_buy_max = self.params.get("rsi_buy_max", 60)
-        rsi_sell_min = self.params.get("rsi_sell_min", 40)
+        # RSI entry ranges from strategy config
+        rsi_buy_max = strategy.rsi_buy_max
+        rsi_sell_min = strategy.rsi_sell_min
 
         # Check for bullish setup
         bullish_ema = ema_fast > ema_medium > ema_slow
@@ -144,8 +165,9 @@ class TradingStrategy:
 
         # Generate signal with multi-timeframe confirmation
         if bullish_ema and price_above_ema and rsi_buy_valid:
-            # MACD pre-check: don't buy if exit would trigger immediately
-            if macd_already_bearish:
+            # MACD pre-check: only if strategy uses MACD exit
+            # Don't buy if exit would trigger immediately
+            if strategy.use_macd_exit and macd_already_bearish:
                 return TradeSignal(
                     signal=Signal.HOLD,
                     epic=market.epic,
@@ -157,9 +179,8 @@ class TradingStrategy:
                     reason=f"MACD already bearish (would exit immediately)",
                 )
 
-            # Multi-timeframe filter: require HTF alignment for entries
-            # Only BUY when hourly trend is BULLISH (not just "not bearish")
-            if htf_trend != "BULLISH":
+            # Multi-timeframe filter: check based on strategy requirement
+            if strategy.require_htf and htf_trend != "BULLISH":
                 return TradeSignal(
                     signal=Signal.HOLD,
                     epic=market.epic,
@@ -169,6 +190,19 @@ class TradingStrategy:
                     stop_distance=round(stop_distance, 2),
                     limit_distance=round(limit_distance, 2),
                     reason=f"HTF not aligned for BUY (HTF={htf_trend}, need BULLISH)",
+                )
+
+            # Even if HTF not required, never trade against it
+            if htf_trend == "BEARISH":
+                return TradeSignal(
+                    signal=Signal.HOLD,
+                    epic=market.epic,
+                    market_name=market.name,
+                    confidence=0.0,
+                    entry_price=current_price,
+                    stop_distance=round(stop_distance, 2),
+                    limit_distance=round(limit_distance, 2),
+                    reason=f"HTF opposing (BEARISH) - don't BUY against trend",
                 )
 
             confidence = self._calculate_confidence(
@@ -186,8 +220,8 @@ class TradingStrategy:
             )
 
         elif bearish_ema and price_below_ema and rsi_sell_valid:
-            # MACD pre-check: don't sell if exit would trigger immediately
-            if macd_already_bullish:
+            # MACD pre-check: only if strategy uses MACD exit
+            if strategy.use_macd_exit and macd_already_bullish:
                 return TradeSignal(
                     signal=Signal.HOLD,
                     epic=market.epic,
@@ -199,9 +233,8 @@ class TradingStrategy:
                     reason=f"MACD already bullish (would exit immediately)",
                 )
 
-            # Multi-timeframe filter: require HTF alignment for entries
-            # Only SELL when hourly trend is BEARISH (not just "not bullish")
-            if htf_trend != "BEARISH":
+            # Multi-timeframe filter: check based on strategy requirement
+            if strategy.require_htf and htf_trend != "BEARISH":
                 return TradeSignal(
                     signal=Signal.HOLD,
                     epic=market.epic,
@@ -211,6 +244,19 @@ class TradingStrategy:
                     stop_distance=round(stop_distance, 2),
                     limit_distance=round(limit_distance, 2),
                     reason=f"HTF not aligned for SELL (HTF={htf_trend}, need BEARISH)",
+                )
+
+            # Even if HTF not required, never trade against it
+            if htf_trend == "BULLISH":
+                return TradeSignal(
+                    signal=Signal.HOLD,
+                    epic=market.epic,
+                    market_name=market.name,
+                    confidence=0.0,
+                    entry_price=current_price,
+                    stop_distance=round(stop_distance, 2),
+                    limit_distance=round(limit_distance, 2),
+                    reason=f"HTF opposing (BULLISH) - don't SELL against trend",
                 )
 
             confidence = self._calculate_confidence(
@@ -342,24 +388,45 @@ def should_close_position(
     df: pd.DataFrame,
     direction: str,
     params: Optional[dict] = None,
+    market: Optional[MarketConfig] = None,
 ) -> tuple[bool, str]:
     """
     Check if an existing position should be closed.
 
-    Requires 3 consecutive candles with MACD histogram against the
-    position direction to confirm momentum has truly shifted,
-    avoiding premature exits on noise.
+    Exit conditions depend on market's strategy:
+    - Indices (Momentum): Use MACD exit after 3 consecutive opposite bars
+    - Others (Big Winners): NO MACD exit - let stop/limit handle exits
 
     Args:
         df: DataFrame with indicators
         direction: Current position direction ("BUY" or "SELL")
-        params: Strategy parameters
+        params: Strategy parameters (legacy, prefer market config)
+        market: Market configuration (used to get strategy-specific settings)
 
     Returns:
         Tuple of (should_close, reason)
     """
-    params = params or STRATEGY_PARAMS
-    df = add_all_indicators(df, params)
+    # Get strategy config if market provided
+    if market:
+        strategy = get_strategy_for_market(market)
+        use_macd_exit = strategy.use_macd_exit
+        rsi_overbought = strategy.rsi_overbought
+        rsi_oversold = strategy.rsi_oversold
+        indicator_params = {
+            "ema_fast": strategy.ema_fast,
+            "ema_medium": strategy.ema_medium,
+            "ema_slow": strategy.ema_slow,
+            "rsi_period": strategy.rsi_period,
+        }
+    else:
+        # Legacy fallback
+        params = params or STRATEGY_PARAMS
+        use_macd_exit = True  # Default to True for backward compatibility
+        rsi_overbought = params.get("rsi_overbought", 70)
+        rsi_oversold = params.get("rsi_oversold", 30)
+        indicator_params = params
+
+    df = add_all_indicators(df, indicator_params)
 
     if len(df) < 3:
         return False, ""
@@ -367,26 +434,21 @@ def should_close_position(
     latest = df.iloc[-1]
     rsi = latest["rsi"]
 
-    rsi_overbought = params.get("rsi_overbought", 70)
-    rsi_oversold = params.get("rsi_oversold", 30)
+    # RSI extreme exit (always active - protects against overextended moves)
+    if direction == "BUY" and rsi > rsi_overbought:
+        return True, f"RSI overbought ({rsi:.1f})"
+    if direction == "SELL" and rsi < rsi_oversold:
+        return True, f"RSI oversold ({rsi:.1f})"
 
-    # Check last 3 candles for sustained MACD histogram against position
-    last_3_macd = [df.iloc[-i]["macd_hist"] for i in range(1, 4)]
+    # MACD exit only if strategy uses it
+    if use_macd_exit:
+        last_3_macd = [df.iloc[-i]["macd_hist"] for i in range(1, 4)]
 
-    if direction == "BUY":
-        # Close long if RSI overbought
-        if rsi > rsi_overbought:
-            return True, f"RSI overbought ({rsi:.1f})"
-        # Close long if MACD histogram negative for 3 consecutive candles
-        if all(h < 0 for h in last_3_macd):
-            return True, "MACD histogram negative for 3 candles"
-
-    elif direction == "SELL":
-        # Close short if RSI oversold
-        if rsi < rsi_oversold:
-            return True, f"RSI oversold ({rsi:.1f})"
-        # Close short if MACD histogram positive for 3 consecutive candles
-        if all(h > 0 for h in last_3_macd):
-            return True, "MACD histogram positive for 3 candles"
+        if direction == "BUY":
+            if all(h < 0 for h in last_3_macd):
+                return True, "MACD histogram negative for 3 candles"
+        elif direction == "SELL":
+            if all(h > 0 for h in last_3_macd):
+                return True, "MACD histogram positive for 3 candles"
 
     return False, ""

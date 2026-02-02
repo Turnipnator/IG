@@ -589,8 +589,11 @@ def check_positions_from_stream() -> None:
         if df is None or df.empty:
             continue
 
+        # Get market config for strategy-specific exit rules
+        market_config = next((m for m in MARKETS if m.epic == position.epic), None)
+
         should_close, reason = should_close_position(
-            df, position.direction, STRATEGY_PARAMS
+            df, position.direction, STRATEGY_PARAMS, market=market_config
         )
 
         if should_close:

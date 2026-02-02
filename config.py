@@ -45,6 +45,25 @@ class TradingConfig:
 
 
 @dataclass
+class StrategyConfig:
+    """Strategy parameters for a specific market type."""
+    ema_fast: int = 9
+    ema_medium: int = 21
+    ema_slow: int = 50
+    rsi_period: int = 7
+    rsi_overbought: int = 70
+    rsi_oversold: int = 30
+    rsi_buy_max: int = 60
+    rsi_sell_min: int = 40
+    adx_threshold: int = 25
+    stop_atr_mult: float = 1.5
+    reward_risk: float = 2.0
+    min_confidence: float = 0.5
+    use_macd_exit: bool = True
+    require_htf: bool = False
+
+
+@dataclass
 class MarketConfig:
     """Market instrument configuration."""
     epic: str
@@ -55,6 +74,7 @@ class MarketConfig:
     expiry: str = "DFB"  # DFB for daily funded bets, or specific like "MAR-26"
     candle_interval: int = 5  # Candle duration in minutes (5 for indices/commodities, 15 for forex)
     min_confidence: float = 0.5  # Minimum confidence to enter (higher = more selective)
+    strategy: str = "default"  # Strategy profile to use: "default" or "indices"
 
 
 # Load configurations from environment
@@ -86,17 +106,80 @@ def load_trading_config() -> TradingConfig:
     )
 
 
-# Market configurations - IG EPICs for spread betting
-# Note: These are spread betting EPICs. CFD EPICs may differ slightly.
+# =============================================================================
+# STRATEGY PROFILES
+# =============================================================================
+# Based on comprehensive backtesting (30 days, £10k account)
+#
+# "Big Winners" Strategy (Gold, EUR/USD, Dollar Index, Crude Oil):
+#   - Low win rate (27%) but huge winners that dwarf losses
+#   - Average win £241, average loss £53 = 4.5:1 ratio
+#   - Monthly return: +24.6% (£2,462)
+#   - Key: High R:R (4.0), no MACD exit, low confidence threshold
+#
+# "Momentum" Strategy (S&P 500, NASDAQ 100):
+#   - High win rate (59%) with many smaller wins
+#   - Faster EMAs to catch momentum moves
+#   - Monthly return: +5.1% (£505)
+#   - Key: Fast EMAs (5/12/26), MACD exit ON, require HTF alignment
+
+STRATEGY_PROFILES = {
+    # Default strategy for most markets: "Big Winners"
+    # Optimized for Gold, EUR/USD, Dollar Index, Crude Oil
+    "default": StrategyConfig(
+        ema_fast=9,
+        ema_medium=21,
+        ema_slow=50,
+        rsi_period=7,
+        rsi_overbought=70,
+        rsi_oversold=30,
+        rsi_buy_max=60,
+        rsi_sell_min=40,
+        adx_threshold=25,
+        stop_atr_mult=1.5,
+        reward_risk=4.0,       # High R:R - let winners run big
+        min_confidence=0.4,    # Lower threshold - more entries
+        use_macd_exit=False,   # Don't cut winners short
+        require_htf=False,
+    ),
+
+    # Indices strategy: "Momentum"
+    # Optimized for S&P 500 and NASDAQ 100
+    "indices": StrategyConfig(
+        ema_fast=5,            # Faster EMAs for momentum
+        ema_medium=12,
+        ema_slow=26,
+        rsi_period=7,
+        rsi_overbought=70,
+        rsi_oversold=30,
+        rsi_buy_max=65,        # Wider RSI band
+        rsi_sell_min=35,       # Wider RSI band
+        adx_threshold=20,      # Lower ADX - catch more moves
+        stop_atr_mult=1.5,
+        reward_risk=2.0,       # Standard R:R - take profits
+        min_confidence=0.4,
+        use_macd_exit=True,    # MACD exit helps on indices
+        require_htf=True,      # Only trade with the trend
+    ),
+}
+
+
+# =============================================================================
+# MARKET CONFIGURATIONS
+# =============================================================================
+# IG EPICs for spread betting. CFD EPICs may differ.
 # Min stop distances from IG API (verified 2024)
+
 MARKETS = [
+    # --- INDICES (Momentum Strategy) ---
     MarketConfig(
         epic="IX.D.SPTRD.DAILY.IP",
         name="S&P 500",
         sector="Indices",
         min_stop_distance=1.0,
         default_size=1.0,
-        min_confidence=0.4,  # Lowered from 0.5 - backtest showed more trades with better P&L
+        min_confidence=0.4,
+        strategy="indices",    # Use Momentum strategy
     ),
     MarketConfig(
         epic="IX.D.NASDAQ.CASH.IP",
@@ -104,34 +187,21 @@ MARKETS = [
         sector="Indices",
         min_stop_distance=4.0,
         default_size=0.2,
-        min_confidence=0.4,  # Lowered from 0.5 - backtest showed more trades with better P&L
+        min_confidence=0.4,
+        strategy="indices",    # Use Momentum strategy
     ),
+
+    # --- COMMODITIES (Big Winners Strategy) ---
     MarketConfig(
-        epic="EN.D.CL.Month1.IP",  # Changed from CC.D.CL.UNC.IP - CC.D EPICs don't support SPREADBET streaming
+        epic="EN.D.CL.Month1.IP",
         name="Crude Oil",
         sector="Commodities",
         min_stop_distance=12.0,
         default_size=0.1,
-        expiry="MAR-26",  # Monthly contract, not DFB
-        candle_interval=15,  # 15-min candles - backtest showed 5m too choppy (50% win -> 67% win)
-        min_confidence=0.7,  # Higher threshold - backtest showed poor performance at 0.5
-    ),
-    MarketConfig(
-        epic="CO.D.DX.Month1.IP",  # Changed from CC.D.DX.UMP.IP - CC.D EPICs don't support SPREADBET streaming
-        name="Dollar Index (DXY)",
-        sector="Forex",
-        min_stop_distance=20.0,
-        default_size=1.0,
-        expiry="MAR-26",  # Monthly contract, not DFB
-        candle_interval=15,  # Forex needs longer timeframe to avoid chop
-    ),
-    MarketConfig(
-        epic="CS.D.EURUSD.TODAY.IP",
-        name="EUR/USD",
-        sector="Forex",
-        min_stop_distance=2.0,
-        default_size=0.5,
-        candle_interval=15,  # Forex needs longer timeframe to avoid chop
+        expiry="MAR-26",
+        candle_interval=15,
+        min_confidence=0.4,    # Lowered from 0.7 - Big Winners uses 0.4
+        strategy="default",
     ),
     MarketConfig(
         epic="CS.D.USCGC.TODAY.IP",
@@ -139,11 +209,42 @@ MARKETS = [
         sector="Commodities",
         min_stop_distance=1.0,
         default_size=0.1,
+        min_confidence=0.4,
+        strategy="default",    # Gold is the star performer!
+    ),
+
+    # --- FOREX (Big Winners Strategy) ---
+    MarketConfig(
+        epic="CO.D.DX.Month1.IP",
+        name="Dollar Index (DXY)",
+        sector="Forex",
+        min_stop_distance=20.0,
+        default_size=1.0,
+        expiry="MAR-26",
+        candle_interval=15,
+        min_confidence=0.4,
+        strategy="default",
+    ),
+    MarketConfig(
+        epic="CS.D.EURUSD.TODAY.IP",
+        name="EUR/USD",
+        sector="Forex",
+        min_stop_distance=2.0,
+        default_size=0.5,
+        candle_interval=15,
+        min_confidence=0.4,
+        strategy="default",
     ),
 ]
 
 
-# Strategy parameters
+def get_strategy_for_market(market: MarketConfig) -> StrategyConfig:
+    """Get the strategy configuration for a market."""
+    return STRATEGY_PROFILES.get(market.strategy, STRATEGY_PROFILES["default"])
+
+
+# Legacy STRATEGY_PARAMS for backward compatibility
+# New code should use get_strategy_for_market() instead
 STRATEGY_PARAMS = {
     "ema_fast": 9,
     "ema_medium": 21,
@@ -151,7 +252,7 @@ STRATEGY_PARAMS = {
     "rsi_period": 7,
     "rsi_overbought": 70,
     "rsi_oversold": 30,
-    "rsi_buy_max": 60,    # Don't buy when RSI already above 60 (move exhausted)
-    "rsi_sell_min": 40,   # Don't sell when RSI already below 40 (move exhausted)
-    "adx_threshold": 25,  # Minimum ADX for trend confirmation (below = ranging)
+    "rsi_buy_max": 60,
+    "rsi_sell_min": 40,
+    "adx_threshold": 25,
 }
