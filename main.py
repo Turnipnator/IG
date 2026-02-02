@@ -266,11 +266,14 @@ def update_htf_trends() -> None:
         market_regime_confirmed = True
         logger.info(f"Market regime (S&P 500): {market_regime} - {'Longs only' if market_regime == 'BULLISH' else 'Shorts only' if market_regime == 'BEARISH' else 'No trades'}")
     else:
-        # Couldn't fetch S&P data (e.g., API allowance exceeded) - default to BULLISH
+        # Couldn't fetch S&P data - default to BULLISH
         # This allows longs while blocking riskier shorts until we have real data
         if not market_regime_confirmed:
             market_regime = "BULLISH"
-            logger.info(f"Market regime: Defaulting to BULLISH (S&P 500 data unavailable - API allowance likely exceeded)")
+            if client and client.is_weekend():
+                logger.info("Market regime: Defaulting to BULLISH (weekend - markets closed)")
+            else:
+                logger.info("Market regime: Defaulting to BULLISH (S&P 500 data unavailable - possible API issue)")
 
 
 def on_price_update(epic: str, market: MarketStream) -> None:
