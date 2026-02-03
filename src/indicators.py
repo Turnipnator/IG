@@ -187,8 +187,9 @@ def calculate_adx(
     plus_di = 100 * plus_dm.ewm(alpha=1/period, min_periods=period).mean() / atr
     minus_di = 100 * minus_dm.ewm(alpha=1/period, min_periods=period).mean() / atr
 
-    # DX and ADX
-    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+    # DX and ADX (guard against division by zero when +DI and -DI both zero)
+    di_sum = plus_di + minus_di
+    dx = 100 * abs(plus_di - minus_di) / di_sum.replace(0, np.nan)
     adx = dx.ewm(alpha=1/period, min_periods=period).mean()
 
     return adx
