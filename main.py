@@ -219,7 +219,7 @@ def update_htf_trends() -> None:
             df = client.get_historical_prices(
                 market.epic,
                 resolution="HOUR",
-                num_points=50,  # Need 35+ for ADX calculation (2x14 smoothing periods)
+                num_points=35,  # Minimum ~28 for ADX (2x14 smoothing), +7 buffer
                 use_cache=False,
             )
 
