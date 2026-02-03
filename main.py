@@ -364,20 +364,11 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 )
                 return
 
-            # Get regime-adjusted parameters
-            regime_params = get_regime_params(per_market_regime)
-
-            # Check if strategy type is allowed in this regime
-            if trade_signal.signal == Signal.BUY and not regime_params.allow_trend_follow:
-                logger.info(
-                    f"{market.name}: Trend-follow (BUY) blocked in {per_market_regime.code} regime"
-                )
-                return
-            if trade_signal.signal == Signal.SELL and not regime_params.allow_trend_follow:
-                logger.info(
-                    f"{market.name}: Trend-follow (SELL) blocked in {per_market_regime.code} regime"
-                )
-                return
+            # Note: Removed regime-based trend-follow blocking.
+            # The per-market strategy profiles already have ADX thresholds built into
+            # signal generation (ADX 20 for indices, ADX 25 for others).
+            # The regime system was using hourly data with insufficient points,
+            # causing ADX=NaN and false RANGING classification that blocked valid signals.
 
         # Get balance and positions (REST API calls)
         balance = client.get_balance()
