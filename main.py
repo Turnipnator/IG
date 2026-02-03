@@ -131,14 +131,16 @@ def initialize_streaming(preserved_candles: dict = None) -> bool:
         is_demo = ig_config.acc_type.upper() == "DEMO"
 
         # Switch to SPREADBET account for streaming (CFD accounts don't support streaming)
-        # ALWAYS call switch_account to ensure tokens are properly associated with SPREADBET context
         spreadbet_id = client.get_spreadbet_account_id()
         if spreadbet_id:
-            logger.info(f"Ensuring SPREADBET account ({spreadbet_id}) for streaming (current: {client.account_id})...")
-            if not client.switch_account(spreadbet_id):
-                logger.warning("Failed to switch to SPREADBET account")
+            if client.account_id == spreadbet_id:
+                logger.info(f"Already on SPREADBET account ({spreadbet_id})")
             else:
-                logger.info(f"SPREADBET account confirmed - tokens refreshed")
+                logger.info(f"Switching to SPREADBET account ({spreadbet_id})...")
+                if not client.switch_account(spreadbet_id):
+                    logger.warning("Failed to switch to SPREADBET account")
+                else:
+                    logger.info(f"Switched to SPREADBET account")
         else:
             logger.warning("No SPREADBET account found - streaming may not work")
 
