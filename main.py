@@ -377,7 +377,15 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         if not balance:
             return
 
-        positions = client.get_positions()
+        # Use both API positions AND local known_positions to catch duplicates
+        # This fixes race condition where API doesn't return newly opened positions immediately
+        api_positions = client.get_positions()
+        local_positions = list(known_positions.values())
+
+        # Merge: use API positions but add any local positions not in API response
+        api_deal_ids = {p.deal_id for p in api_positions}
+        positions = api_positions + [p for p in local_positions if p.deal_id not in api_deal_ids]
+
         trading_config = load_trading_config()
 
         # Validate trade
