@@ -133,14 +133,14 @@ STRATEGY_PROFILES = {
         rsi_period=7,
         rsi_overbought=70,
         rsi_oversold=30,
-        rsi_buy_max=60,
-        rsi_sell_min=40,
+        rsi_buy_max=55,        # Don't buy into overbought (was 60)
+        rsi_sell_min=45,       # Don't short into oversold (was 40)
         adx_threshold=25,
         stop_atr_mult=1.5,
         reward_risk=4.0,       # High R:R - let winners run big
-        min_confidence=0.4,    # Lower threshold - more entries
+        min_confidence=0.55,   # Higher threshold - quality over quantity (was 0.4)
         use_macd_exit=False,   # Don't cut winners short
-        require_htf=False,
+        require_htf=True,      # Require HTF confirmation (was False)
     ),
 
     # Indices strategy: "Momentum"
@@ -152,12 +152,12 @@ STRATEGY_PROFILES = {
         rsi_period=7,
         rsi_overbought=70,
         rsi_oversold=30,
-        rsi_buy_max=65,        # Wider RSI band
-        rsi_sell_min=35,       # Wider RSI band
+        rsi_buy_max=55,        # Don't buy into overbought (was 65)
+        rsi_sell_min=45,       # Don't short into oversold (was 35)
         adx_threshold=20,      # Lower ADX - catch more moves
         stop_atr_mult=1.5,
         reward_risk=2.0,       # Standard R:R - take profits
-        min_confidence=0.4,
+        min_confidence=0.55,   # Higher threshold (was 0.4)
         use_macd_exit=True,    # MACD exit helps on indices
         require_htf=True,      # Only trade with the trend
     ),
@@ -178,7 +178,7 @@ MARKETS = [
         sector="Indices",
         min_stop_distance=1.0,
         default_size=1.0,
-        min_confidence=0.4,
+        min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="indices",    # Use Momentum strategy
     ),
     MarketConfig(
@@ -187,7 +187,7 @@ MARKETS = [
         sector="Indices",
         min_stop_distance=4.0,
         default_size=0.2,
-        min_confidence=0.4,
+        min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="indices",    # Use Momentum strategy
     ),
 
@@ -200,7 +200,7 @@ MARKETS = [
         default_size=0.1,
         expiry="MAR-26",
         candle_interval=15,
-        min_confidence=0.4,    # Lowered from 0.7 - Big Winners uses 0.4
+        min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="default",
     ),
     MarketConfig(
@@ -209,7 +209,7 @@ MARKETS = [
         sector="Commodities",
         min_stop_distance=1.0,
         default_size=0.1,
-        min_confidence=0.4,
+        min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="default",    # Gold is the star performer!
     ),
 
@@ -222,7 +222,7 @@ MARKETS = [
         default_size=1.0,
         expiry="MAR-26",
         candle_interval=15,
-        min_confidence=0.4,
+        min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="default",
     ),
     MarketConfig(
@@ -232,7 +232,7 @@ MARKETS = [
         min_stop_distance=2.0,
         default_size=0.5,
         candle_interval=15,
-        min_confidence=0.4,
+        min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="default",
     ),
 ]

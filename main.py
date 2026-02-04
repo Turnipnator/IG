@@ -419,7 +419,8 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 del loss_cooldown_until[epic]
 
         # Check general cooldown - don't re-enter same market too quickly after closing
-        cooldown_candles = 3
+        # Increased from 3 to 6 candles to prevent chasing exhausted moves
+        cooldown_candles = 6
         cooldown_mins = market_config.candle_interval * cooldown_candles
 
         # Apply regime cooldown multiplier (longer cooldowns in uncertain regimes)
