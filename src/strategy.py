@@ -438,19 +438,21 @@ def should_close_position(
     direction: str,
     params: Optional[dict] = None,
     market: Optional[MarketConfig] = None,
+    htf_trend: str = "NEUTRAL",
 ) -> tuple[bool, str]:
     """
     Check if an existing position should be closed.
 
     Exit conditions depend on market's strategy:
     - Indices (Momentum): Use MACD exit after 3 consecutive opposite bars
-    - Others (Big Winners): NO MACD exit - let stop/limit handle exits
+    - Others (Big Winners): Use ADX/HTF dynamic exit - close if conditions deteriorate
 
     Args:
         df: DataFrame with indicators
         direction: Current position direction ("BUY" or "SELL")
         params: Strategy parameters (legacy, prefer market config)
         market: Market configuration (used to get strategy-specific settings)
+        htf_trend: Current higher timeframe trend ("BULLISH", "BEARISH", "NEUTRAL")
 
     Returns:
         Tuple of (should_close, reason)
@@ -461,6 +463,7 @@ def should_close_position(
         use_macd_exit = strategy.use_macd_exit
         rsi_overbought = strategy.rsi_overbought
         rsi_oversold = strategy.rsi_oversold
+        adx_threshold = strategy.adx_threshold
         indicator_params = {
             "ema_fast": strategy.ema_fast,
             "ema_medium": strategy.ema_medium,
@@ -473,6 +476,7 @@ def should_close_position(
         use_macd_exit = True  # Default to True for backward compatibility
         rsi_overbought = params.get("rsi_overbought", 70)
         rsi_oversold = params.get("rsi_oversold", 30)
+        adx_threshold = params.get("adx_threshold", 25)
         indicator_params = params
 
     df = add_all_indicators(df, indicator_params)
@@ -482,6 +486,7 @@ def should_close_position(
 
     latest = df.iloc[-1]
     rsi = latest["rsi"]
+    adx = latest["adx"]
 
     # RSI extreme exit (always active - protects against overextended moves)
     if direction == "BUY" and rsi > rsi_overbought:
@@ -489,7 +494,7 @@ def should_close_position(
     if direction == "SELL" and rsi < rsi_oversold:
         return True, f"RSI oversold ({rsi:.1f})"
 
-    # MACD exit only if strategy uses it
+    # MACD exit only if strategy uses it (indices)
     if use_macd_exit:
         last_3_macd = [df.iloc[-i]["macd_hist"] for i in range(1, 4)]
 
@@ -499,5 +504,20 @@ def should_close_position(
         elif direction == "SELL":
             if all(h > 0 for h in last_3_macd):
                 return True, "MACD histogram positive for 3 candles"
+
+    # Dynamic exit for non-MACD strategies (Gold, Forex, etc.)
+    # These strategies need protection when market conditions change
+    if not use_macd_exit:
+        # ADX ranging exit: close if market has gone ranging
+        # Use a slightly lower threshold to avoid premature exits
+        adx_exit_threshold = adx_threshold - 3  # e.g., 25 -> 22
+        if adx < adx_exit_threshold:
+            return True, f"Market turned ranging (ADX {adx:.1f} < {adx_exit_threshold})"
+
+        # HTF reversal exit: close if higher timeframe trend reversed against us
+        if direction == "BUY" and htf_trend == "BEARISH":
+            return True, f"HTF trend reversed to BEARISH"
+        if direction == "SELL" and htf_trend == "BULLISH":
+            return True, f"HTF trend reversed to BULLISH"
 
     return False, ""

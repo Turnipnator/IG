@@ -594,8 +594,12 @@ def check_positions_from_stream() -> None:
         # Get market config for strategy-specific exit rules
         market_config = next((m for m in MARKETS if m.epic == position.epic), None)
 
+        # Get current HTF trend for dynamic exit decisions
+        current_htf_trend = htf_trends.get(position.epic, "NEUTRAL")
+
         should_close, reason = should_close_position(
-            df, position.direction, STRATEGY_PARAMS, market=market_config
+            df, position.direction, STRATEGY_PARAMS, market=market_config,
+            htf_trend=current_htf_trend
         )
 
         if should_close:
