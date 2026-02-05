@@ -157,6 +157,14 @@ class TradingStrategy:
         price_below_ema = close < ema_slow
         rsi_sell_valid = rsi_sell_min < rsi < rsi_overbought
 
+        # Pullback filter: price must be near fast EMA (not extended)
+        # For BUY: price should have dipped toward fast EMA (not too far above it)
+        # For SELL: price should have bounced toward fast EMA (not too far below it)
+        pullback_threshold = strategy.pullback_pct / 100
+        price_distance_pct = (close - ema_fast) / ema_fast
+        buy_pullback_valid = price_distance_pct <= pullback_threshold  # Price near/below fast EMA
+        sell_pullback_valid = price_distance_pct >= -pullback_threshold  # Price near/above fast EMA
+
         # MACD pre-check: don't enter if exit condition is already true
         # This prevents opening and immediately closing (losing the spread)
         last_3_macd = [df.iloc[-i]["macd_hist"] for i in range(1, 4)] if len(df) >= 4 else [0]
@@ -165,6 +173,19 @@ class TradingStrategy:
 
         # Generate signal with multi-timeframe confirmation
         if bullish_ema and price_above_ema and rsi_buy_valid:
+            # Pullback filter: price must be near fast EMA (not overextended)
+            if not buy_pullback_valid:
+                return TradeSignal(
+                    signal=Signal.HOLD,
+                    epic=market.epic,
+                    market_name=market.name,
+                    confidence=0.0,
+                    entry_price=current_price,
+                    stop_distance=round(stop_distance, 2),
+                    limit_distance=round(limit_distance, 2),
+                    reason=f"Price too far from EMA ({price_distance_pct*100:.2f}% > {strategy.pullback_pct}%), wait for pullback",
+                )
+
             # MACD pre-check: only if strategy uses MACD exit
             # Don't buy if exit would trigger immediately
             if strategy.use_macd_exit and macd_already_bearish:
@@ -220,6 +241,19 @@ class TradingStrategy:
             )
 
         elif bearish_ema and price_below_ema and rsi_sell_valid:
+            # Pullback filter: price must be near fast EMA (not overextended)
+            if not sell_pullback_valid:
+                return TradeSignal(
+                    signal=Signal.HOLD,
+                    epic=market.epic,
+                    market_name=market.name,
+                    confidence=0.0,
+                    entry_price=current_price,
+                    stop_distance=round(stop_distance, 2),
+                    limit_distance=round(limit_distance, 2),
+                    reason=f"Price too far from EMA ({price_distance_pct*100:.2f}% < -{strategy.pullback_pct}%), wait for bounce",
+                )
+
             # MACD pre-check: only if strategy uses MACD exit
             if strategy.use_macd_exit and macd_already_bullish:
                 return TradeSignal(

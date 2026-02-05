@@ -61,6 +61,7 @@ class StrategyConfig:
     min_confidence: float = 0.5
     use_macd_exit: bool = True
     require_htf: bool = False
+    pullback_pct: float = 0.3  # Max % distance from fast EMA to enter (0.3 = 0.3%)
 
 
 @dataclass
@@ -141,6 +142,7 @@ STRATEGY_PROFILES = {
         min_confidence=0.55,   # Higher threshold - quality over quantity (was 0.4)
         use_macd_exit=False,   # Don't cut winners short
         require_htf=True,      # Require HTF confirmation (was False)
+        pullback_pct=0.3,      # Price must be within 0.3% of fast EMA
     ),
 
     # Indices strategy: "Momentum"
@@ -160,6 +162,7 @@ STRATEGY_PROFILES = {
         min_confidence=0.55,   # Higher threshold (was 0.4)
         use_macd_exit=True,    # MACD exit helps on indices
         require_htf=True,      # Only trade with the trend
+        pullback_pct=0.2,      # Tighter: price within 0.2% of fast EMA (indices move fast)
     ),
 }
 
