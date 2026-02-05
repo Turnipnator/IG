@@ -187,7 +187,7 @@ def initialize_streaming(preserved_candles: dict = None) -> bool:
                 market.epic,
                 resolution=resolution,
                 num_points=trading_config.price_data_points,
-                use_cache=False,  # Force fresh data at startup
+                use_cache=True,  # Use disk cache if fresh (< 10 mins) to save API calls
             )
             if df is not None and not df.empty:
                 stream_service.initialize_candles(market.epic, df)
@@ -220,7 +220,7 @@ def update_htf_trends() -> None:
                 market.epic,
                 resolution="HOUR",
                 num_points=35,  # Minimum ~28 for ADX (2x14 smoothing), +7 buffer
-                use_cache=False,
+                use_cache=True,  # Use disk cache if fresh to save API calls
             )
 
             if df is None or len(df) < 21:

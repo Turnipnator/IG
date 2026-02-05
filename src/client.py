@@ -3,10 +3,13 @@ IG Markets API Client for spread betting.
 Handles authentication, market data, and order execution.
 """
 
+import json
 import logging
+import os
 from typing import Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import requests
 import pandas as pd
@@ -14,6 +17,11 @@ import pandas as pd
 from config import IGConfig
 
 logger = logging.getLogger(__name__)
+
+# Disk cache for surviving restarts (saves API allowance)
+CACHE_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
+PRICE_CACHE_FILE = CACHE_DIR / "price_cache.json"
+DISK_CACHE_TTL_MINUTES = 10  # Use disk cache if < 10 mins old
 
 
 @dataclass
@@ -69,6 +77,9 @@ class IGClient:
         self._api_calls_today = 0
         self._last_reset_date = datetime.now().date()
         self.last_error: Optional[str] = None
+
+        # Try to load disk cache from previous session
+        self._load_disk_cache()
 
     @property
     def is_logged_in(self) -> bool:
@@ -299,13 +310,16 @@ class IGClient:
         return None
 
     def _cache_prices(self, epic: str, df: pd.DataFrame) -> None:
-        """Store price data in cache."""
+        """Store price data in cache (memory + disk)."""
         self._price_cache[epic] = CachedPriceData(
             data=df.copy(),
             fetched_at=datetime.now(),
             epic=epic
         )
         logger.debug(f"Cached price data for {epic}")
+
+        # Persist to disk for surviving restarts
+        self._save_disk_cache()
 
     def clear_cache(self, epic: Optional[str] = None) -> None:
         """Clear price cache for a specific epic or all."""
@@ -327,6 +341,63 @@ class IGClient:
                 "rows": len(cached.data)
             }
         return status
+
+    def _load_disk_cache(self) -> None:
+        """Load price cache from disk if fresh (saves API calls on restart)."""
+        try:
+            if not PRICE_CACHE_FILE.exists():
+                return
+
+            with open(PRICE_CACHE_FILE, "r") as f:
+                cache_data = json.load(f)
+
+            loaded_count = 0
+            for epic, item in cache_data.items():
+                fetched_at = datetime.fromisoformat(item["fetched_at"])
+                age = datetime.now() - fetched_at
+
+                # Only use if fresh enough
+                if age < timedelta(minutes=DISK_CACHE_TTL_MINUTES):
+                    df = pd.DataFrame(item["data"])
+                    # Convert date column back to datetime
+                    if "date" in df.columns:
+                        df["date"] = pd.to_datetime(df["date"])
+                    self._price_cache[epic] = CachedPriceData(
+                        data=df,
+                        fetched_at=fetched_at,
+                        epic=epic
+                    )
+                    loaded_count += 1
+
+            if loaded_count > 0:
+                logger.info(f"Loaded {loaded_count} markets from disk cache (< {DISK_CACHE_TTL_MINUTES} mins old)")
+
+        except Exception as e:
+            logger.debug(f"Could not load disk cache: {e}")
+
+    def _save_disk_cache(self) -> None:
+        """Save current price cache to disk for surviving restarts."""
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+            cache_data = {}
+            for epic, cached in self._price_cache.items():
+                # Convert DataFrame to JSON-serializable format
+                df_dict = cached.data.copy()
+                if "date" in df_dict.columns:
+                    df_dict["date"] = df_dict["date"].astype(str)
+                cache_data[epic] = {
+                    "fetched_at": cached.fetched_at.isoformat(),
+                    "data": df_dict.to_dict(orient="records")
+                }
+
+            with open(PRICE_CACHE_FILE, "w") as f:
+                json.dump(cache_data, f)
+
+            logger.debug(f"Saved {len(cache_data)} markets to disk cache")
+
+        except Exception as e:
+            logger.warning(f"Could not save disk cache: {e}")
 
     def is_weekend(self) -> bool:
         """Check if it's currently weekend (markets closed)."""
