@@ -542,11 +542,13 @@ class IGClient:
             if response.status_code == 200:
                 result = response.json()
                 deal_ref = result.get("dealReference")
-                logger.info(f"Position opened: {deal_ref} - {direction} {size} {epic}")
 
-                # Confirm the deal
+                # Confirm the deal - may be rejected by IG
                 self.last_error = None
-                return self._confirm_deal(deal_ref)
+                confirmation = self._confirm_deal(deal_ref)
+                if confirmation:
+                    logger.info(f"Position opened: {confirmation.get('dealId')} - {direction} {size} {epic}")
+                return confirmation
             else:
                 try:
                     error_data = response.json()
