@@ -167,12 +167,15 @@ def initialize_streaming(preserved_candles: dict = None) -> bool:
             logger.error("Failed to subscribe to markets")
             return False
 
-        # Initialize candles - prefer preserved data, then API, then start fresh
+        # Initialize candles - prefer: preserved > disk cache > API
         logger.info("Initializing candle history...")
         trading_config = load_trading_config()
 
+        # Try loading streamed candles from disk first (0 API calls)
+        disk_candles = stream_service.load_candles_from_disk()
+
         for market in MARKETS:
-            # First try preserved candles from previous session
+            # 1. Preserved candles from stream reconnect (in-memory)
             if preserved_candles and market.epic in preserved_candles:
                 df = preserved_candles[market.epic]
                 if df is not None and not df.empty:
@@ -180,14 +183,21 @@ def initialize_streaming(preserved_candles: dict = None) -> bool:
                     logger.info(f"  {market.name}: Restored {len(df)} candles from previous session")
                     continue
 
-            # Fall back to API
+            # 2. Disk cache from previous restart (0 API calls)
+            if market.epic in disk_candles:
+                df = disk_candles[market.epic]
+                if df is not None and not df.empty:
+                    stream_service.initialize_candles(market.epic, df)
+                    continue
+
+            # 3. Fall back to API (costs data points)
             rate_limiter.wait_if_needed()
             resolution = f"MINUTE_{market.candle_interval}"
             df = client.get_historical_prices(
                 market.epic,
                 resolution=resolution,
                 num_points=trading_config.price_data_points,
-                use_cache=True,  # Use disk cache if fresh (< 10 mins) to save API calls
+                use_cache=True,  # Use price cache if fresh
             )
             if df is not None and not df.empty:
                 stream_service.initialize_candles(market.epic, df)
@@ -727,6 +737,11 @@ def signal_handler(signum, frame):
     """Handle shutdown signals gracefully."""
     global running
     logger.info(f"Received signal {signum}, shutting down...")
+
+    # Save candle data to disk so next restart doesn't need API calls
+    if stream_service:
+        stream_service.save_candles_to_disk()
+
     running = False
 
 
@@ -804,7 +819,8 @@ async def main_async():
         import schedule
 
         schedule.every(6).hours.do(refresh_session)
-        schedule.every(4).hours.do(update_htf_trends)  # Was 1 hour - reduced to conserve API allowance
+        schedule.every(8).hours.do(update_htf_trends)  # 3x/day = 630/week (was 4hrs = 8,820/week!)
+        schedule.every(15).minutes.do(stream_service.save_candles_to_disk)  # Persist candles for restarts
         schedule.every().day.at("21:00").do(send_daily_summary)
 
         # Run scheduler in background

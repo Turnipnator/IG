@@ -10,6 +10,8 @@ services:
     volumes:
       # Persist logs outside container
       - ./logs:/app/logs
+      # Persist price cache to survive rebuilds (saves API allowance)
+      - ./data:/app/data
     environment:
       - TZ=Europe/London
       - PYTHONUNBUFFERED=1  # Ensure logs appear immediately

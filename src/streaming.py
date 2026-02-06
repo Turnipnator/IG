@@ -5,14 +5,21 @@ Provides real-time price updates without consuming historical data allowance.
 Aggregates tick data into candles for indicator calculation.
 """
 
+import json
 import logging
+import os
 import threading
 from datetime import datetime, timedelta
 from typing import Optional, Callable, Any
 from dataclasses import dataclass, field
 from collections import deque
+from pathlib import Path
 
 import pandas as pd
+
+# Disk persistence for candle data
+CANDLE_CACHE_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
+CANDLE_CACHE_FILE = CANDLE_CACHE_DIR / "streamed_candles.json"
 
 try:
     from lightstreamer.client import (
@@ -442,6 +449,80 @@ class IGStreamService:
         if market:
             return market.market_state == "TRADEABLE"
         return False
+
+    def save_candles_to_disk(self) -> None:
+        """Persist all candle data to disk for surviving restarts."""
+        try:
+            CANDLE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+            cache_data = {}
+            for epic, market in self.markets.items():
+                if market.candles:
+                    cache_data[epic] = {
+                        "name": market.name,
+                        "candle_interval": market.candle_interval,
+                        "saved_at": datetime.now().isoformat(),
+                        "candles": [
+                            {
+                                "timestamp": c.timestamp.isoformat() if isinstance(c.timestamp, datetime) else str(c.timestamp),
+                                "open": c.open,
+                                "high": c.high,
+                                "low": c.low,
+                                "close": c.close,
+                                "volume": c.volume,
+                            }
+                            for c in market.candles
+                        ]
+                    }
+
+            if cache_data:
+                with open(CANDLE_CACHE_FILE, "w") as f:
+                    json.dump(cache_data, f)
+                total = sum(len(v["candles"]) for v in cache_data.values())
+                logger.info(f"Saved {total} candles across {len(cache_data)} markets to disk")
+
+        except Exception as e:
+            logger.warning(f"Could not save candles to disk: {e}")
+
+    def load_candles_from_disk(self) -> dict:
+        """
+        Load candle data from disk (saved by previous session).
+
+        Returns:
+            Dict of epic -> DataFrame with candle data, or empty dict
+        """
+        try:
+            if not CANDLE_CACHE_FILE.exists():
+                return {}
+
+            with open(CANDLE_CACHE_FILE, "r") as f:
+                cache_data = json.load(f)
+
+            result = {}
+            for epic, item in cache_data.items():
+                saved_at = datetime.fromisoformat(item["saved_at"])
+                age = datetime.now() - saved_at
+
+                # Use if less than 30 mins old (candles from stream are valuable)
+                if age < timedelta(minutes=30):
+                    candles = item["candles"]
+                    if candles:
+                        df = pd.DataFrame(candles)
+                        df["date"] = pd.to_datetime(df["timestamp"])
+                        df = df.drop(columns=["timestamp"])
+                        result[epic] = df
+                        logger.info(f"  {item.get('name', epic)}: Loaded {len(candles)} candles from disk (age: {age.seconds // 60}m)")
+                else:
+                    logger.debug(f"  {epic}: Disk cache too old ({age.seconds // 60}m)")
+
+            if result:
+                logger.info(f"Loaded candle data for {len(result)} markets from disk (0 API calls)")
+
+            return result
+
+        except Exception as e:
+            logger.warning(f"Could not load candles from disk: {e}")
+            return {}
 
     def get_status(self) -> dict:
         """Get streaming service status."""
