@@ -721,6 +721,57 @@ class IGClient:
             logger.error(f"Deal confirmation failed: {e}")
             return None
 
+    def update_position_stop(
+        self,
+        deal_id: str,
+        new_stop_level: float,
+        new_limit_level: Optional[float] = None,
+    ) -> bool:
+        """
+        Update the stop level on an existing position (used for break-even trail).
+
+        Args:
+            deal_id: The deal ID to update
+            new_stop_level: New stop price level
+            new_limit_level: New limit price level (unchanged if None)
+
+        Returns:
+            True if successfully updated
+        """
+        if not self.is_logged_in:
+            logger.error("Not logged in")
+            return False
+
+        payload = {
+            "stopLevel": new_stop_level,
+        }
+        if new_limit_level is not None:
+            payload["limitLevel"] = new_limit_level
+
+        try:
+            response = self.session.put(
+                f"{self.config.base_url}/positions/otc/{deal_id}",
+                json=payload,
+                headers=self._get_headers(version="2"),
+                timeout=30,
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                deal_ref = result.get("dealReference")
+                confirmation = self._confirm_deal(deal_ref)
+                if confirmation:
+                    logger.info(f"Stop updated for {deal_id}: new stop={new_stop_level}")
+                    return True
+                return False
+            else:
+                logger.error(f"Failed to update stop for {deal_id}: {response.text}")
+                return False
+
+        except requests.RequestException as e:
+            logger.error(f"Update stop request failed: {e}")
+            return False
+
     def search_markets(self, search_term: str) -> list[dict]:
         """Search for markets by name or keyword."""
         if not self.is_logged_in:

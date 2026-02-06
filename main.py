@@ -19,6 +19,7 @@ from config import (
     load_trading_config,
     MARKETS,
     STRATEGY_PARAMS,
+    get_strategy_for_market,
 )
 from src.client import IGClient, Position
 from src.strategy import TradingStrategy, Signal, should_close_position
@@ -71,6 +72,9 @@ market_regimes: dict[str, MarketRegime] = {}  # epic -> MarketRegime
 # Track loss cooldowns separately (1hr after loss vs 15min after any close)
 loss_cooldown_until: dict[str, datetime] = {}  # epic -> datetime when cooldown ends
 LOSS_COOLDOWN_MINUTES = 60
+
+# Track positions that have had their stop moved to break-even
+breakeven_applied: set[str] = set()  # deal_ids with BE stop applied
 
 
 def initialize() -> bool:
@@ -566,6 +570,9 @@ def check_positions_from_stream() -> None:
 
             logger.info(f"Position {deal_id} closed externally (stop/limit hit): {market_name}")
 
+            # Clean up break-even tracking
+            breakeven_applied.discard(deal_id)
+
             # Record close time for cooldown
             last_close_time[known_pos.epic] = datetime.now()
 
@@ -591,6 +598,71 @@ def check_positions_from_stream() -> None:
     # Update known positions with current state
     for position in positions:
         known_positions[position.deal_id] = position
+
+    # Break-even trailing stop: move stop to entry when profit reaches threshold
+    for position in positions:
+        if position.deal_id in breakeven_applied:
+            continue  # Already moved to break-even
+
+        if position.open_level is None or position.stop_level is None:
+            continue
+
+        market_config = next((m for m in MARKETS if m.epic == position.epic), None)
+        if not market_config:
+            continue
+
+        strategy_cfg = get_strategy_for_market(market_config)
+        trigger_pct = strategy_cfg.breakeven_trigger_pct
+
+        # Calculate stop distance and current profit in points
+        if position.direction == "BUY":
+            stop_distance = position.open_level - position.stop_level
+            market_data = stream_service.get_market_data(position.epic)
+            if not market_data or not market_data.bid:
+                continue
+            current_profit = market_data.bid - position.open_level
+        else:  # SELL
+            stop_distance = position.stop_level - position.open_level
+            market_data = stream_service.get_market_data(position.epic)
+            if not market_data or not market_data.offer:
+                continue
+            current_profit = position.open_level - market_data.offer
+
+        if stop_distance <= 0:
+            continue
+
+        # Check if profit has reached the trigger threshold
+        trigger_points = stop_distance * trigger_pct
+        if current_profit >= trigger_points:
+            # Move stop to break-even (entry price)
+            new_stop = position.open_level
+            logger.info(
+                f"Break-even trigger for {market_config.name}: "
+                f"profit {current_profit:.1f} pts >= {trigger_points:.1f} pts ({trigger_pct:.0%} of stop). "
+                f"Moving stop {position.stop_level:.1f} -> {new_stop:.1f}"
+            )
+
+            success = client.update_position_stop(
+                deal_id=position.deal_id,
+                new_stop_level=new_stop,
+                new_limit_level=position.limit_level,
+            )
+
+            if success:
+                breakeven_applied.add(position.deal_id)
+                if telegram_loop:
+                    asyncio.run_coroutine_threadsafe(
+                        telegram.send_notification(
+                            f"🔒 *Break-Even Stop Set*\n\n"
+                            f"Market: {market_config.name}\n"
+                            f"Direction: {position.direction}\n"
+                            f"Entry: {position.open_level}\n"
+                            f"Stop moved: {position.stop_level:.1f} → {new_stop:.1f}\n"
+                            f"Current profit: {current_profit:.1f} pts\n\n"
+                            f"_Trade is now risk-free!_"
+                        ),
+                        telegram_loop,
+                    )
 
     for position in positions:
         market = stream_service.get_market_data(position.epic)
@@ -627,6 +699,9 @@ def check_positions_from_stream() -> None:
 
                 # Remove from known_positions so it's not flagged as external close
                 known_positions.pop(position.deal_id, None)
+
+                # Clean up break-even tracking
+                breakeven_applied.discard(position.deal_id)
 
                 # Record close time for cooldown
                 last_close_time[position.epic] = datetime.now()

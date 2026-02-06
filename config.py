@@ -62,6 +62,7 @@ class StrategyConfig:
     use_macd_exit: bool = True
     require_htf: bool = False
     pullback_pct: float = 0.3  # Max % distance from fast EMA to enter (0.3 = 0.3%)
+    breakeven_trigger_pct: float = 0.5  # Move stop to break-even when profit >= X% of stop distance (0.5 = 50%)
 
 
 @dataclass
@@ -143,6 +144,7 @@ STRATEGY_PROFILES = {
         use_macd_exit=False,   # Don't cut winners short
         require_htf=True,      # Require HTF confirmation (was False)
         pullback_pct=0.3,      # Price must be within 0.3% of fast EMA
+        breakeven_trigger_pct=0.5,  # Move stop to entry when 50% of stop distance reached
     ),
 
     # Indices strategy: "Momentum"
@@ -163,6 +165,7 @@ STRATEGY_PROFILES = {
         use_macd_exit=True,    # MACD exit helps on indices
         require_htf=True,      # Only trade with the trend
         pullback_pct=0.2,      # Tighter: price within 0.2% of fast EMA (indices move fast)
+        breakeven_trigger_pct=0.5,  # Move stop to entry when 50% of stop distance reached
     ),
 }
 
