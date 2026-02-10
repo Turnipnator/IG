@@ -76,6 +76,9 @@ LOSS_COOLDOWN_MINUTES = 60
 # Track positions that have had their stop moved to break-even
 breakeven_applied: set[str] = set()  # deal_ids with BE stop applied
 
+# Track ATR trailing stop levels (after break-even, trail ratchets stop further)
+trailing_stop_levels: dict[str, float] = {}  # deal_id -> current trail stop level
+
 
 def initialize() -> bool:
     """Initialize all components."""
@@ -570,8 +573,9 @@ def check_positions_from_stream() -> None:
 
             logger.info(f"Position {deal_id} closed externally (stop/limit hit): {market_name}")
 
-            # Clean up break-even tracking
+            # Clean up break-even and trailing stop tracking
             breakeven_applied.discard(deal_id)
+            trailing_stop_levels.pop(deal_id, None)
 
             # Record close time for cooldown
             last_close_time[known_pos.epic] = datetime.now()
@@ -650,6 +654,7 @@ def check_positions_from_stream() -> None:
 
             if success:
                 breakeven_applied.add(position.deal_id)
+                trailing_stop_levels[position.deal_id] = new_stop  # Initialise trail at entry
                 if telegram_loop:
                     asyncio.run_coroutine_threadsafe(
                         telegram.send_notification(
@@ -659,10 +664,79 @@ def check_positions_from_stream() -> None:
                             f"Entry: {position.open_level}\n"
                             f"Stop moved: {position.stop_level:.1f} → {new_stop:.1f}\n"
                             f"Current profit: {current_profit:.1f} pts\n\n"
-                            f"_Trade is now risk-free!_"
+                            f"_Trade is now risk-free! ATR trail active._"
                         ),
                         telegram_loop,
                     )
+
+    # ATR trailing stop: continuously ratchet stop behind price after break-even
+    from src.indicators import add_all_indicators as _add_indicators
+
+    for position in positions:
+        if position.deal_id not in breakeven_applied:
+            continue  # Only trail after break-even is set
+
+        market_config = next((m for m in MARKETS if m.epic == position.epic), None)
+        if not market_config:
+            continue
+
+        strategy_cfg = get_strategy_for_market(market_config)
+        market_data = stream_service.get_market_data(position.epic)
+        if not market_data:
+            continue
+
+        df = market_data.to_dataframe()
+        if df is None or len(df) < 20:
+            continue
+
+        # Calculate ATR from streaming candles
+        indicator_params = {
+            "ema_fast": strategy_cfg.ema_fast,
+            "ema_medium": strategy_cfg.ema_medium,
+            "ema_slow": strategy_cfg.ema_slow,
+            "rsi_period": strategy_cfg.rsi_period,
+        }
+        df = _add_indicators(df, indicator_params)
+        atr = df.iloc[-1]["atr"]
+
+        if atr != atr or atr <= 0:  # NaN check
+            continue
+
+        trail_distance = atr * strategy_cfg.atr_trail_mult
+        current_stop = trailing_stop_levels.get(position.deal_id, position.open_level)
+
+        # Calculate new trail stop from current price
+        if position.direction == "BUY":
+            if not market_data.bid:
+                continue
+            new_trail = round(market_data.bid - trail_distance, 1)
+            if new_trail <= current_stop:
+                continue  # Never move stop backwards
+        else:  # SELL
+            if not market_data.offer:
+                continue
+            new_trail = round(market_data.offer + trail_distance, 1)
+            if new_trail >= current_stop:
+                continue
+
+        # Minimum move threshold: 20% of trail distance to avoid excessive API calls
+        if abs(new_trail - current_stop) < trail_distance * 0.2:
+            continue
+
+        logger.info(
+            f"ATR trail for {market_config.name}: "
+            f"stop {current_stop:.1f} -> {new_trail:.1f} "
+            f"(ATR={atr:.1f}, trail={trail_distance:.1f})"
+        )
+
+        success = client.update_position_stop(
+            deal_id=position.deal_id,
+            new_stop_level=new_trail,
+            new_limit_level=position.limit_level,
+        )
+
+        if success:
+            trailing_stop_levels[position.deal_id] = new_trail
 
     for position in positions:
         market = stream_service.get_market_data(position.epic)
@@ -700,8 +774,9 @@ def check_positions_from_stream() -> None:
                 # Remove from known_positions so it's not flagged as external close
                 known_positions.pop(position.deal_id, None)
 
-                # Clean up break-even tracking
+                # Clean up break-even and trailing stop tracking
                 breakeven_applied.discard(position.deal_id)
+                trailing_stop_levels.pop(position.deal_id, None)
 
                 # Record close time for cooldown
                 last_close_time[position.epic] = datetime.now()
