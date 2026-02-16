@@ -741,3 +741,53 @@ class TelegramBot:
         self.trades_today = 0
         self.daily_pnl = 0.0
         logger.info("Daily Telegram stats reset")
+
+
+class TelegramNotifier:
+    """
+    Lightweight synchronous Telegram notifier for test_run.py.
+
+    Unlike TelegramBot (async, full command handler), this class uses
+    simple HTTP requests to send messages. No event loop required.
+    """
+
+    def __init__(self, config: TelegramConfig):
+        self.config = config
+        self.enabled = config.enabled and bool(config.bot_token) and bool(config.chat_id)
+
+    def _send(self, text: str) -> None:
+        """Send a message via Telegram API."""
+        if not self.enabled:
+            return
+
+        import requests
+
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{self.config.bot_token}/sendMessage",
+                json={
+                    "chat_id": self.config.chat_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                },
+                timeout=10,
+            )
+        except Exception as e:
+            logger.warning(f"Telegram notification failed: {e}")
+
+    def send_startup_message(self, balance: float, markets: list) -> None:
+        """Send test run startup notification."""
+        self._send(
+            f"🧪 *IG Bot - Test Run*\n\n"
+            f"Balance: £{balance:,.2f}\n"
+            f"Markets: {', '.join(markets)}"
+        )
+
+    def send_trade_signal(self, signal) -> None:
+        """Send a trade signal notification."""
+        self._send(
+            f"📊 *Signal: {signal.signal.value}*\n\n"
+            f"Market: {signal.market_name}\n"
+            f"Confidence: {signal.confidence:.0%}\n"
+            f"Reason: {signal.reason}"
+        )
