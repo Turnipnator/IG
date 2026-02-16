@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 CLAUDE.local.md
+IG_BOT_FIX_INSTRUCTIONS.md
+
+# Claude Code
+.claude/
 
 # Python
 __pycache__/
