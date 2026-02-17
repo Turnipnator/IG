@@ -6,6 +6,7 @@ Handles authentication, market data, and order execution.
 import json
 import logging
 import os
+import time
 from typing import Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -617,6 +618,9 @@ class IGClient:
                 # Confirm the deal - may be rejected by IG
                 self.last_error = None
                 confirmation = self._confirm_deal(deal_ref)
+                if not confirmation and self.last_error and "Confirmation failed" in self.last_error:
+                    # Retries exhausted on deal-not-found: fall back to positions API
+                    confirmation = self._fallback_position_lookup(epic, direction)
                 if confirmation:
                     logger.info(f"Position opened: {confirmation.get('dealId')} - {direction} {size} {epic}")
                 return confirmation
@@ -689,37 +693,82 @@ class IGClient:
             logger.error(f"Close position request failed: {e}")
             return None
 
-    def _confirm_deal(self, deal_reference: str) -> Optional[dict]:
-        """Confirm a deal was executed successfully."""
-        try:
-            response = self.session.get(
-                f"{self.config.base_url}/confirms/{deal_reference}",
-                headers=self._get_headers(version="1"),
-                timeout=30,
-            )
+    def _confirm_deal(self, deal_reference: str, max_retries: int = 4) -> Optional[dict]:
+        """Confirm a deal was executed successfully, with retries for deal-not-found timing issues."""
+        for attempt in range(max_retries):
+            try:
+                response = self.session.get(
+                    f"{self.config.base_url}/confirms/{deal_reference}",
+                    headers=self._get_headers(version="1"),
+                    timeout=30,
+                )
 
-            if response.status_code == 200:
-                confirmation = response.json()
-                status = confirmation.get("dealStatus")
+                if response.status_code == 200:
+                    confirmation = response.json()
+                    status = confirmation.get("dealStatus")
 
-                if status == "ACCEPTED":
-                    logger.info(f"Deal confirmed: {confirmation.get('dealId')}")
-                    self.last_error = None
-                    return confirmation
+                    if status == "ACCEPTED":
+                        if attempt > 0:
+                            logger.info(f"Deal confirmed on retry {attempt + 1}: {confirmation.get('dealId')}")
+                        else:
+                            logger.info(f"Deal confirmed: {confirmation.get('dealId')}")
+                        self.last_error = None
+                        return confirmation
+                    else:
+                        reason = confirmation.get("reason", "Unknown")
+                        self.last_error = reason
+                        logger.error(f"Deal rejected: {reason}")
+                        return None
                 else:
-                    reason = confirmation.get("reason", "Unknown")
-                    self.last_error = reason
-                    logger.error(f"Deal rejected: {reason}")
+                    try:
+                        error_code = response.json().get("errorCode", "")
+                    except Exception:
+                        error_code = ""
+
+                    if "deal-not-found" in error_code and attempt < max_retries - 1:
+                        wait = attempt + 1
+                        logger.warning(
+                            f"Deal not found yet (attempt {attempt + 1}/{max_retries}), "
+                            f"retrying in {wait}s..."
+                        )
+                        time.sleep(wait)
+                        continue
+
+                    self.last_error = f"Confirmation failed: HTTP {response.status_code}"
+                    logger.error(f"Failed to confirm deal: {response.text}")
                     return None
-            else:
-                self.last_error = f"Confirmation failed: HTTP {response.status_code}"
-                logger.error(f"Failed to confirm deal: {response.text}")
+
+            except requests.RequestException as e:
+                self.last_error = str(e)
+                logger.error(f"Deal confirmation failed: {e}")
                 return None
 
-        except requests.RequestException as e:
-            self.last_error = str(e)
-            logger.error(f"Deal confirmation failed: {e}")
-            return None
+        return None
+
+    def _fallback_position_lookup(self, epic: str, direction: str) -> Optional[dict]:
+        """
+        Fallback when confirm endpoint returns deal-not-found after all retries.
+        Looks up the newly opened position via the positions API by EPIC.
+        """
+        time.sleep(2)
+        positions = self.get_positions()
+        for pos in positions:
+            if pos.epic == epic and pos.direction == direction:
+                logger.warning(
+                    f"Confirm fallback: found position {pos.deal_id} for {epic} via positions API"
+                )
+                return {
+                    "dealId": pos.deal_id,
+                    "epic": epic,
+                    "direction": direction,
+                    "size": pos.size,
+                    "level": pos.open_level,
+                    "stopLevel": pos.stop_level,
+                    "limitLevel": pos.limit_level,
+                    "dealStatus": "ACCEPTED",
+                }
+        logger.error(f"Confirm fallback failed: no {direction} position found for {epic}")
+        return None
 
     def update_position_stop(
         self,
