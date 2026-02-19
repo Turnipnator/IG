@@ -222,6 +222,51 @@ MARKETS = [
         strategy="default",    # Gold is the star performer!
     ),
 
+    MarketConfig(
+        epic="CS.D.USCSI.TODAY.IP",
+        name="Silver",
+        sector="Commodities",
+        min_stop_distance=4.0,
+        default_size=1.0,      # IG minimum is 1.0 per point
+        min_confidence=0.55,
+        strategy="default",
+    ),
+
+    # --- SOFT COMMODITIES (Big Winners Strategy) ---
+    MarketConfig(
+        epic="CO.D.S.Month1.IP",
+        name="Soybeans",
+        sector="Commodities",
+        min_stop_distance=4.0,
+        default_size=0.04,
+        expiry="MAY-26",
+        candle_interval=15,
+        min_confidence=0.55,
+        strategy="default",
+    ),
+    MarketConfig(
+        epic="CO.D.CC.Month2.IP",
+        name="NY Cocoa",
+        sector="Commodities",
+        min_stop_distance=10.0,
+        default_size=0.04,
+        expiry="MAY-26",
+        candle_interval=15,
+        min_confidence=0.55,
+        strategy="default",
+    ),
+    MarketConfig(
+        epic="CO.D.CT.Month1.IP",
+        name="NY Cotton",
+        sector="Commodities",
+        min_stop_distance=40.0,
+        default_size=0.04,
+        expiry="MAR-26",
+        candle_interval=15,
+        min_confidence=0.55,
+        strategy="default",
+    ),
+
     # --- FOREX (Big Winners Strategy) ---
     MarketConfig(
         epic="CO.D.DX.Month1.IP",
