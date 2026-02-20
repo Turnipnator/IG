@@ -363,16 +363,18 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         if trade_signal.signal == Signal.HOLD:
             return
 
-        # Market regime filter: align trade direction with S&P 500 trend
-        if market_regime == "NEUTRAL":
-            logger.info(f"Market regime NEUTRAL (S&P sideways) - no trades allowed")
-            return
-        elif market_regime == "BULLISH" and trade_signal.signal == Signal.SELL:
-            logger.info(f"Market regime BULLISH - blocking SELL on {market.name}")
-            return
-        elif market_regime == "BEARISH" and trade_signal.signal == Signal.BUY:
-            logger.info(f"Market regime BEARISH - blocking BUY on {market.name}")
-            return
+        # Market regime filter: only applied to indices (S&P, NASDAQ)
+        # Commodities and forex have independent drivers and don't correlate with S&P
+        if market_config.strategy == "indices":
+            if market_regime == "NEUTRAL":
+                logger.info(f"Market regime NEUTRAL (S&P sideways) - no trades allowed")
+                return
+            elif market_regime == "BULLISH" and trade_signal.signal == Signal.SELL:
+                logger.info(f"Market regime BULLISH - blocking SELL on {market.name}")
+                return
+            elif market_regime == "BEARISH" and trade_signal.signal == Signal.BUY:
+                logger.info(f"Market regime BEARISH - blocking BUY on {market.name}")
+                return
 
         # Per-market regime filter: check if regime allows trading
         per_market_regime = market_regimes.get(epic)
