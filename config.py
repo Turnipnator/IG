@@ -149,6 +149,28 @@ STRATEGY_PROFILES = {
         atr_trail_mult=1.5,        # Trail stop at 1.5x ATR behind price
     ),
 
+    # Silver strategy: tighter stops to cap risk at 1.0 £/pt min size
+    # Same as default but stop_atr_mult=1.2 (vs 1.8) to reduce £62 -> ~£41 losses
+    "silver": StrategyConfig(
+        ema_fast=9,
+        ema_medium=21,
+        ema_slow=50,
+        rsi_period=7,
+        rsi_overbought=70,
+        rsi_oversold=30,
+        rsi_buy_max=55,
+        rsi_sell_min=45,
+        adx_threshold=25,
+        stop_atr_mult=1.2,        # Tighter stops: Silver ATR is wide, 1.0 min size makes 1.8x too expensive
+        reward_risk=4.0,
+        min_confidence=0.55,
+        use_macd_exit=False,
+        require_htf=True,
+        pullback_pct=0.3,
+        breakeven_trigger_pct=0.5,
+        atr_trail_mult=1.5,
+    ),
+
     # Indices strategy: "Momentum"
     # Optimized for S&P 500 and NASDAQ 100
     "indices": StrategyConfig(
@@ -229,7 +251,7 @@ MARKETS = [
         min_stop_distance=4.0,
         default_size=1.0,      # IG minimum is 1.0 per point
         min_confidence=0.55,
-        strategy="default",
+        strategy="silver",     # Tighter stops (1.2x ATR vs 1.8x) to cap risk at min size
     ),
 
     # --- SOFT COMMODITIES (Big Winners Strategy) ---
@@ -240,7 +262,7 @@ MARKETS = [
         min_stop_distance=4.0,
         default_size=0.04,
         expiry="MAY-26",
-        candle_interval=15,
+        candle_interval=60,    # Hourly candles: 15m ATR was < spread (2pts), making stops unplayable
         min_confidence=0.55,
         strategy="default",
     ),
