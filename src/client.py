@@ -467,17 +467,26 @@ class IGClient:
                     logger.warning(f"No price data returned for {epic}")
                     return None
 
-                df = pd.DataFrame([
-                    {
+                rows = []
+                for p in prices:
+                    # Skip candles where bid/ask is null (market closed hours)
+                    cp = p["closePrice"]
+                    if cp.get("bid") is None or cp.get("ask") is None:
+                        continue
+                    rows.append({
                         "date": p["snapshotTime"],
                         "open": (p["openPrice"]["bid"] + p["openPrice"]["ask"]) / 2,
                         "high": (p["highPrice"]["bid"] + p["highPrice"]["ask"]) / 2,
                         "low": (p["lowPrice"]["bid"] + p["lowPrice"]["ask"]) / 2,
-                        "close": (p["closePrice"]["bid"] + p["closePrice"]["ask"]) / 2,
+                        "close": (cp["bid"] + cp["ask"]) / 2,
                         "volume": p.get("lastTradedVolume", 0),
-                    }
-                    for p in prices
-                ])
+                    })
+
+                if not rows:
+                    logger.warning(f"No valid price candles for {epic} (all had null bid/ask)")
+                    return None
+
+                df = pd.DataFrame(rows)
 
                 df["date"] = pd.to_datetime(df["date"])
                 df = df.sort_values("date").reset_index(drop=True)
