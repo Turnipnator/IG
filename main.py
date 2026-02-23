@@ -946,7 +946,7 @@ async def main_async():
     for m in MARKETS:
         regime = market_regimes.get(m.epic)
         if regime:
-            regime_lines.append(f"  {m.name}: {regime.code}")
+            regime_lines.append(f"  {m.name}: {regime.code.replace('_', ' ')}")
 
     regime_summary = "\n".join(regime_lines) if regime_lines else "  (pending)"
 
