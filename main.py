@@ -236,7 +236,7 @@ def update_htf_trends() -> None:
             df = client.get_historical_prices(
                 market.epic,
                 resolution="HOUR",
-                num_points=35,  # Minimum ~28 for ADX (2x14 smoothing), +7 buffer
+                num_points=50,  # Need ~28 for ADX + buffer for markets with limited hours (Cotton, Crude)
                 use_cache=True,  # Use disk cache if fresh to save API calls
             )
 
