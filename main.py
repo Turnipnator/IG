@@ -432,6 +432,16 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             )
             return
 
+        # Time-of-day filter: only trade during active sessions (04:00-20:00 UTC)
+        # Backtest showed 80% win rate during London open (04-08 UTC) vs ~0% overnight
+        current_hour = datetime.now().hour
+        if current_hour < 4 or current_hour >= 20:
+            logger.info(
+                f"Outside trading hours for {market_config.name}: "
+                f"{current_hour:02d}:00 UTC (active: 04:00-20:00)"
+            )
+            return
+
         # Check loss cooldown - 1 hour after a losing trade
         if epic in loss_cooldown_until:
             if datetime.now() < loss_cooldown_until[epic]:
