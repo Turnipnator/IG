@@ -432,24 +432,6 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             )
             return
 
-        # RSI exhaustion filter: skip entries after extreme RSI in recent candles
-        # Prevents selling after a dump (RSI < 20) or buying after a spike (RSI > 80)
-        # where the move is already exhausted and a reversal is likely
-        rsi_lookback = 6  # ~30 mins on 5m candles
-        recent_rsi = df["rsi"].iloc[-rsi_lookback:]
-        if trade_signal.signal == Signal.SELL and recent_rsi.min() < 20:
-            logger.info(
-                f"RSI exhaustion filter for {market_config.name}: "
-                f"SELL blocked, RSI hit {recent_rsi.min():.1f} in last {rsi_lookback} candles (move already spent)"
-            )
-            return
-        elif trade_signal.signal == Signal.BUY and recent_rsi.max() > 80:
-            logger.info(
-                f"RSI exhaustion filter for {market_config.name}: "
-                f"BUY blocked, RSI hit {recent_rsi.max():.1f} in last {rsi_lookback} candles (move already spent)"
-            )
-            return
-
         # Check loss cooldown - 1 hour after a losing trade
         if epic in loss_cooldown_until:
             if datetime.now() < loss_cooldown_until[epic]:
