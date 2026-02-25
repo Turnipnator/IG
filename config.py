@@ -221,6 +221,15 @@ MARKETS = [
         min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="indices",    # Use Momentum strategy
     ),
+    MarketConfig(
+        epic="IX.D.RUSSELL.DAILY.IP",
+        name="US Russell 2000",
+        sector="Indices",
+        min_stop_distance=1.0,
+        default_size=1.0,
+        min_confidence=0.55,
+        strategy="indices",    # Use Momentum strategy (same as S&P/NASDAQ)
+    ),
 
     # --- COMMODITIES (Big Winners Strategy) ---
     MarketConfig(
@@ -309,6 +318,16 @@ MARKETS = [
         default_size=0.5,
         candle_interval=15,
         min_confidence=0.55,   # Raised from 0.4 for quality entries
+        strategy="default",
+    ),
+    MarketConfig(
+        epic="CS.D.GBPUSD.TODAY.IP",
+        name="GBP/USD",
+        sector="Forex",
+        min_stop_distance=2.0,
+        default_size=0.5,
+        candle_interval=15,
+        min_confidence=0.55,
         strategy="default",
     ),
 ]
