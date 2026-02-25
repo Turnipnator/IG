@@ -330,6 +330,30 @@ MARKETS = [
         min_confidence=0.55,
         strategy="default",
     ),
+
+    # --- RATES / BONDS (Big Winners Strategy) ---
+    MarketConfig(
+        epic="IR.D.02YEAR100.Month2.IP",
+        name="US 2-Year T-Note",
+        sector="Rates",
+        min_stop_distance=4.0,
+        default_size=1.0,
+        expiry="JUN-26",
+        candle_interval=15,
+        min_confidence=0.55,
+        strategy="default",
+    ),
+    MarketConfig(
+        epic="IR.D.10YEAR100.Month2.IP",
+        name="US 10-Year T-Note",
+        sector="Rates",
+        min_stop_distance=4.0,
+        default_size=1.0,
+        expiry="JUN-26",
+        candle_interval=15,
+        min_confidence=0.55,
+        strategy="default",
+    ),
 ]
 
 
