@@ -253,16 +253,6 @@ MARKETS = [
         strategy="default",    # Gold is the star performer!
     ),
 
-    MarketConfig(
-        epic="CS.D.USCSI.TODAY.IP",
-        name="Silver",
-        sector="Commodities",
-        min_stop_distance=4.0,
-        default_size=1.0,      # IG minimum is 1.0 per point
-        min_confidence=0.55,
-        strategy="silver",     # Tighter stops (1.2x ATR vs 1.8x) to cap risk at min size
-    ),
-
     # --- SOFT COMMODITIES (Big Winners Strategy) ---
     MarketConfig(
         epic="CO.D.S.Month1.IP",
