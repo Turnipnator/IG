@@ -651,7 +651,8 @@ class TelegramBot:
 
     async def notify_error(self, error_message: str) -> bool:
         """Send error notification."""
-        message = f"⚠️ *ERROR*\n\n{error_message}"
+        safe_msg = error_message.replace("_", " ")
+        message = f"⚠️ *ERROR*\n\n{safe_msg}"
         return await self.send_notification(message)
 
     async def notify_daily_summary(
