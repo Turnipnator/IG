@@ -830,6 +830,54 @@ class IGClient:
             logger.error(f"Update stop request failed: {e}")
             return False
 
+    def get_closed_position_pnl(self, deal_id: str) -> Optional[float]:
+        """
+        Get actual P&L for a recently closed position from IG transaction history.
+
+        Costs 1 REST API call (not data points, so doesn't affect 10k/week limit).
+        Returns the P&L in account currency, or None if not found.
+        """
+        if not self.is_logged_in:
+            return None
+
+        try:
+            now = datetime.utcnow()
+            from_date = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
+            to_date = now.strftime("%Y-%m-%dT%H:%M:%S")
+
+            response = self.session.get(
+                f"{self.config.base_url}/history/transactions",
+                params={
+                    "type": "ALL",
+                    "from": from_date,
+                    "to": to_date,
+                    "pageSize": 50,
+                },
+                headers=self._get_headers(version="2"),
+                timeout=30,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                for txn in data.get("transactions", []):
+                    if txn.get("reference") == deal_id:
+                        pnl_str = txn.get("profitAndLoss", "0")
+                        # Parse currency string like "£-14.90" or "- £14.90"
+                        cleaned = pnl_str.replace("£", "").replace("$", "").replace("€", "").replace(",", "").strip()
+                        # Handle "- 14.90" format (space after minus)
+                        cleaned = cleaned.replace("- ", "-")
+                        return float(cleaned)
+
+                logger.debug(f"No transaction found for deal {deal_id}")
+                return None
+            else:
+                logger.warning(f"Transaction history request failed: {response.status_code}")
+                return None
+
+        except Exception as e:
+            logger.warning(f"Failed to get transaction P&L for {deal_id}: {e}")
+            return None
+
     def search_markets(self, search_term: str) -> list[dict]:
         """Search for markets by name or keyword."""
         if not self.is_logged_in:

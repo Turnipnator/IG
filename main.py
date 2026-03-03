@@ -592,9 +592,16 @@ def check_positions_from_stream() -> None:
             # Record close time for cooldown
             last_close_time[known_pos.epic] = datetime.now()
 
-            # If it was a loss (likely stop hit), set extended loss cooldown
-            # Note: profit_loss from known_positions may be stale, but if stop hit it's negative
-            if known_pos.profit_loss < 0:
+            # Get actual P&L from IG transaction history (1 API call, no data points)
+            actual_pnl = client.get_closed_position_pnl(deal_id)
+            if actual_pnl is not None:
+                logger.info(f"Actual P&L for {market_name}: £{actual_pnl:.2f} (cached was £{known_pos.profit_loss:.2f})")
+            else:
+                actual_pnl = known_pos.profit_loss
+                logger.warning(f"Could not fetch actual P&L for {market_name}, using cached: £{actual_pnl:.2f}")
+
+            # If it was a loss, set extended loss cooldown
+            if actual_pnl < 0:
                 loss_cooldown_until[known_pos.epic] = datetime.now() + timedelta(minutes=LOSS_COOLDOWN_MINUTES)
                 logger.info(f"Loss cooldown set for {market_name}: {LOSS_COOLDOWN_MINUTES} mins")
 
@@ -603,7 +610,7 @@ def check_positions_from_stream() -> None:
                     telegram.notify_trade_closed(
                         market_name,
                         known_pos.direction,
-                        known_pos.profit_loss,
+                        actual_pnl,
                         "Stop/limit hit",
                     ),
                     telegram_loop,
