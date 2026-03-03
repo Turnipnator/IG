@@ -79,6 +79,11 @@ breakeven_applied: set[str] = set()  # deal_ids with BE stop applied
 # Track ATR trailing stop levels (after break-even, trail ratchets stop further)
 trailing_stop_levels: dict[str, float] = {}  # deal_id -> current trail stop level
 
+# Post-restart cooldown: skip opening new positions for 15 mins after startup
+# to let indicators stabilise with fresh streaming data
+STARTUP_COOLDOWN_MINUTES = 15
+bot_start_time: datetime = datetime.now()
+
 
 def initialize() -> bool:
     """Initialize all components."""
@@ -439,6 +444,15 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             logger.info(
                 f"Outside trading hours for {market_config.name}: "
                 f"{current_hour:02d}:00 UTC (active: 04:00-20:00)"
+            )
+            return
+
+        # Post-restart cooldown: let indicators stabilise with fresh streaming data
+        mins_since_start = (datetime.now() - bot_start_time).total_seconds() / 60
+        if mins_since_start < STARTUP_COOLDOWN_MINUTES:
+            logger.info(
+                f"Startup cooldown for {market_config.name}: "
+                f"{mins_since_start:.0f}/{STARTUP_COOLDOWN_MINUTES} mins elapsed"
             )
             return
 
