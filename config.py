@@ -267,18 +267,6 @@ MARKETS = [
         min_confidence=0.55,
         strategy="indices",
     ),
-    MarketConfig(
-        epic="IN.D.VIX.MONTH3.IP",
-        name="Volatility Index",
-        sector="Indices",
-        min_stop_distance=20.0,
-        default_size=0.5,
-        expiry="APR-26",
-        candle_interval=15,
-        min_confidence=0.55,
-        strategy="default",    # VIX is mean-reverting, not momentum — use default wider stops
-    ),
-
     # --- COMMODITIES (Big Winners Strategy) ---
     MarketConfig(
         epic="EN.D.CL.Month1.IP",
