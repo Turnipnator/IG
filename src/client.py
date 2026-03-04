@@ -280,8 +280,8 @@ class IGClient:
                     offer=snapshot.get("offer", 0.0),
                     high=snapshot.get("high", 0.0),
                     low=snapshot.get("low", 0.0),
-                    min_deal_size=dealing_rules.get("minDealSize", {}).get("value", 0.1),
-                    min_stop_distance=dealing_rules.get("minNormalStopOrLimitDistance", {}).get("value", 0.0),
+                    min_deal_size=(dealing_rules.get("minDealSize") or {}).get("value", 0.1),
+                    min_stop_distance=(dealing_rules.get("minNormalStopOrLimitDistance") or {}).get("value", 0.0),
                     market_status=snapshot.get("marketStatus", "CLOSED"),
                     expiry=instrument.get("expiry", ""),
                 )

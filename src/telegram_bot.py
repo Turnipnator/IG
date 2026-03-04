@@ -4,8 +4,11 @@ Provides remote control and monitoring via Telegram
 """
 
 import asyncio
+import json
 import logging
+import os
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, List, TYPE_CHECKING
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -22,6 +25,9 @@ if TYPE_CHECKING:
     from src.client import IGClient
 
 logger = logging.getLogger(__name__)
+
+STATS_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
+STATS_FILE = STATS_DIR / "daily_stats.json"
 
 
 def format_pnl(value: float) -> str:
@@ -73,12 +79,52 @@ class TelegramBot:
         self.commands_executed = 0
         self.trades_today = 0
         self.daily_pnl = 0.0
+        self.risk_manager = None  # Set via set_risk_manager() for stats persistence
 
         logger.info(f"Telegram bot initialized with {len(self.authorized_users)} authorized users")
 
     def set_ig_client(self, client: 'IGClient') -> None:
         """Set reference to IG client."""
         self.ig_client = client
+
+    def set_risk_manager(self, risk_manager) -> None:
+        """Set reference to risk manager for stats persistence."""
+        self.risk_manager = risk_manager
+
+    def save_daily_stats(self) -> None:
+        """Persist daily stats to disk so they survive restarts."""
+        try:
+            STATS_DIR.mkdir(parents=True, exist_ok=True)
+            stats = {
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "trades_today": self.trades_today,
+                "daily_pnl": self.daily_pnl,
+                "risk_daily_pnl": self.risk_manager.daily_pnl if self.risk_manager else 0.0,
+                "saved_at": datetime.now().isoformat(),
+            }
+            STATS_FILE.write_text(json.dumps(stats))
+        except Exception as e:
+            logger.warning(f"Failed to save daily stats: {e}")
+
+    def load_daily_stats(self) -> None:
+        """Restore daily stats from disk if they are from today."""
+        try:
+            if not STATS_FILE.exists():
+                return
+            stats = json.loads(STATS_FILE.read_text())
+            if stats.get("date") != datetime.now().strftime("%Y-%m-%d"):
+                logger.info("Daily stats file is from a previous day, starting fresh")
+                return
+            self.trades_today = stats.get("trades_today", 0)
+            self.daily_pnl = stats.get("daily_pnl", 0.0)
+            if self.risk_manager:
+                self.risk_manager.daily_pnl = stats.get("risk_daily_pnl", 0.0)
+            logger.info(
+                f"Restored daily stats: {self.trades_today} trades, "
+                f"P&L £{self.daily_pnl:.2f}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load daily stats: {e}")
 
     def is_authorized(self, user_id: int) -> bool:
         """Check if user is authorized."""
@@ -609,6 +655,7 @@ class TelegramBot:
             f"Target: {limit_distance:.2f} pts"
         )
         self.trades_today += 1
+        self.save_daily_stats()
         return await self.send_notification(message)
 
     async def notify_trade_closed(
@@ -628,6 +675,7 @@ class TelegramBot:
             f"Reason: {reason}"
         )
         self.daily_pnl += pnl
+        self.save_daily_stats()
         return await self.send_notification(message)
 
     async def notify_signal(
@@ -741,6 +789,7 @@ class TelegramBot:
         """Reset daily statistics (call at start of trading day)."""
         self.trades_today = 0
         self.daily_pnl = 0.0
+        self.save_daily_stats()
         logger.info("Daily Telegram stats reset")
 
 

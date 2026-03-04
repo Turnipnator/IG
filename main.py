@@ -107,8 +107,10 @@ def initialize() -> bool:
         logger.error("Failed to login to IG")
         return False
 
-    # Set IG client reference in telegram bot
+    # Set IG client and risk manager references in telegram bot
     telegram.set_ig_client(client)
+    telegram.set_risk_manager(risk_manager)
+    telegram.load_daily_stats()
 
     # Get account balance
     balance = client.get_balance()
@@ -537,6 +539,7 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
 
         if result:
             telegram.trades_today += 1
+            telegram.save_daily_stats()
 
             # Track in known_positions for external close detection
             deal_id = result.get("dealId", "")
@@ -826,6 +829,7 @@ def check_positions_from_stream() -> None:
 
                 telegram.daily_pnl += pnl
                 risk_manager.update_daily_pnl(pnl)
+                telegram.save_daily_stats()
 
                 if telegram_loop:
                     asyncio.run_coroutine_threadsafe(
