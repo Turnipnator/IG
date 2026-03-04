@@ -326,7 +326,7 @@ class TelegramBot:
                 await update.message.reply_text("⚠️ IG client not connected")
                 return
 
-            message = "📈 *MARKET STATUS*\n\n"
+            message = "📈 <b>MARKET STATUS</b>\n\n"
 
             for market in MARKETS:
                 info = self.ig_client.get_market_info(market.epic)
@@ -336,14 +336,14 @@ class TelegramBot:
                     spread = info.offer - info.bid
 
                     message += (
-                        f"*{market.name}*\n"
+                        f"<b>{market.name}</b>\n"
                         f"{status_emoji} {info.market_status}\n"
                         f"Price: {mid_price:,.2f} (spread: {spread:.2f})\n\n"
                     )
                 else:
-                    message += f"*{market.name}*\n⚠️ Unable to fetch\n\n"
+                    message += f"<b>{market.name}</b>\n⚠️ Unable to fetch\n\n"
 
-            await update.message.reply_text(message, parse_mode='Markdown')
+            await update.message.reply_text(message, parse_mode='HTML')
             self.commands_executed += 1
 
         except Exception as e:
