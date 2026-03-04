@@ -830,9 +830,21 @@ class IGClient:
             logger.error(f"Update stop request failed: {e}")
             return False
 
-    def get_closed_position_pnl(self, deal_id: str) -> Optional[float]:
+    @staticmethod
+    def _parse_pnl(pnl_str: str) -> float:
+        """Parse IG P&L string like '£-14.90' or '- £14.90' into a float."""
+        cleaned = pnl_str.replace("£", "").replace("$", "").replace("€", "").replace(",", "").strip()
+        cleaned = cleaned.replace("- ", "-")
+        return float(cleaned)
+
+    def get_closed_position_pnl(
+        self, deal_id: str, open_level: float = 0.0, direction: str = ""
+    ) -> Optional[float]:
         """
         Get actual P&L for a recently closed position from IG transaction history.
+
+        Matches by open_level + direction (IG's transaction 'reference' is the
+        closing deal ref, not the opening deal_id, so exact ID match won't work).
 
         Costs 1 REST API call (not data points, so doesn't affect 10k/week limit).
         Returns the P&L in account currency, or None if not found.
@@ -860,13 +872,20 @@ class IGClient:
             if response.status_code == 200:
                 data = response.json()
                 for txn in data.get("transactions", []):
+                    # Primary match: open_level + direction (most reliable)
+                    if open_level and direction:
+                        try:
+                            txn_open = float(txn.get("openLevel", 0))
+                            txn_size = float(txn.get("size", "0").replace("+", ""))
+                            txn_dir = "BUY" if txn_size > 0 else "SELL"
+                            if abs(txn_open - open_level) < 0.1 and txn_dir == direction:
+                                return self._parse_pnl(txn.get("profitAndLoss", "0"))
+                        except (ValueError, TypeError):
+                            continue
+
+                    # Fallback: exact reference match (works for bot-initiated closes)
                     if txn.get("reference") == deal_id:
-                        pnl_str = txn.get("profitAndLoss", "0")
-                        # Parse currency string like "£-14.90" or "- £14.90"
-                        cleaned = pnl_str.replace("£", "").replace("$", "").replace("€", "").replace(",", "").strip()
-                        # Handle "- 14.90" format (space after minus)
-                        cleaned = cleaned.replace("- ", "-")
-                        return float(cleaned)
+                        return self._parse_pnl(txn.get("profitAndLoss", "0"))
 
                 logger.debug(f"No transaction found for deal {deal_id}")
                 return None

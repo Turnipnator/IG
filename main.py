@@ -607,7 +607,9 @@ def check_positions_from_stream() -> None:
             last_close_time[known_pos.epic] = datetime.now()
 
             # Get actual P&L from IG transaction history (1 API call, no data points)
-            actual_pnl = client.get_closed_position_pnl(deal_id)
+            actual_pnl = client.get_closed_position_pnl(
+                deal_id, open_level=known_pos.open_level, direction=known_pos.direction
+            )
             if actual_pnl is not None:
                 logger.info(f"Actual P&L for {market_name}: £{actual_pnl:.2f} (cached was £{known_pos.profit_loss:.2f})")
             else:
@@ -1002,7 +1004,7 @@ async def main_async():
         import schedule
 
         schedule.every(6).hours.do(refresh_session)
-        schedule.every(8).hours.do(update_htf_trends)  # 3x/day = 630/week (was 4hrs = 8,820/week!)
+        schedule.every(12).hours.do(update_htf_trends)  # 2x/day — 18 markets × 50pts × 2/day × 5days = 9,000/week
         schedule.every(15).minutes.do(stream_service.save_candles_to_disk)  # Persist candles for restarts
         schedule.every().day.at("21:00").do(send_daily_summary)
 

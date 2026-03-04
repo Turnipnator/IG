@@ -138,7 +138,7 @@ STRATEGY_PROFILES = {
         rsi_oversold=30,
         rsi_buy_max=55,        # Don't buy into overbought (was 60)
         rsi_sell_min=45,       # Don't short into oversold (was 40)
-        adx_threshold=30,      # Strong trend only (was 25 - trades at ADX 25-29 had ~33% win rate vs 67% at 30+)
+        adx_threshold=35,      # Strong trend only (raised from 30 - marginal 30-34 entries were losing)
         stop_atr_mult=1.8,     # Wider stops for forex/commodities (was 1.5 - EUR/USD instant stop-outs)
         reward_risk=4.0,       # High R:R - let winners run big
         min_confidence=0.55,   # Higher threshold - quality over quantity (was 0.4)
@@ -160,7 +160,7 @@ STRATEGY_PROFILES = {
         rsi_oversold=30,
         rsi_buy_max=55,
         rsi_sell_min=45,
-        adx_threshold=30,          # Higher bar: only trade strong trends (min size makes weak trends too costly)
+        adx_threshold=35,          # Higher bar: only trade strong trends (min size makes weak trends too costly)
         stop_atr_mult=1.2,        # Tighter stops: Silver ATR is wide, 1.0 min size makes 1.8x too expensive
         reward_risk=4.0,
         min_confidence=0.55,
@@ -182,7 +182,7 @@ STRATEGY_PROFILES = {
         rsi_oversold=30,
         rsi_buy_max=55,        # Don't buy into overbought (was 65)
         rsi_sell_min=45,       # Don't short into oversold (was 35)
-        adx_threshold=30,      # Strong trend only (was 25 - trades at ADX 25-29 had ~33% win rate)
+        adx_threshold=35,      # Strong trend only (raised from 30 - marginal 30-34 entries were losing)
         stop_atr_mult=1.5,
         reward_risk=2.0,       # Standard R:R - take profits
         min_confidence=0.55,   # Higher threshold (was 0.4)
@@ -229,6 +229,54 @@ MARKETS = [
         default_size=1.0,
         min_confidence=0.55,
         strategy="indices",    # Use Momentum strategy (same as S&P/NASDAQ)
+    ),
+
+    MarketConfig(
+        epic="IX.D.DAX.DAILY.IP",
+        name="Germany 40",
+        sector="Indices",
+        min_stop_distance=2.0,
+        default_size=0.5,
+        min_confidence=0.55,
+        strategy="indices",
+    ),
+    MarketConfig(
+        epic="IX.D.DOW.DAILY.IP",
+        name="Wall Street",
+        sector="Indices",
+        min_stop_distance=4.0,
+        default_size=0.1,
+        min_confidence=0.55,
+        strategy="indices",
+    ),
+    MarketConfig(
+        epic="IX.D.FTSE.DAILY.IP",
+        name="FTSE 100",
+        sector="Indices",
+        min_stop_distance=1.0,
+        default_size=1.0,
+        min_confidence=0.55,
+        strategy="indices",
+    ),
+    MarketConfig(
+        epic="IX.D.AIIDX.DAILY.IP",
+        name="AI Index",
+        sector="Indices",
+        min_stop_distance=1.0,
+        default_size=1.0,
+        min_confidence=0.55,
+        strategy="indices",
+    ),
+    MarketConfig(
+        epic="IN.D.VIX.MONTH3.IP",
+        name="Volatility Index",
+        sector="Indices",
+        min_stop_distance=20.0,
+        default_size=0.5,
+        expiry="APR-26",
+        candle_interval=15,
+        min_confidence=0.55,
+        strategy="default",    # VIX is mean-reverting, not momentum — use default wider stops
     ),
 
     # --- COMMODITIES (Big Winners Strategy) ---
