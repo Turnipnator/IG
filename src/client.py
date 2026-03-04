@@ -871,23 +871,50 @@ class IGClient:
 
             if response.status_code == 200:
                 data = response.json()
-                for txn in data.get("transactions", []):
-                    # Primary match: open_level + direction (most reliable)
+                transactions = data.get("transactions", [])
+                logger.info(
+                    f"P&L lookup for {deal_id}: searching {len(transactions)} transactions "
+                    f"(open_level={open_level}, direction={direction})"
+                )
+                for txn in transactions:
+                    txn_type = txn.get("transactionType", "")
+                    if txn_type != "DEAL":
+                        continue
+
+                    # Try matching by open_level + direction
                     if open_level and direction:
                         try:
                             txn_open = float(txn.get("openLevel", 0))
                             txn_size = float(txn.get("size", "0").replace("+", ""))
                             txn_dir = "BUY" if txn_size > 0 else "SELL"
-                            if abs(txn_open - open_level) < 0.1 and txn_dir == direction:
-                                return self._parse_pnl(txn.get("profitAndLoss", "0"))
+                            level_diff = abs(txn_open - open_level)
+                            logger.debug(
+                                f"  Comparing: txn {txn.get('instrumentName')} "
+                                f"open={txn_open} vs {open_level} (diff={level_diff:.4f}), "
+                                f"dir={txn_dir} vs {direction}"
+                            )
+                            if level_diff < 1.0 and txn_dir == direction:
+                                pnl = self._parse_pnl(txn.get("profitAndLoss", "0"))
+                                logger.info(f"  Matched by level+direction: £{pnl:.2f}")
+                                return pnl
                         except (ValueError, TypeError):
                             continue
 
                     # Fallback: exact reference match (works for bot-initiated closes)
                     if txn.get("reference") == deal_id:
-                        return self._parse_pnl(txn.get("profitAndLoss", "0"))
+                        pnl = self._parse_pnl(txn.get("profitAndLoss", "0"))
+                        logger.info(f"  Matched by reference: £{pnl:.2f}")
+                        return pnl
 
-                logger.debug(f"No transaction found for deal {deal_id}")
+                # Log what we couldn't match for debugging
+                for txn in transactions[:5]:
+                    if txn.get("transactionType") == "DEAL":
+                        logger.warning(
+                            f"  Unmatched txn: {txn.get('instrumentName')} "
+                            f"open={txn.get('openLevel')} size={txn.get('size')} "
+                            f"ref={txn.get('reference')}"
+                        )
+                logger.warning(f"No transaction match for deal {deal_id}")
                 return None
             else:
                 logger.warning(f"Transaction history request failed: {response.status_code}")
