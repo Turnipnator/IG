@@ -538,8 +538,7 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         )
 
         if result:
-            telegram.trades_today += 1
-            telegram.save_daily_stats()
+            # trades_today incremented in notify_trade_opened()
 
             # Track in known_positions for external close detection
             deal_id = result.get("dealId", "")
@@ -623,6 +622,8 @@ def check_positions_from_stream() -> None:
             if actual_pnl < 0:
                 loss_cooldown_until[known_pos.epic] = datetime.now() + timedelta(minutes=LOSS_COOLDOWN_MINUTES)
                 logger.info(f"Loss cooldown set for {market_name}: {LOSS_COOLDOWN_MINUTES} mins")
+
+            risk_manager.update_daily_pnl(actual_pnl)
 
             if telegram_loop:
                 asyncio.run_coroutine_threadsafe(
@@ -827,9 +828,8 @@ def check_positions_from_stream() -> None:
                     loss_cooldown_until[position.epic] = datetime.now() + timedelta(minutes=LOSS_COOLDOWN_MINUTES)
                     logger.info(f"Loss cooldown set for {market_name}: {LOSS_COOLDOWN_MINUTES} mins")
 
-                telegram.daily_pnl += pnl
+                # daily_pnl incremented in notify_trade_closed()
                 risk_manager.update_daily_pnl(pnl)
-                telegram.save_daily_stats()
 
                 if telegram_loop:
                     asyncio.run_coroutine_threadsafe(
