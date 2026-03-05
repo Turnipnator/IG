@@ -23,6 +23,7 @@ from config import TelegramConfig, MARKETS
 
 if TYPE_CHECKING:
     from src.client import IGClient
+    from src.journal import TradeJournal
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class TelegramBot:
         self.trades_today = 0
         self.daily_pnl = 0.0
         self.risk_manager = None  # Set via set_risk_manager() for stats persistence
+        self.journal: Optional['TradeJournal'] = None  # Set via set_journal()
 
         logger.info(f"Telegram bot initialized with {len(self.authorized_users)} authorized users")
 
@@ -90,6 +92,10 @@ class TelegramBot:
     def set_risk_manager(self, risk_manager) -> None:
         """Set reference to risk manager for stats persistence."""
         self.risk_manager = risk_manager
+
+    def set_journal(self, journal: 'TradeJournal') -> None:
+        """Set reference to trade journal for /journal command."""
+        self.journal = journal
 
     def save_daily_stats(self) -> None:
         """Persist daily stats to disk so they survive restarts."""
@@ -172,7 +178,8 @@ class TelegramBot:
             "/markets - Market prices and status\n"
             "/health - Quick health check\n\n"
             "*💰 Performance:*\n"
-            "/pnl - Today's P&L summary\n\n"
+            "/pnl - Today's P&L summary\n"
+            "/journal - Trade journal stats\n\n"
             "*🎮 Control:*\n"
             "/stop - Pause trading\n"
             "/resume - Resume trading\n"
@@ -379,6 +386,78 @@ class TelegramBot:
 
         except Exception as e:
             logger.error(f"Error in pnl command: {e}")
+            await update.message.reply_text(f"❌ Error: {str(e)}")
+
+    async def journal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /journal command — trade journal stats."""
+        if not self.is_authorized(update.effective_user.id):
+            return
+
+        try:
+            if not self.journal:
+                await update.message.reply_text("⚠️ Trade journal not available")
+                return
+
+            days = 30
+            overall = self.journal.get_overall_stats(days)
+            by_market = self.journal.get_stats_by_market(days)
+            by_exit = self.journal.get_stats_by_exit_reason(days)
+            rejected = self.journal.get_rejected_count_by_market(days=7)
+
+            total = overall.get("total", 0) or 0
+            if total == 0:
+                await update.message.reply_text(
+                    "📓 <b>TRADE JOURNAL</b>\n\nNo closed trades recorded yet.",
+                    parse_mode="HTML",
+                )
+                self.commands_executed += 1
+                return
+
+            wins = overall.get("wins", 0) or 0
+            losses = overall.get("losses", 0) or 0
+            win_rate = (wins / total * 100) if total > 0 else 0
+
+            msg = f"📓 <b>TRADE JOURNAL</b> ({days}d)\n\n"
+            msg += f"<b>Overall:</b>\n"
+            msg += f"  Trades: {total} ({wins}W / {losses}L)\n"
+            msg += f"  Win rate: {win_rate:.0f}%\n"
+            msg += f"  Total P&L: £{overall.get('total_pnl', 0):.2f}\n"
+            msg += f"  Avg win: £{overall.get('avg_win', 0):.2f}\n"
+            msg += f"  Avg loss: £{overall.get('avg_loss', 0):.2f}\n"
+            msg += f"  Avg duration: {overall.get('avg_duration', 0):.0f} mins\n"
+            msg += f"  Avg ADX at entry: {overall.get('avg_adx_entry', 0):.1f}\n\n"
+
+            if by_market:
+                msg += f"<b>By Market:</b>\n"
+                for m in by_market:
+                    w = m.get("wins", 0) or 0
+                    t = m.get("total", 0) or 0
+                    wr = (w / t * 100) if t > 0 else 0
+                    pnl = m.get("total_pnl", 0) or 0
+                    emoji = "📈" if pnl >= 0 else "📉"
+                    msg += f"  {emoji} {m['market_name']}: {t} trades, {wr:.0f}% win, £{pnl:.2f}\n"
+                msg += "\n"
+
+            if by_exit:
+                msg += f"<b>By Exit Type:</b>\n"
+                for e in by_exit:
+                    pnl = e.get("total_pnl", 0) or 0
+                    msg += f"  {e['exit_reason']}: {e['total']} trades, £{pnl:.2f}\n"
+                msg += "\n"
+
+            if rejected:
+                msg += f"<b>Rejected Signals (7d):</b>\n"
+                for r in rejected[:5]:
+                    msg += (
+                        f"  {r['market_name']}: {r['rejected']}x "
+                        f"(avg ADX {r.get('avg_adx', 0):.1f})\n"
+                    )
+
+            await update.message.reply_text(msg, parse_mode="HTML")
+            self.commands_executed += 1
+
+        except Exception as e:
+            logger.error(f"Error in journal command: {e}")
             await update.message.reply_text(f"❌ Error: {str(e)}")
 
     async def health_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -747,6 +826,7 @@ class TelegramBot:
             self.app.add_handler(CommandHandler("positions", self.positions_command))
             self.app.add_handler(CommandHandler("markets", self.markets_command))
             self.app.add_handler(CommandHandler("pnl", self.pnl_command))
+            self.app.add_handler(CommandHandler("journal", self.journal_command))
             self.app.add_handler(CommandHandler("health", self.health_command))
             self.app.add_handler(CommandHandler("stop", self.stop_command))
             self.app.add_handler(CommandHandler("pause", self.stop_command))  # Alias

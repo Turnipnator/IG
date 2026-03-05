@@ -27,6 +27,7 @@ from src.risk_manager import RiskManager
 from src.telegram_bot import TelegramBot
 from src.streaming import IGStreamService, MarketStream, LIGHTSTREAMER_AVAILABLE
 from src.calendar import EconomicCalendar
+from src.journal import TradeJournal
 from src.utils import setup_logging, RateLimiter
 from src.regime import (
     MarketRegime,
@@ -44,6 +45,7 @@ telegram: TelegramBot = None
 stream_service: IGStreamService = None
 rate_limiter: RateLimiter = None
 calendar: EconomicCalendar = None
+journal: TradeJournal = None
 running = True
 telegram_loop = None
 
@@ -87,7 +89,7 @@ bot_start_time: datetime = datetime.now()
 
 def initialize() -> bool:
     """Initialize all components."""
-    global client, strategy, risk_manager, telegram, rate_limiter, calendar
+    global client, strategy, risk_manager, telegram, rate_limiter, calendar, journal
 
     # Load configs
     ig_config = load_ig_config()
@@ -101,6 +103,7 @@ def initialize() -> bool:
     telegram = TelegramBot(telegram_config)
     rate_limiter = RateLimiter(requests_per_minute=25)
     calendar = EconomicCalendar(buffer_minutes=30)
+    journal = TradeJournal()
 
     # Login to IG
     if not client.login():
@@ -110,6 +113,7 @@ def initialize() -> bool:
     # Set IG client and risk manager references in telegram bot
     telegram.set_ig_client(client)
     telegram.set_risk_manager(risk_manager)
+    telegram.set_journal(journal)
     telegram.load_daily_stats()
 
     # Get account balance
@@ -424,6 +428,12 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
 
         if not is_valid:
             logger.info(f"Trade not validated: {reason}")
+            latest = df.iloc[-1]
+            journal.log_rejected_signal(
+                epic, market_config.name, trade_signal.signal.value,
+                trade_signal.confidence, float(latest.get("adx", 0)),
+                float(latest.get("rsi", 0)), reason,
+            )
             return
 
         # Check confidence (market-specific threshold, regime-adjusted)
@@ -436,6 +446,12 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         if trade_signal.confidence < min_confidence:
             logger.info(
                 f"Confidence too low for {market_config.name}: {trade_signal.confidence:.0%} < {min_confidence:.0%}"
+            )
+            latest = df.iloc[-1]
+            journal.log_rejected_signal(
+                epic, market_config.name, trade_signal.signal.value,
+                trade_signal.confidence, float(latest.get("adx", 0)),
+                float(latest.get("rsi", 0)), f"Confidence {trade_signal.confidence:.0%} < {min_confidence:.0%}",
             )
             return
 
@@ -555,6 +571,29 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                     created_date=datetime.now().isoformat(),
                 )
 
+                # Journal entry with indicator snapshot
+                latest = df.iloc[-1]
+                journal.log_entry(
+                    deal_id=deal_id,
+                    epic=epic,
+                    market_name=market_config.name,
+                    direction=trade_signal.signal.value,
+                    size=position_size.size,
+                    entry_price=result.get("level", current_price),
+                    stop_distance=trade_signal.stop_distance,
+                    limit_distance=trade_signal.limit_distance,
+                    confidence=trade_signal.confidence,
+                    reason=trade_signal.reason,
+                    strategy=market_config.strategy,
+                    adx=float(latest.get("adx", 0)),
+                    rsi=float(latest.get("rsi", 0)),
+                    atr=float(latest.get("atr", 0)),
+                    ema_fast=float(latest.get("ema_fast", 0)),
+                    ema_medium=float(latest.get("ema_medium", 0)),
+                    ema_slow=float(latest.get("ema_slow", 0)),
+                    htf_trend=htf_trends.get(epic, "NEUTRAL"),
+                )
+
             if telegram_loop:
                 asyncio.run_coroutine_threadsafe(
                     telegram.notify_trade_opened(
@@ -624,6 +663,9 @@ def check_positions_from_stream() -> None:
                 logger.info(f"Loss cooldown set for {market_name}: {LOSS_COOLDOWN_MINUTES} mins")
 
             risk_manager.update_daily_pnl(actual_pnl)
+
+            # Journal exit
+            journal.log_exit(deal_id, actual_pnl, "Stop/limit hit")
 
             if telegram_loop:
                 asyncio.run_coroutine_threadsafe(
@@ -830,6 +872,12 @@ def check_positions_from_stream() -> None:
 
                 # daily_pnl incremented in notify_trade_closed()
                 risk_manager.update_daily_pnl(pnl)
+
+                # Journal exit with current ADX
+                exit_adx = 0.0
+                if df is not None and len(df) > 0 and "adx" in df.columns:
+                    exit_adx = float(df.iloc[-1]["adx"])
+                journal.log_exit(position.deal_id, pnl, reason, adx_at_exit=exit_adx)
 
                 if telegram_loop:
                     asyncio.run_coroutine_threadsafe(
