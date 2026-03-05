@@ -361,8 +361,8 @@ class TradingStrategy:
         # EMA separation factor (0-0.25)
         ema_fast = latest["ema_fast"]
         ema_slow = latest["ema_slow"]
-        ema_separation = abs(ema_fast - ema_slow) / ema_slow
-        ema_factor = min(ema_separation * 10, 0.25)
+        ema_separation = abs(ema_fast - ema_slow) / abs(ema_slow) if ema_slow != 0 else 0.0
+        ema_factor = min(max(ema_separation * 10, 0.0), 0.25)
 
         # RSI factor (0-0.2)
         if direction == "bullish":
@@ -394,7 +394,13 @@ class TradingStrategy:
             htf_factor = 0.0
 
         confidence = ema_factor + rsi_factor + macd_factor + adx_factor + htf_factor
-        return round(min(confidence, 1.0), 2)
+        clamped = max(0.0, min(confidence, 1.0))
+        if clamped != confidence:
+            logger.warning(
+                f"Confidence out of range: {confidence:.4f} (ema={ema_factor:.4f}, "
+                f"rsi={rsi_factor:.4f}, macd={macd_factor:.1f}, adx={adx_factor:.4f}, htf={htf_factor:.1f})"
+            )
+        return round(clamped, 2)
 
     def _get_hold_reason(
         self,
