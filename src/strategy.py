@@ -122,6 +122,25 @@ class TradingStrategy:
         adx = latest["adx"]
         close = latest["close"]
 
+        # Sanity check: detect corrupted/stale streaming data
+        # ADX > 80 is virtually impossible in real markets; ATR > 50x min_stop is absurd
+        max_sane_atr = market.min_stop_distance * 50
+        if adx > 80 or atr > max_sane_atr or atr <= 0:
+            logger.warning(
+                f"[{market.name}] Corrupted indicator data detected — "
+                f"ADX={adx:.1f}, ATR={atr:.2f} (max sane={max_sane_atr:.1f}). Skipping."
+            )
+            return TradeSignal(
+                signal=Signal.HOLD,
+                epic=market.epic,
+                market_name=market.name,
+                confidence=0.0,
+                entry_price=current_price,
+                stop_distance=market.min_stop_distance,
+                limit_distance=market.min_stop_distance,
+                reason=f"Corrupted data: ADX={adx:.1f}, ATR={atr:.2f}",
+            )
+
         rsi_overbought = strategy.rsi_overbought
         rsi_oversold = strategy.rsi_oversold
         adx_threshold = strategy.adx_threshold
@@ -156,6 +175,14 @@ class TradingStrategy:
 
         # Calculate dynamic stop/limit based on ATR and strategy R:R
         stop_distance = max(atr * strategy.stop_atr_mult, market.min_stop_distance)
+        # Cap stop at 20x min_stop_distance to prevent runaway values from bad data
+        max_stop = market.min_stop_distance * 20
+        if stop_distance > max_stop:
+            logger.warning(
+                f"[{market.name}] Stop distance {stop_distance:.2f} exceeds max "
+                f"{max_stop:.1f} (20x min). Capping."
+            )
+            stop_distance = max_stop
         limit_distance = stop_distance * strategy.reward_risk  # Strategy-specific R:R
 
         # RSI entry ranges from strategy config

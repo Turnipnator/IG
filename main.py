@@ -537,6 +537,15 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 telegram_loop,
             )
 
+        # Final safety check: reject absurd stop/limit distances
+        max_safe_stop = market_config.min_stop_distance * 25
+        if trade_signal.stop_distance > max_safe_stop:
+            logger.error(
+                f"[{market.name}] BLOCKED: stop_distance={trade_signal.stop_distance:.2f} "
+                f"exceeds safety limit {max_safe_stop:.1f}. Likely corrupted data."
+            )
+            return
+
         # Open position
         logger.info(
             f"Opening {trade_signal.signal.value} position on {market.name}: "
