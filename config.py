@@ -289,6 +289,25 @@ MARKETS = [
         strategy="default",    # Gold is the star performer!
     ),
 
+    MarketConfig(
+        epic="CS.D.USCSI.TODAY.IP",
+        name="Spot Silver",
+        sector="Commodities",
+        min_stop_distance=4.0,     # Spread is 6.8 — min stop needs to clear spread
+        default_size=1.0,
+        min_confidence=0.55,
+        strategy="silver",
+    ),
+    MarketConfig(
+        epic="CS.D.COPPER.TODAY.IP",
+        name="Copper",
+        sector="Commodities",
+        min_stop_distance=12.0,    # Spread is 22.0 — need comfortable margin
+        default_size=0.1,
+        min_confidence=0.55,
+        strategy="default",
+    ),
+
     # --- SOFT COMMODITIES (Big Winners Strategy) ---
     MarketConfig(
         epic="CO.D.S.Month1.IP",
@@ -351,6 +370,16 @@ MARKETS = [
         name="GBP/USD",
         sector="Forex",
         min_stop_distance=2.0,
+        default_size=0.5,
+        candle_interval=15,
+        min_confidence=0.55,
+        strategy="default",
+    ),
+    MarketConfig(
+        epic="CS.D.USDJPY.TODAY.IP",
+        name="USD/JPY",
+        sector="Forex",
+        min_stop_distance=2.0,     # Spread is 1.0 — tight spread, good for trading
         default_size=0.5,
         candle_interval=15,
         min_confidence=0.55,
