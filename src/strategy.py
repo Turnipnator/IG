@@ -123,9 +123,10 @@ class TradingStrategy:
         close = latest["close"]
 
         # Sanity check: detect corrupted/stale streaming data
-        # ADX > 80 is virtually impossible in real markets; ATR > 50x min_stop is absurd
+        # ATR > 50x min_stop is absurd (the real corruption signal — causes billion-point stops)
+        # ADX > 80 alone is legitimate in strong trends, so only flag it alongside bad ATR
         max_sane_atr = market.min_stop_distance * 50
-        if adx > 80 or atr > max_sane_atr or atr <= 0:
+        if atr > max_sane_atr or atr <= 0:
             logger.warning(
                 f"[{market.name}] Corrupted indicator data detected — "
                 f"ADX={adx:.1f}, ATR={atr:.2f} (max sane={max_sane_atr:.1f}). Skipping."
