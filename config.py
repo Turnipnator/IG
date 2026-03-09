@@ -78,6 +78,8 @@ class MarketConfig:
     candle_interval: int = 5  # Candle duration in minutes (5 for indices/commodities, 15 for forex)
     min_confidence: float = 0.5  # Minimum confidence to enter (higher = more selective)
     strategy: str = "default"  # Strategy profile to use: "default" or "indices"
+    trading_start: int = 4   # UTC hour to start trading (inclusive)
+    trading_end: int = 20    # UTC hour to stop trading (exclusive)
 
 
 # Load configurations from environment
@@ -278,6 +280,8 @@ MARKETS = [
         candle_interval=15,
         min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="default",
+        trading_start=23,      # Nearly 24h market — avoid IG reset window (21-23 UTC)
+        trading_end=21,
     ),
     MarketConfig(
         epic="CS.D.USCGC.TODAY.IP",
@@ -287,6 +291,8 @@ MARKETS = [
         default_size=1.0,      # IG minimum is 1.0 per point (was 0.1 - all trades rejected!)
         min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="default",    # Gold is the star performer!
+        trading_start=23,
+        trading_end=21,
     ),
 
     MarketConfig(
@@ -297,6 +303,8 @@ MARKETS = [
         default_size=1.0,
         min_confidence=0.55,
         strategy="silver",
+        trading_start=23,
+        trading_end=21,
     ),
     MarketConfig(
         epic="CS.D.COPPER.TODAY.IP",
@@ -306,6 +314,8 @@ MARKETS = [
         default_size=0.1,
         min_confidence=0.55,
         strategy="default",
+        trading_start=23,
+        trading_end=21,
     ),
 
     # --- SOFT COMMODITIES (Big Winners Strategy) ---
@@ -354,6 +364,8 @@ MARKETS = [
         candle_interval=15,
         min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="default",
+        trading_start=23,      # Forex trades 24/5 — avoid IG reset window
+        trading_end=21,
     ),
     MarketConfig(
         epic="CS.D.EURUSD.TODAY.IP",
@@ -364,6 +376,8 @@ MARKETS = [
         candle_interval=15,
         min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="default",
+        trading_start=23,
+        trading_end=21,
     ),
     MarketConfig(
         epic="CS.D.GBPUSD.TODAY.IP",
@@ -374,6 +388,8 @@ MARKETS = [
         candle_interval=15,
         min_confidence=0.55,
         strategy="default",
+        trading_start=23,
+        trading_end=21,
     ),
     MarketConfig(
         epic="CS.D.USDJPY.TODAY.IP",
@@ -384,6 +400,8 @@ MARKETS = [
         candle_interval=15,
         min_confidence=0.55,
         strategy="default",
+        trading_start=23,
+        trading_end=21,
     ),
 
     # --- RATES / BONDS (Big Winners Strategy) ---

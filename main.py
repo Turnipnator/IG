@@ -455,13 +455,21 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             )
             return
 
-        # Time-of-day filter: only trade during active sessions (04:00-20:00 UTC)
-        # Backtest showed 80% win rate during London open (04-08 UTC) vs ~0% overnight
+        # Time-of-day filter: only trade during active sessions
+        # Per-market hours: indices 04-20 UTC, forex/commodities 23-21 UTC (nearly 24h)
         current_hour = datetime.now().hour
-        if current_hour < 4 or current_hour >= 20:
+        t_start = market_config.trading_start
+        t_end = market_config.trading_end
+        if t_start < t_end:
+            # Normal range (e.g. 04-20)
+            outside_hours = current_hour < t_start or current_hour >= t_end
+        else:
+            # Wrap-around range (e.g. 23-21 means trade from 23:00 to 20:59)
+            outside_hours = t_end <= current_hour < t_start
+        if outside_hours:
             logger.info(
                 f"Outside trading hours for {market_config.name}: "
-                f"{current_hour:02d}:00 UTC (active: 04:00-20:00)"
+                f"{current_hour:02d}:00 UTC (active: {t_start:02d}:00-{t_end:02d}:00)"
             )
             return
 
