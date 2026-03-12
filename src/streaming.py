@@ -433,18 +433,33 @@ class IGStreamService:
             return
 
         market = self.markets[epic]
+        skipped = 0
 
         for _, row in historical_df.iterrows():
+            o, h, l, c = row["open"], row["high"], row["low"], row["close"]
+
+            # Skip corrupted candles (negative prices or absurd range)
+            if o <= 0 or h <= 0 or l <= 0 or c <= 0:
+                skipped += 1
+                continue
+            if h > 0 and l > 0 and (h - l) / l > 0.5:
+                # Range > 50% of low price is almost certainly corrupted
+                skipped += 1
+                continue
+
             candle = Candle(
                 timestamp=row["date"],
-                open=row["open"],
-                high=row["high"],
-                low=row["low"],
-                close=row["close"],
+                open=o, high=h, low=l, close=c,
                 volume=row.get("volume", 0),
             )
             market.candles.append(candle)
 
+        # Seed mid_price from last candle so tick outlier filter works immediately
+        if market.candles:
+            market.mid_price = market.candles[-1].close
+
+        if skipped:
+            logger.warning(f"Filtered {skipped} corrupted candles for {epic}")
         logger.info(f"Initialized {len(market.candles)} candles for {epic}")
 
     def get_market_data(self, epic: str) -> Optional[MarketStream]:
