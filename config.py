@@ -295,17 +295,18 @@ MARKETS = [
         trading_end=21,
     ),
 
-    MarketConfig(
-        epic="CS.D.USCSI.TODAY.IP",
-        name="Spot Silver",
-        sector="Commodities",
-        min_stop_distance=4.0,     # Spread is 6.8 — min stop needs to clear spread
-        default_size=0.5,          # Reduced from 1.0 — was risking £41-55/trade (too high)
-        min_confidence=0.55,
-        strategy="silver",
-        trading_start=23,
-        trading_end=21,
-    ),
+    # Spot Silver — disabled during choppy Iran-conflict conditions (3/3 losses)
+    # MarketConfig(
+    #     epic="CS.D.USCSI.TODAY.IP",
+    #     name="Spot Silver",
+    #     sector="Commodities",
+    #     min_stop_distance=4.0,
+    #     default_size=0.5,
+    #     min_confidence=0.55,
+    #     strategy="silver",
+    #     trading_start=23,
+    #     trading_end=21,
+    # ),
     MarketConfig(
         epic="CS.D.COPPER.TODAY.IP",
         name="Copper",

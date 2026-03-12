@@ -123,10 +123,25 @@ class IGStreamListener(SubscriptionListener if LIGHTSTREAMER_AVAILABLE else obje
             if bid is None or offer is None:
                 return
 
+            # Reject negative or zero prices (corrupted Lightstreamer data)
+            if bid <= 0 or offer <= 0:
+                logger.warning(f"[{epic}] Rejected bad tick: bid={bid}, offer={offer}")
+                return
+
             mid_price = (bid + offer) / 2
 
             market = self.stream_service.markets.get(epic)
             if market:
+                # Reject ticks that are >10% away from last known price (corrupted data)
+                if market.mid_price > 0:
+                    pct_change = abs(mid_price - market.mid_price) / market.mid_price
+                    if pct_change > 0.10:
+                        logger.warning(
+                            f"[{epic}] Rejected outlier tick: {mid_price:.2f} "
+                            f"vs last {market.mid_price:.2f} ({pct_change:.1%} change)"
+                        )
+                        return
+
                 market.bid = bid
                 market.offer = offer
                 market.mid_price = mid_price
