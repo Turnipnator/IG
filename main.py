@@ -251,7 +251,7 @@ def update_htf_trends() -> None:
             df = client.get_historical_prices(
                 market.epic,
                 resolution="HOUR",
-                num_points=50,  # Need ~28 for ADX + buffer for markets with limited hours (Cotton, Crude)
+                num_points=30,  # Need ~21 for EMA + buffer. Reduced from 50 to save API budget.
                 use_cache=True,  # Use disk cache if fresh to save API calls
             )
 
@@ -1116,7 +1116,7 @@ async def main_async():
         import schedule
 
         schedule.every(6).hours.do(refresh_session)
-        schedule.every(12).hours.do(update_htf_trends)  # 2x/day — 18 markets × 50pts × 2/day × 5days = 9,000/week
+        schedule.every(24).hours.do(update_htf_trends)  # 1x/day — 19 markets × 30pts = 570pts/day, 3,990/week
         schedule.every(15).minutes.do(stream_service.save_candles_to_disk)  # Persist candles for restarts
         schedule.every().day.at("04:00").do(run_daily_screen)  # Screen markets at London open
         schedule.every().day.at("21:00").do(send_daily_summary)

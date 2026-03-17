@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Disk cache for surviving restarts (saves API allowance)
 CACHE_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
 PRICE_CACHE_FILE = CACHE_DIR / "price_cache.json"
-DISK_CACHE_TTL_MINUTES = 10  # Use disk cache if < 10 mins old
+DISK_CACHE_TTL_MINUTES = 360  # Use disk cache if < 6 hours old (saves API budget on restarts)
 
 
 @dataclass
@@ -65,7 +65,7 @@ class MarketInfo:
 class IGClient:
     """Client for interacting with IG Markets REST API."""
 
-    def __init__(self, config: IGConfig, cache_ttl_minutes: int = 55):
+    def __init__(self, config: IGConfig, cache_ttl_minutes: int = 1380):  # 23 hours — HTF updates once/day
         self.config = config
         self.session = requests.Session()
         self.cst: Optional[str] = None
