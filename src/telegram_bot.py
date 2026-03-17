@@ -677,7 +677,7 @@ class TelegramBot:
 
     # ==================== NOTIFICATION METHODS ====================
 
-    async def send_notification(self, message: str) -> bool:
+    async def send_notification(self, message: str, parse_mode: str = "Markdown") -> bool:
         """Send notification to all authorized users."""
         if not self.config.enabled:
             logger.debug("Telegram notifications disabled")
@@ -693,7 +693,7 @@ class TelegramBot:
                     await self.app.bot.send_message(
                         chat_id=user_id,
                         text=message,
-                        parse_mode='Markdown'
+                        parse_mode=parse_mode
                     )
                     self.notifications_sent += 1
                 except Exception as e:
