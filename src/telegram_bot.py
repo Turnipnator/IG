@@ -82,6 +82,7 @@ class TelegramBot:
         self.daily_pnl = 0.0
         self.risk_manager = None  # Set via set_risk_manager() for stats persistence
         self.journal: Optional['TradeJournal'] = None  # Set via set_journal()
+        self.screener = None  # Set via set_screener()
 
         logger.info(f"Telegram bot initialized with {len(self.authorized_users)} authorized users")
 
@@ -96,6 +97,10 @@ class TelegramBot:
     def set_journal(self, journal: 'TradeJournal') -> None:
         """Set reference to trade journal for /journal command."""
         self.journal = journal
+
+    def set_screener(self, screener) -> None:
+        """Set reference to market screener for /screener command."""
+        self.screener = screener
 
     def save_daily_stats(self) -> None:
         """Persist daily stats to disk so they survive restarts."""
@@ -458,6 +463,28 @@ class TelegramBot:
 
         except Exception as e:
             logger.error(f"Error in journal command: {e}")
+            await update.message.reply_text(f"❌ Error: {str(e)}")
+
+    async def screener_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /screener command — show market scores."""
+        if not self.is_authorized(update.effective_user.id):
+            return
+
+        try:
+            if not self.screener:
+                await update.message.reply_text("⚠️ Screener not available")
+                return
+
+            text = self.screener.get_scores_text()
+            if not text or "No scores" in text:
+                await update.message.reply_text("⚠️ No scores yet. Screener runs daily at 04:00 UTC.")
+                return
+
+            await update.message.reply_text(text, parse_mode="HTML")
+            self.commands_executed += 1
+
+        except Exception as e:
+            logger.error(f"Error in screener command: {e}")
             await update.message.reply_text(f"❌ Error: {str(e)}")
 
     async def health_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -827,6 +854,7 @@ class TelegramBot:
             self.app.add_handler(CommandHandler("markets", self.markets_command))
             self.app.add_handler(CommandHandler("pnl", self.pnl_command))
             self.app.add_handler(CommandHandler("journal", self.journal_command))
+            self.app.add_handler(CommandHandler("screener", self.screener_command))
             self.app.add_handler(CommandHandler("health", self.health_command))
             self.app.add_handler(CommandHandler("stop", self.stop_command))
             self.app.add_handler(CommandHandler("pause", self.stop_command))  # Alias

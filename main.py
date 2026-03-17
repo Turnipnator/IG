@@ -28,6 +28,7 @@ from src.telegram_bot import TelegramBot
 from src.streaming import IGStreamService, MarketStream, LIGHTSTREAMER_AVAILABLE
 from src.calendar import EconomicCalendar
 from src.journal import TradeJournal
+from src.screener import MarketScreener
 from src.utils import setup_logging, RateLimiter
 from src.regime import (
     MarketRegime,
@@ -46,6 +47,7 @@ stream_service: IGStreamService = None
 rate_limiter: RateLimiter = None
 calendar: EconomicCalendar = None
 journal: TradeJournal = None
+screener: MarketScreener = None
 running = True
 telegram_loop = None
 
@@ -104,6 +106,7 @@ def initialize() -> bool:
     rate_limiter = RateLimiter(requests_per_minute=25)
     calendar = EconomicCalendar(buffer_minutes=30)
     journal = TradeJournal()
+    screener = MarketScreener(max_active=15)
 
     # Login to IG
     if not client.login():
@@ -114,6 +117,7 @@ def initialize() -> bool:
     telegram.set_ig_client(client)
     telegram.set_risk_manager(risk_manager)
     telegram.set_journal(journal)
+    telegram.set_screener(screener)
     telegram.load_daily_stats()
 
     # Get account balance
@@ -306,6 +310,38 @@ def update_htf_trends() -> None:
                 logger.info("Market regime: Defaulting to BULLISH (S&P 500 data unavailable - possible API issue)")
 
 
+def run_daily_screen() -> None:
+    """Run the market screener using streaming data. Called daily at 04:00 UTC."""
+    if not screener or not stream_service:
+        return
+
+    logger.info("Running daily market screener...")
+
+    # Collect spreads from streaming data
+    spreads = {}
+    for epic, market in stream_service.markets.items():
+        if market.bid > 0 and market.offer > 0:
+            spreads[epic] = market.offer - market.bid
+
+    scores = screener.run_screen(stream_service, htf_trends, spreads)
+
+    # Log results
+    active = [s for s in scores if s.is_active]
+    inactive = [s for s in scores if not s.is_active and s.score > 0]
+    logger.info(f"Screener results: {len(active)} active, {len(inactive)} inactive")
+    for s in active:
+        logger.info(f"  [ACTIVE] {s.name}: {s.score}/100 (ADX={s.adx}, ATR/Spread={s.atr_spread_ratio}x)")
+    for s in inactive[:5]:
+        logger.info(f"  [OFF] {s.name}: {s.score}/100 — {s.reason}")
+
+    # Notify via Telegram
+    if telegram_loop:
+        asyncio.run_coroutine_threadsafe(
+            telegram.send_notification(screener.get_scores_text(), parse_mode="HTML"),
+            telegram_loop,
+        )
+
+
 def on_price_update(epic: str, market: MarketStream) -> None:
     """Callback for real-time price updates."""
     # This fires frequently - use for monitoring/logging only
@@ -344,6 +380,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
     try:
         market_config = next((m for m in MARKETS if m.epic == epic), None)
         if not market_config:
+            return
+
+        # Skip if screener has deactivated this market
+        if screener and not screener.is_active(epic):
             return
 
         # Skip if market not tradeable
@@ -1065,6 +1105,9 @@ async def main_async():
     if streaming_enabled:
         logger.info("Bot running with real-time streaming. Analyzing on candle completion.")
 
+        # Run initial market screen (uses streaming data already loaded)
+        run_daily_screen()
+
         # Start periodic task thread
         periodic_thread = threading.Thread(target=periodic_tasks, daemon=True)
         periodic_thread.start()
@@ -1075,6 +1118,7 @@ async def main_async():
         schedule.every(6).hours.do(refresh_session)
         schedule.every(12).hours.do(update_htf_trends)  # 2x/day — 18 markets × 50pts × 2/day × 5days = 9,000/week
         schedule.every(15).minutes.do(stream_service.save_candles_to_disk)  # Persist candles for restarts
+        schedule.every().day.at("04:00").do(run_daily_screen)  # Screen markets at London open
         schedule.every().day.at("21:00").do(send_daily_summary)
 
         # Run scheduler in background
