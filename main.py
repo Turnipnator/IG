@@ -91,7 +91,7 @@ bot_start_time: datetime = datetime.now()
 
 def initialize() -> bool:
     """Initialize all components."""
-    global client, strategy, risk_manager, telegram, rate_limiter, calendar, journal
+    global client, strategy, risk_manager, telegram, rate_limiter, calendar, journal, screener
 
     # Load configs
     ig_config = load_ig_config()
