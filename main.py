@@ -106,7 +106,7 @@ def initialize() -> bool:
     rate_limiter = RateLimiter(requests_per_minute=25)
     calendar = EconomicCalendar(buffer_minutes=30)
     journal = TradeJournal()
-    screener = MarketScreener(max_active=15)
+    screener = MarketScreener(max_active=8)  # Concentrate on top 8 — fewer markets = better P&L
 
     # Login to IG
     if not client.login():

@@ -129,31 +129,11 @@ def load_trading_config() -> TradingConfig:
 #   - Key: Fast EMAs (5/12/26), MACD exit ON, require HTF alignment
 
 STRATEGY_PROFILES = {
-    # Default strategy for most markets: "Big Winners"
-    # Optimized for Gold, EUR/USD, Dollar Index, Crude Oil
+    # =================================================================
+    # DEFAULT — baseline for markets without a specific profile
+    # Used by: Soybeans, NY Cocoa, NY Cotton, Dollar Index, T-Notes
+    # =================================================================
     "default": StrategyConfig(
-        ema_fast=9,
-        ema_medium=21,
-        ema_slow=50,
-        rsi_period=7,
-        rsi_overbought=70,
-        rsi_oversold=30,
-        rsi_buy_max=55,        # Don't buy into overbought (was 60)
-        rsi_sell_min=45,       # Don't short into oversold (was 40)
-        adx_threshold=30,      # Lowered from 35 — backtest shows ADX 30-35 entries are net profitable
-        stop_atr_mult=1.8,     # Wider stops for forex/commodities (was 1.5 - EUR/USD instant stop-outs)
-        reward_risk=2.0,       # Lowered from 4.0 — 4:1 target rarely hit, 2:1 more achievable
-        min_confidence=0.55,   # Higher threshold - quality over quantity (was 0.4)
-        use_macd_exit=False,   # Don't cut winners short
-        require_htf=True,      # Require HTF confirmation (was False)
-        pullback_pct=0.3,      # Price must be within 0.3% of fast EMA
-        breakeven_trigger_pct=0.5,  # Move stop to entry when 50% of stop distance reached
-        atr_trail_mult=1.5,        # Trail stop at 1.5x ATR behind price
-    ),
-
-    # Silver strategy: tighter stops to cap risk at 1.0 £/pt min size
-    # Same as default but stop_atr_mult=1.2 (vs 1.8) to reduce £62 -> ~£41 losses
-    "silver": StrategyConfig(
         ema_fast=9,
         ema_medium=21,
         ema_slow=50,
@@ -162,9 +142,9 @@ STRATEGY_PROFILES = {
         rsi_oversold=30,
         rsi_buy_max=55,
         rsi_sell_min=45,
-        adx_threshold=30,          # Lowered from 35 to match default (backtest-driven)
-        stop_atr_mult=1.2,        # Tighter stops: Silver ATR is wide, 1.0 min size makes 1.8x too expensive
-        reward_risk=2.0,          # Lowered from 4.0 to match default
+        adx_threshold=30,
+        stop_atr_mult=1.8,
+        reward_risk=2.0,
         min_confidence=0.55,
         use_macd_exit=False,
         require_htf=True,
@@ -173,26 +153,190 @@ STRATEGY_PROFILES = {
         atr_trail_mult=1.5,
     ),
 
-    # Indices strategy: "Momentum"
-    # Optimized for S&P 500 and NASDAQ 100
+    # =================================================================
+    # GOLD — the star. Very fast EMAs catch trends early, wide stops
+    # let them run, RSI 85/15 stops cutting winners short.
+    # Backtest: £+286 (60d) vs £+45 with default. PF=1.88.
+    # =================================================================
+    "gold": StrategyConfig(
+        ema_fast=3,            # Very fast — catch Gold trends early
+        ema_medium=8,
+        ema_slow=21,
+        rsi_period=7,
+        rsi_overbought=85,    # Wide — Gold trends push RSI high, don't exit early
+        rsi_oversold=15,
+        rsi_buy_max=60,       # Wider entry range for fast EMAs
+        rsi_sell_min=40,
+        adx_threshold=30,
+        stop_atr_mult=2.5,    # Wide stops — Gold's ATR is large, needs room
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=False,
+        require_htf=True,
+        pullback_pct=0.3,
+        breakeven_trigger_pct=0.7,  # Let trades breathe before locking BE
+        atr_trail_mult=1.5,
+    ),
+
+    # =================================================================
+    # FOREX — tighter stops work best on currency pairs.
+    # EUR/USD: £+19 (60d) with 1.0x stops vs £+1 with 1.8x. PF=1.31.
+    # USD/JPY: £+91 (60d) with 1.0x stops + RSI 80/20 + BE 90%. PF=1.79.
+    # =================================================================
+    "forex": StrategyConfig(
+        ema_fast=9,
+        ema_medium=21,
+        ema_slow=50,
+        rsi_period=7,
+        rsi_overbought=70,    # Forex trends are shorter — keep tight RSI exit
+        rsi_oversold=30,
+        rsi_buy_max=55,
+        rsi_sell_min=45,
+        adx_threshold=30,
+        stop_atr_mult=1.0,    # Tight stops — smaller losses, more frequent
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=False,
+        require_htf=True,
+        pullback_pct=0.3,
+        breakeven_trigger_pct=0.7,  # Let trades develop before BE
+        atr_trail_mult=1.5,
+    ),
+
+    # =================================================================
+    # USD/JPY specific — best performer. Tight stops + wide RSI + high BE.
+    # Backtest: £+91 (60d), PF=1.79, 45% WR.
+    # =================================================================
+    "usdjpy": StrategyConfig(
+        ema_fast=9,
+        ema_medium=21,
+        ema_slow=50,
+        rsi_period=7,
+        rsi_overbought=80,    # Wider than other forex — JPY trends run further
+        rsi_oversold=20,
+        rsi_buy_max=55,
+        rsi_sell_min=45,
+        adx_threshold=30,
+        stop_atr_mult=1.0,    # Tight stops
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=False,
+        require_htf=True,
+        pullback_pct=0.3,
+        breakeven_trigger_pct=0.9,  # Almost at target before locking BE
+        atr_trail_mult=1.5,
+    ),
+
+    # =================================================================
+    # INDICES — MACD exit ON, per-index stop tuning.
+    # NASDAQ: £+41 (60d) with 2.5x stops. PF=2.33.
+    # FTSE: £+30 (60d) with 1.0x stops. PF=2.09.
+    # =================================================================
     "indices": StrategyConfig(
-        ema_fast=5,            # Faster EMAs for momentum
+        ema_fast=5,
         ema_medium=12,
         ema_slow=26,
         rsi_period=7,
         rsi_overbought=70,
         rsi_oversold=30,
-        rsi_buy_max=55,        # Don't buy into overbought (was 65)
-        rsi_sell_min=45,       # Don't short into oversold (was 35)
-        adx_threshold=30,      # Lowered from 35 — backtest shows more trades at 30 are net profitable
-        stop_atr_mult=1.5,
-        reward_risk=2.0,       # Standard R:R - take profits
-        min_confidence=0.55,   # Higher threshold (was 0.4)
-        use_macd_exit=True,    # MACD exit helps on indices
-        require_htf=True,      # Only trade with the trend
-        pullback_pct=0.2,      # Tighter: price within 0.2% of fast EMA (indices move fast)
-        breakeven_trigger_pct=0.5,  # Move stop to entry when 50% of stop distance reached
-        atr_trail_mult=1.5,        # Trail stop at 1.5x ATR behind price
+        rsi_buy_max=55,
+        rsi_sell_min=45,
+        adx_threshold=30,
+        stop_atr_mult=1.5,    # Default for indices — overridden per market below
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=True,
+        require_htf=True,
+        pullback_pct=0.2,
+        breakeven_trigger_pct=0.5,
+        atr_trail_mult=1.5,
+    ),
+
+    # NASDAQ needs wider stops to avoid premature stop-outs
+    "indices_wide": StrategyConfig(
+        ema_fast=5,
+        ema_medium=12,
+        ema_slow=26,
+        rsi_period=7,
+        rsi_overbought=70,
+        rsi_oversold=30,
+        rsi_buy_max=55,
+        rsi_sell_min=45,
+        adx_threshold=30,
+        stop_atr_mult=2.5,    # Wide stops — NASDAQ PF=2.33 at 2.5x vs 2.04 at 1.5x
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=True,
+        require_htf=True,
+        pullback_pct=0.2,
+        breakeven_trigger_pct=0.5,
+        atr_trail_mult=1.5,
+    ),
+
+    # FTSE needs tight stops — PF=2.09 at 1.0x vs 1.24 at 1.5x
+    "indices_tight": StrategyConfig(
+        ema_fast=5,
+        ema_medium=12,
+        ema_slow=26,
+        rsi_period=7,
+        rsi_overbought=70,
+        rsi_oversold=30,
+        rsi_buy_max=55,
+        rsi_sell_min=45,
+        adx_threshold=30,
+        stop_atr_mult=1.0,    # Tight stops — FTSE trends are cleaner
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=True,
+        require_htf=True,
+        pullback_pct=0.2,
+        breakeven_trigger_pct=0.5,
+        atr_trail_mult=1.5,
+    ),
+
+    # =================================================================
+    # CRUDE OIL — wide RSI to stop killing every trade at break-even.
+    # All 70 trades exited at BE with RSI 70/30. RSI 80/20 helps marginally.
+    # =================================================================
+    "crude": StrategyConfig(
+        ema_fast=9,
+        ema_medium=21,
+        ema_slow=50,
+        rsi_period=7,
+        rsi_overbought=80,    # Wider — stop killing trades at BE
+        rsi_oversold=20,
+        rsi_buy_max=55,
+        rsi_sell_min=45,
+        adx_threshold=30,
+        stop_atr_mult=1.0,    # Tight stops
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=False,
+        require_htf=True,
+        pullback_pct=0.3,
+        breakeven_trigger_pct=0.7,
+        atr_trail_mult=1.5,
+    ),
+
+    # Silver — disabled but kept for re-enabling
+    "silver": StrategyConfig(
+        ema_fast=9,
+        ema_medium=21,
+        ema_slow=50,
+        rsi_period=7,
+        rsi_overbought=80,
+        rsi_oversold=20,
+        rsi_buy_max=55,
+        rsi_sell_min=45,
+        adx_threshold=30,
+        stop_atr_mult=1.2,
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=False,
+        require_htf=True,
+        pullback_pct=0.3,
+        breakeven_trigger_pct=0.7,
+        atr_trail_mult=1.5,
     ),
 }
 
@@ -212,7 +356,7 @@ MARKETS = [
         min_stop_distance=1.0,
         default_size=1.0,
         min_confidence=0.55,   # Raised from 0.4 for quality entries
-        strategy="indices",    # Use Momentum strategy
+        strategy="indices",
     ),
     MarketConfig(
         epic="IX.D.NASDAQ.CASH.IP",
@@ -220,8 +364,8 @@ MARKETS = [
         sector="Indices",
         min_stop_distance=4.0,
         default_size=0.2,
-        min_confidence=0.55,   # Raised from 0.4 for quality entries
-        strategy="indices",    # Use Momentum strategy
+        min_confidence=0.55,
+        strategy="indices_wide",  # NASDAQ: wider 2.5x stops, PF=2.33 (60d backtest)
     ),
     MarketConfig(
         epic="IX.D.RUSSELL.DAILY.IP",
@@ -258,7 +402,7 @@ MARKETS = [
         min_stop_distance=1.0,
         default_size=1.0,
         min_confidence=0.55,
-        strategy="indices",
+        strategy="indices_tight",  # FTSE: tight 1.0x stops, PF=2.09 (60d backtest)
     ),
     MarketConfig(
         epic="IX.D.AIIDX.DAILY.IP",
@@ -278,8 +422,8 @@ MARKETS = [
         default_size=0.1,
         expiry="MAR-26",
         candle_interval=15,
-        min_confidence=0.55,   # Raised from 0.4 for quality entries
-        strategy="default",
+        min_confidence=0.55,
+        strategy="crude",      # Custom: RSI 80/20, tight stops. Stops BE-exit problem.
         trading_start=23,      # Nearly 24h market — avoid IG reset window (21-23 UTC)
         trading_end=21,
     ),
@@ -290,7 +434,7 @@ MARKETS = [
         min_stop_distance=1.0,
         default_size=1.0,      # IG minimum is 1.0 per point (was 0.1 - all trades rejected!)
         min_confidence=0.55,   # Raised from 0.4 for quality entries
-        strategy="default",    # Gold is the star performer!
+        strategy="gold",       # Custom: fast EMAs 3/8/21, RSI 85/15, 2.5x stops. £+286 (60d)
         trading_start=23,
         trading_end=21,
     ),
@@ -375,8 +519,8 @@ MARKETS = [
         min_stop_distance=2.0,
         default_size=0.5,
         candle_interval=15,
-        min_confidence=0.55,   # Raised from 0.4 for quality entries
-        strategy="default",
+        min_confidence=0.55,
+        strategy="forex",      # Tight 1.0x stops, PF=1.31 (60d)
         trading_start=23,
         trading_end=21,
     ),
@@ -388,7 +532,7 @@ MARKETS = [
         default_size=0.5,
         candle_interval=15,
         min_confidence=0.55,
-        strategy="default",
+        strategy="forex",      # Tight 1.0x stops
         trading_start=23,
         trading_end=21,
     ),
@@ -400,7 +544,7 @@ MARKETS = [
         default_size=0.5,
         candle_interval=15,
         min_confidence=0.55,
-        strategy="default",
+        strategy="usdjpy",     # Custom: RSI 80/20, tight stops, BE 90%. £+91 (60d), PF=1.79
         trading_start=23,
         trading_end=21,
     ),
