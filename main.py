@@ -310,6 +310,48 @@ def update_htf_trends() -> None:
                 logger.info("Market regime: Defaulting to BULLISH (S&P 500 data unavailable - possible API issue)")
 
 
+def _auto_roll_contract(market_config: 'MarketConfig') -> None:
+    """
+    Auto-detect and update expired futures contracts.
+
+    When IG returns MARKET_ROLLED, fetch the current expiry from the API
+    and update the market config in-memory. Notifies via Telegram.
+    """
+    try:
+        info = client.get_market_info(market_config.epic)
+        if not info or not info.expiry:
+            logger.warning(f"Auto-roll: Could not get market info for {market_config.name}")
+            return
+
+        old_expiry = market_config.expiry
+        new_expiry = info.expiry
+
+        if new_expiry and new_expiry != old_expiry:
+            market_config.expiry = new_expiry
+            logger.info(
+                f"Auto-rolled {market_config.name}: {old_expiry} -> {new_expiry}"
+            )
+            if telegram_loop:
+                asyncio.run_coroutine_threadsafe(
+                    telegram.send_notification(
+                        f"🔄 *Contract Rolled*\n\n"
+                        f"Market: {market_config.name}\n"
+                        f"Old expiry: {old_expiry}\n"
+                        f"New expiry: {new_expiry}\n\n"
+                        f"_Updated automatically. Next signal will use new contract._"
+                    ),
+                    telegram_loop,
+                )
+        else:
+            logger.warning(
+                f"Auto-roll: {market_config.name} expiry unchanged ({old_expiry}). "
+                f"Market may be temporarily offline."
+            )
+
+    except Exception as e:
+        logger.error(f"Auto-roll failed for {market_config.name}: {e}")
+
+
 def run_daily_screen() -> None:
     """Run the market screener using streaming data. Called daily at 04:00 UTC."""
     if not screener or not stream_service:
@@ -665,6 +707,11 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 )
         else:
             error_reason = client.last_error or "Unknown error"
+
+            # Auto-roll: detect expired futures and update expiry in-memory
+            if "MARKET_ROLLED" in str(error_reason).upper() or "MARKET ROLLED" in str(error_reason).upper():
+                _auto_roll_contract(market_config)
+
             if telegram_loop:
                 asyncio.run_coroutine_threadsafe(
                     telegram.notify_error(
