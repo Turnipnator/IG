@@ -463,18 +463,20 @@ MARKETS = [
         trading_end=21,
     ),
 
-    # --- SOFT COMMODITIES (Big Winners Strategy) ---
-    MarketConfig(
-        epic="CO.D.S.Month1.IP",
-        name="Soybeans",
-        sector="Commodities",
-        min_stop_distance=4.0,
-        default_size=0.04,
-        expiry="MAY-26",
-        candle_interval=60,    # Hourly candles: 15m ATR was < spread (2pts), making stops unplayable
-        min_confidence=0.55,
-        strategy="default",
-    ),
+    # --- SOFT COMMODITIES ---
+    # Soybeans — disabled. No backtest data (no Yahoo ticker), ATR/spread 1.7x (marginal),
+    # hourly candles too slow, generic strategy. Lost £12 on first trade.
+    # MarketConfig(
+    #     epic="CO.D.S.Month1.IP",
+    #     name="Soybeans",
+    #     sector="Commodities",
+    #     min_stop_distance=4.0,
+    #     default_size=0.04,
+    #     expiry="MAY-26",
+    #     candle_interval=60,
+    #     min_confidence=0.55,
+    #     strategy="default",
+    # ),
     MarketConfig(
         epic="CO.D.CC.Month2.IP",
         name="NY Cocoa",
