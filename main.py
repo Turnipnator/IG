@@ -385,9 +385,122 @@ def run_daily_screen() -> None:
 
 
 def on_price_update(epic: str, market: MarketStream) -> None:
-    """Callback for real-time price updates."""
-    # This fires frequently - use for monitoring/logging only
-    pass
+    """
+    Callback for real-time price updates (fires on every tick).
+
+    Uses streaming data to check break-even and ATR trail for open positions.
+    Zero API cost for checking — only calls update_position_stop() when
+    a threshold is actually crossed (throttled by 20% minimum move).
+    """
+    if not known_positions:
+        return
+
+    # Find any open position on this epic
+    for deal_id, position in list(known_positions.items()):
+        if position.epic != epic:
+            continue
+
+        market_config = next((m for m in MARKETS if m.epic == epic), None)
+        if not market_config:
+            continue
+
+        strategy_cfg = get_strategy_for_market(market_config)
+
+        if position.open_level is None or position.stop_level is None:
+            continue
+
+        # --- Break-even check (on every tick) ---
+        if deal_id not in breakeven_applied:
+            if position.direction == "BUY":
+                stop_distance = position.open_level - position.stop_level
+                current_profit = (market.bid or 0) - position.open_level
+            else:
+                stop_distance = position.stop_level - position.open_level
+                current_profit = position.open_level - (market.offer or 0)
+
+            if stop_distance > 0 and (market.bid or 0) > 0:
+                trigger_points = stop_distance * strategy_cfg.breakeven_trigger_pct
+                if current_profit >= trigger_points:
+                    new_stop = position.open_level
+                    logger.info(
+                        f"Break-even trigger for {market_config.name}: "
+                        f"profit {current_profit:.1f} pts >= {trigger_points:.1f} pts "
+                        f"({strategy_cfg.breakeven_trigger_pct:.0%} of stop). "
+                        f"Moving stop {position.stop_level:.1f} -> {new_stop:.1f}"
+                    )
+                    success = client.update_position_stop(
+                        deal_id=deal_id,
+                        new_stop_level=new_stop,
+                        new_limit_level=position.limit_level,
+                    )
+                    if success:
+                        breakeven_applied.add(deal_id)
+                        trailing_stop_levels[deal_id] = new_stop
+                        if telegram_loop:
+                            asyncio.run_coroutine_threadsafe(
+                                telegram.send_notification(
+                                    f"🔒 *Break-Even Stop Set*\n\n"
+                                    f"Market: {market_config.name}\n"
+                                    f"Direction: {position.direction}\n"
+                                    f"Entry: {position.open_level}\n"
+                                    f"Stop moved: {position.stop_level:.1f} → {new_stop:.1f}\n"
+                                    f"Current profit: {current_profit:.1f} pts\n\n"
+                                    f"_Trade is now risk-free! ATR trail active._"
+                                ),
+                                telegram_loop,
+                            )
+            continue  # Don't trail until BE is set
+
+        # --- ATR trailing stop (on every tick, after break-even) ---
+        df = market.to_dataframe()
+        if df is None or len(df) < 20:
+            continue
+
+        from src.indicators import add_all_indicators as _add_indicators
+        indicator_params = {
+            "ema_fast": strategy_cfg.ema_fast,
+            "ema_medium": strategy_cfg.ema_medium,
+            "ema_slow": strategy_cfg.ema_slow,
+            "rsi_period": strategy_cfg.rsi_period,
+        }
+        df = _add_indicators(df, indicator_params)
+        atr = df.iloc[-1]["atr"]
+
+        if atr != atr or atr <= 0:  # NaN check
+            continue
+
+        trail_distance = atr * strategy_cfg.atr_trail_mult
+        current_stop = trailing_stop_levels.get(deal_id, position.open_level)
+
+        if position.direction == "BUY":
+            if not market.bid:
+                continue
+            new_trail = round(market.bid - trail_distance, 1)
+            if new_trail <= current_stop:
+                continue
+        else:
+            if not market.offer:
+                continue
+            new_trail = round(market.offer + trail_distance, 1)
+            if new_trail >= current_stop:
+                continue
+
+        # 20% minimum move throttle — prevents excessive API calls
+        if abs(new_trail - current_stop) < trail_distance * 0.2:
+            continue
+
+        logger.info(
+            f"ATR trail for {market_config.name}: "
+            f"stop {current_stop:.1f} -> {new_trail:.1f} "
+            f"(ATR={atr:.1f}, trail={trail_distance:.1f})"
+        )
+        success = client.update_position_stop(
+            deal_id=deal_id,
+            new_stop_level=new_trail,
+            new_limit_level=position.limit_level,
+        )
+        if success:
+            trailing_stop_levels[deal_id] = new_trail
 
 
 def on_candle_complete(epic: str, market: MarketStream) -> None:
@@ -788,140 +901,8 @@ def check_positions_from_stream() -> None:
     for position in positions:
         known_positions[position.deal_id] = position
 
-    # Break-even trailing stop: move stop to entry when profit reaches threshold
-    for position in positions:
-        if position.deal_id in breakeven_applied:
-            continue  # Already moved to break-even
-
-        if position.open_level is None or position.stop_level is None:
-            continue
-
-        market_config = next((m for m in MARKETS if m.epic == position.epic), None)
-        if not market_config:
-            continue
-
-        strategy_cfg = get_strategy_for_market(market_config)
-        trigger_pct = strategy_cfg.breakeven_trigger_pct
-
-        # Calculate stop distance and current profit in points
-        if position.direction == "BUY":
-            stop_distance = position.open_level - position.stop_level
-            market_data = stream_service.get_market_data(position.epic)
-            if not market_data or not market_data.bid:
-                continue
-            current_profit = market_data.bid - position.open_level
-        else:  # SELL
-            stop_distance = position.stop_level - position.open_level
-            market_data = stream_service.get_market_data(position.epic)
-            if not market_data or not market_data.offer:
-                continue
-            current_profit = position.open_level - market_data.offer
-
-        if stop_distance <= 0:
-            continue
-
-        # Check if profit has reached the trigger threshold
-        trigger_points = stop_distance * trigger_pct
-        if current_profit >= trigger_points:
-            # Move stop to break-even (entry price)
-            new_stop = position.open_level
-            logger.info(
-                f"Break-even trigger for {market_config.name}: "
-                f"profit {current_profit:.1f} pts >= {trigger_points:.1f} pts ({trigger_pct:.0%} of stop). "
-                f"Moving stop {position.stop_level:.1f} -> {new_stop:.1f}"
-            )
-
-            success = client.update_position_stop(
-                deal_id=position.deal_id,
-                new_stop_level=new_stop,
-                new_limit_level=position.limit_level,
-            )
-
-            if success:
-                breakeven_applied.add(position.deal_id)
-                trailing_stop_levels[position.deal_id] = new_stop  # Initialise trail at entry
-                if telegram_loop:
-                    asyncio.run_coroutine_threadsafe(
-                        telegram.send_notification(
-                            f"🔒 *Break-Even Stop Set*\n\n"
-                            f"Market: {market_config.name}\n"
-                            f"Direction: {position.direction}\n"
-                            f"Entry: {position.open_level}\n"
-                            f"Stop moved: {position.stop_level:.1f} → {new_stop:.1f}\n"
-                            f"Current profit: {current_profit:.1f} pts\n\n"
-                            f"_Trade is now risk-free! ATR trail active._"
-                        ),
-                        telegram_loop,
-                    )
-
-    # ATR trailing stop: continuously ratchet stop behind price after break-even
-    from src.indicators import add_all_indicators as _add_indicators
-
-    for position in positions:
-        if position.deal_id not in breakeven_applied:
-            continue  # Only trail after break-even is set
-
-        market_config = next((m for m in MARKETS if m.epic == position.epic), None)
-        if not market_config:
-            continue
-
-        strategy_cfg = get_strategy_for_market(market_config)
-        market_data = stream_service.get_market_data(position.epic)
-        if not market_data:
-            continue
-
-        df = market_data.to_dataframe()
-        if df is None or len(df) < 20:
-            continue
-
-        # Calculate ATR from streaming candles
-        indicator_params = {
-            "ema_fast": strategy_cfg.ema_fast,
-            "ema_medium": strategy_cfg.ema_medium,
-            "ema_slow": strategy_cfg.ema_slow,
-            "rsi_period": strategy_cfg.rsi_period,
-        }
-        df = _add_indicators(df, indicator_params)
-        atr = df.iloc[-1]["atr"]
-
-        if atr != atr or atr <= 0:  # NaN check
-            continue
-
-        trail_distance = atr * strategy_cfg.atr_trail_mult
-        current_stop = trailing_stop_levels.get(position.deal_id, position.open_level)
-
-        # Calculate new trail stop from current price
-        if position.direction == "BUY":
-            if not market_data.bid:
-                continue
-            new_trail = round(market_data.bid - trail_distance, 1)
-            if new_trail <= current_stop:
-                continue  # Never move stop backwards
-        else:  # SELL
-            if not market_data.offer:
-                continue
-            new_trail = round(market_data.offer + trail_distance, 1)
-            if new_trail >= current_stop:
-                continue
-
-        # Minimum move threshold: 20% of trail distance to avoid excessive API calls
-        if abs(new_trail - current_stop) < trail_distance * 0.2:
-            continue
-
-        logger.info(
-            f"ATR trail for {market_config.name}: "
-            f"stop {current_stop:.1f} -> {new_trail:.1f} "
-            f"(ATR={atr:.1f}, trail={trail_distance:.1f})"
-        )
-
-        success = client.update_position_stop(
-            deal_id=position.deal_id,
-            new_stop_level=new_trail,
-            new_limit_level=position.limit_level,
-        )
-
-        if success:
-            trailing_stop_levels[position.deal_id] = new_trail
+    # Break-even and ATR trailing stop now handled in on_price_update()
+    # (runs on every streaming tick instead of every 60 seconds)
 
     for position in positions:
         market = stream_service.get_market_data(position.epic)
