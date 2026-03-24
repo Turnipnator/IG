@@ -1146,7 +1146,7 @@ async def main_async():
         schedule.every(6).hours.do(refresh_session)
         schedule.every(24).hours.do(update_htf_trends)  # 1x/day — 19 markets × 30pts = 570pts/day, 3,990/week
         schedule.every(15).minutes.do(stream_service.save_candles_to_disk)  # Persist candles for restarts
-        schedule.every().day.at("04:00").do(run_daily_screen)  # Screen markets at London open
+        schedule.every(6).hours.do(run_daily_screen)  # Re-score markets every 6h (catches regime changes)
         schedule.every().day.at("21:00").do(send_daily_summary)
 
         # Run scheduler in background
