@@ -62,7 +62,7 @@ class StrategyConfig:
     use_macd_exit: bool = True
     require_htf: bool = False
     pullback_pct: float = 0.3  # Max % distance from fast EMA to enter (0.3 = 0.3%)
-    breakeven_trigger_pct: float = 0.5  # Move stop to break-even when profit >= X% of stop distance (0.5 = 50%)
+    breakeven_trigger_pct: float = 0.7  # Move stop to break-even when profit >= X% of stop distance (0.7 = 70%)
     atr_trail_mult: float = 1.5  # ATR multiplier for trailing stop distance (after break-even)
 
 
@@ -149,7 +149,7 @@ STRATEGY_PROFILES = {
         use_macd_exit=False,
         require_htf=True,
         pullback_pct=0.3,
-        breakeven_trigger_pct=0.5,
+        breakeven_trigger_pct=0.7,  # Raised from 0.5 — 50% triggered on noise
         atr_trail_mult=1.5,
     ),
 
@@ -248,7 +248,7 @@ STRATEGY_PROFILES = {
         use_macd_exit=True,
         require_htf=True,
         pullback_pct=0.2,
-        breakeven_trigger_pct=0.5,
+        breakeven_trigger_pct=0.7,  # Raised from 0.5 — indices tight stops triggered BE on noise
         atr_trail_mult=1.5,
     ),
 
@@ -269,7 +269,7 @@ STRATEGY_PROFILES = {
         use_macd_exit=True,
         require_htf=True,
         pullback_pct=0.2,
-        breakeven_trigger_pct=0.5,
+        breakeven_trigger_pct=0.7,  # Raised from 0.5 — indices tight stops triggered BE on noise
         atr_trail_mult=1.5,
     ),
 
@@ -290,7 +290,7 @@ STRATEGY_PROFILES = {
         use_macd_exit=True,
         require_htf=True,
         pullback_pct=0.2,
-        breakeven_trigger_pct=0.5,
+        breakeven_trigger_pct=0.7,  # Raised from 0.5 — indices tight stops triggered BE on noise
         atr_trail_mult=1.5,
     ),
 
