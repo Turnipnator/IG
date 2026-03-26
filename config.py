@@ -431,7 +431,7 @@ MARKETS = [
         epic="CS.D.USCGC.TODAY.IP",
         name="Gold",
         sector="Commodities",
-        min_stop_distance=1.0,
+        min_stop_distance=2.0,  # Raised from 1.0 — cap was 20pts (20x), ATR*2.5 = 25-35, every trade capped
         default_size=1.0,      # IG minimum is 1.0 per point (was 0.1 - all trades rejected!)
         min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="gold",       # Custom: fast EMAs 3/8/21, RSI 85/15, 2.5x stops. £+286 (60d)

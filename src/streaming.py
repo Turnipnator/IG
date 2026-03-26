@@ -533,8 +533,8 @@ class IGStreamService:
                 saved_at = datetime.fromisoformat(item["saved_at"])
                 age = datetime.now() - saved_at
 
-                # Use if less than 30 mins old (candles from stream are valuable)
-                if age < timedelta(minutes=30):
+                # Use if less than 6 hours old — avoids wasting API budget on restart
+                if age < timedelta(hours=6):
                     candles = item["candles"]
                     if candles:
                         df = pd.DataFrame(candles)
