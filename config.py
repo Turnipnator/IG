@@ -216,8 +216,8 @@ STRATEGY_PROFILES = {
         rsi_oversold=20,
         rsi_buy_max=55,
         rsi_sell_min=45,
-        adx_threshold=30,
-        stop_atr_mult=1.0,    # Tight stops
+        adx_threshold=35,     # Raised from 30 — filters 6 noise trades, WR 18%→57%, PF 0.67→3.33
+        stop_atr_mult=1.5,    # Widened from 1.0 — gives trades room to develop
         reward_risk=2.0,
         min_confidence=0.55,
         use_macd_exit=False,
@@ -252,7 +252,28 @@ STRATEGY_PROFILES = {
         atr_trail_mult=1.5,
     ),
 
-    # NASDAQ needs wider stops to avoid premature stop-outs
+    # S&P 500 needs high ADX selectivity — too choppy at ADX 30
+    "indices_selective": StrategyConfig(
+        ema_fast=5,
+        ema_medium=12,
+        ema_slow=26,
+        rsi_period=7,
+        rsi_overbought=70,
+        rsi_oversold=30,
+        rsi_buy_max=55,
+        rsi_sell_min=45,
+        adx_threshold=40,     # Only trade strong trends — ADX 30 was -£11, ADX 40 is +£10
+        stop_atr_mult=1.5,
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=True,
+        require_htf=True,
+        pullback_pct=0.2,
+        breakeven_trigger_pct=0.7,
+        atr_trail_mult=1.5,
+    ),
+
+    # NASDAQ needs tighter stops to cut losers fast
     "indices_wide": StrategyConfig(
         ema_fast=5,
         ema_medium=12,
@@ -263,8 +284,8 @@ STRATEGY_PROFILES = {
         rsi_buy_max=55,
         rsi_sell_min=45,
         adx_threshold=30,
-        stop_atr_mult=2.5,    # Wide stops — NASDAQ PF=2.33 at 2.5x vs 2.04 at 1.5x
-        reward_risk=2.0,
+        stop_atr_mult=1.0,    # Tightened from 2.5 — cut losers fast. PF 0.74→1.69 on 30d backtest
+        reward_risk=1.5,      # Lowered from 2.0 — more trades reach target. +£18 vs -£6
         min_confidence=0.55,
         use_macd_exit=True,
         require_htf=True,
@@ -311,7 +332,7 @@ STRATEGY_PROFILES = {
         stop_atr_mult=1.0,    # Tight stops
         reward_risk=2.0,
         min_confidence=0.55,
-        use_macd_exit=False,
+        use_macd_exit=True,   # Switched from ADX exit — ADX exit was killing every trade at BE
         require_htf=True,
         pullback_pct=0.3,
         breakeven_trigger_pct=0.7,
@@ -356,7 +377,7 @@ MARKETS = [
         min_stop_distance=2.0,  # Raised from 1.0 — cap was 20pts, ATR*1.5 can exceed that
         default_size=1.0,
         min_confidence=0.55,   # Raised from 0.4 for quality entries
-        strategy="indices",
+        strategy="indices_selective",  # ADX 40 — S&P too choppy at 30, only trade strong trends
     ),
     MarketConfig(
         epic="IX.D.NASDAQ.CASH.IP",
@@ -501,28 +522,31 @@ MARKETS = [
     ),
 
     # --- FOREX (Big Winners Strategy) ---
-    MarketConfig(
-        epic="CO.D.DX.Month1.IP",
-        name="Dollar Index (DXY)",
-        sector="Forex",
-        min_stop_distance=20.0,
-        default_size=1.0,
-        expiry="SEP-26",
-        candle_interval=15,
-        min_confidence=0.55,   # Raised from 0.4 for quality entries
-        strategy="default",
-        trading_start=23,      # Forex trades 24/5 — avoid IG reset window
-        trading_end=21,
-    ),
+
+    # Dollar Index (DXY) — disabled, negative P&L across all 36 param combos on 15m backtest
+    # MarketConfig(
+    #     epic="CO.D.DX.Month1.IP",
+    #     name="Dollar Index (DXY)",
+    #     sector="Forex",
+    #     min_stop_distance=20.0,
+    #     default_size=1.0,
+    #     expiry="SEP-26",
+    #     candle_interval=15,
+    #     min_confidence=0.55,
+    #     strategy="default",
+    #     trading_start=23,
+    #     trading_end=21,
+    # ),
+
     MarketConfig(
         epic="CS.D.EURUSD.TODAY.IP",
         name="EUR/USD",
         sector="Forex",
         min_stop_distance=2.0,
         default_size=0.5,
-        candle_interval=15,
+        candle_interval=5,     # Switched from 15m — no edge on 15m, +£31 on 5m (PF=3.38)
         min_confidence=0.55,
-        strategy="forex",      # Tight 1.0x stops, PF=1.31 (60d)
+        strategy="forex",      # Tight 1.0x stops
         trading_start=23,
         trading_end=21,
     ),
@@ -532,7 +556,7 @@ MARKETS = [
         sector="Forex",
         min_stop_distance=2.0,
         default_size=0.5,
-        candle_interval=15,
+        candle_interval=5,     # Switched from 15m — no edge on 15m, +£19 on 5m (PF=1.81)
         min_confidence=0.55,
         strategy="forex",      # Tight 1.0x stops
         trading_start=23,
