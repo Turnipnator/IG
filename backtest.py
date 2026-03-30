@@ -222,8 +222,9 @@ def run_backtest(
     market_name = market_config.name
     strategy = strategy_override or get_strategy_for_market(market_config)
 
-    # Fetch data
-    df = fetch_data(market_name, days=days, no_cache=no_cache)
+    # Fetch data using the market's actual candle interval (5m or 15m)
+    candle_interval = f"{market_config.candle_interval}m"
+    df = fetch_data(market_name, days=days, interval=candle_interval, no_cache=no_cache)
     if df is None or len(df) < strategy.ema_slow + 20:
         return None
 
@@ -484,6 +485,7 @@ def run_backtest(
         },
         trades=trades,
     )
+    result.params["candle_interval"] = market_config.candle_interval
 
     wins = [t for t in trades if t.pnl > 0.50]
     losses = [t for t in trades if t.pnl < -0.50]
@@ -520,13 +522,15 @@ def print_result(result: BacktestResult):
     total = result.win_count + result.loss_count + result.be_count
     wr = (result.win_count / (result.win_count + result.loss_count) * 100) if (result.win_count + result.loss_count) > 0 else 0
 
+    candle_str = f" | {result.params['candle_interval']}m candles" if 'candle_interval' in result.params else ""
     print(f"\n{'=' * 60}")
     print(f"  {result.market} ({result.strategy} strategy)")
     print(f"{'=' * 60}")
     print(f"  R:R = {result.params['reward_risk']:.1f}:1 | "
           f"Stop ATR = {result.params['stop_atr_mult']}x | "
           f"ADX = {result.params['adx_threshold']} | "
-          f"BE = {result.params['breakeven_trigger_pct']:.0%}")
+          f"BE = {result.params['breakeven_trigger_pct']:.0%}"
+          f"{candle_str}")
     print(f"  Trades: {total} ({result.win_count}W / {result.be_count}BE / {result.loss_count}L)")
     print(f"  Win Rate: {wr:.1f}%")
     print(f"  Total P&L: £{result.total_pnl:>+.2f}")
@@ -622,7 +626,7 @@ def print_sweep_results(results: list[BacktestResult], market_name: str):
 def main():
     parser = argparse.ArgumentParser(description="IG Trading Bot Backtester")
     parser.add_argument("--market", type=str, help="Run for a specific market (e.g. 'Gold')")
-    parser.add_argument("--days", type=int, default=30, help="Days of historical data (max 59 for 5m)")
+    parser.add_argument("--days", type=int, default=30, help="Days of historical data (max 59 for 5m/15m Yahoo)")
     parser.add_argument("--sweep", action="store_true", help="Run parameter sweep")
     parser.add_argument("--no-cache", action="store_true", help="Force re-fetch data")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
