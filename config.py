@@ -542,7 +542,7 @@ MARKETS = [
         epic="CS.D.EURUSD.TODAY.IP",
         name="EUR/USD",
         sector="Forex",
-        min_stop_distance=2.0,
+        min_stop_distance=3.0,  # Raised from 2.0 — 5m ATR is only 2-3pts, IG rejects stops at minimum
         default_size=0.5,
         candle_interval=5,     # Switched from 15m — no edge on 15m, +£31 on 5m (PF=3.38)
         min_confidence=0.55,
@@ -554,7 +554,7 @@ MARKETS = [
         epic="CS.D.GBPUSD.TODAY.IP",
         name="GBP/USD",
         sector="Forex",
-        min_stop_distance=2.0,
+        min_stop_distance=3.0,  # Raised from 2.0 — 5m ATR is only 2-3pts, IG rejects stops at minimum
         default_size=0.5,
         candle_interval=5,     # Switched from 15m — no edge on 15m, +£19 on 5m (PF=1.81)
         min_confidence=0.55,
