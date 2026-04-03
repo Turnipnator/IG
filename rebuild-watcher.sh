@@ -4,7 +4,7 @@
 # Runs on the HOST (not inside Docker).
 # Install as systemd service: see rebuild-watcher.service
 
-BOT_DIR="$HOME/ig-bot"
+BOT_DIR="/root/ig-bot"
 TRIGGER_FILE="$BOT_DIR/data/rebuild_trigger"
 
 echo "[rebuild-watcher] Watching for rebuild triggers..."
