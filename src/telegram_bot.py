@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, TYPE_CHECKING
@@ -188,6 +189,7 @@ class TelegramBot:
             "*🎮 Control:*\n"
             "/stop - Pause trading\n"
             "/resume - Resume trading\n"
+            "/rebuild - Pull latest code & restart\n"
             "/emergency - ⚠️ Close ALL positions\n\n"
             "*🔔 Notifications:*\n"
             "Automatic alerts for trades and errors.\n\n"
@@ -606,6 +608,34 @@ class TelegramBot:
             parse_mode='Markdown'
         )
 
+    async def rebuild_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /rebuild command - git pull, rebuild, and restart the bot."""
+        if not self.is_authorized(update.effective_user.id):
+            return
+
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 CONFIRM REBUILD", callback_data='rebuild_confirm'),
+            ],
+            [
+                InlineKeyboardButton("❌ Cancel", callback_data='rebuild_cancel')
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "🔄 *REBUILD & RESTART*\n\n"
+            "This will:\n"
+            "• Pull latest code from GitHub\n"
+            "• Rebuild the Docker container\n"
+            "• Restart the bot\n\n"
+            "⚠️ Bot will be offline for ~60 seconds.\n"
+            "Open positions are NOT affected.\n\n"
+            "Proceed?",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
     # ==================== CALLBACK HANDLERS ====================
 
     async def stop_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -674,6 +704,33 @@ class TelegramBot:
 
         elif query.data == 'emergency_cancel':
             await query.edit_message_text("✅ Emergency stop cancelled")
+
+    async def rebuild_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle rebuild confirmation."""
+        query = update.callback_query
+        await query.answer()
+
+        if not self.is_authorized(query.from_user.id):
+            return
+
+        if query.data == 'rebuild_confirm':
+            trigger_file = STATS_DIR / "rebuild_trigger"
+            try:
+                trigger_file.write_text(datetime.now().isoformat())
+                await query.edit_message_text(
+                    "🔄 *REBUILD TRIGGERED*\n\n"
+                    "Pulling latest code and rebuilding...\n"
+                    "Bot will restart in ~60 seconds.\n\n"
+                    "You'll receive a startup notification when ready.",
+                    parse_mode='Markdown'
+                )
+                logger.info(f"Rebuild triggered by user {query.from_user.id}")
+            except Exception as e:
+                logger.error(f"Failed to trigger rebuild: {e}")
+                await query.edit_message_text(f"❌ Failed to trigger rebuild: {e}")
+
+        elif query.data == 'rebuild_cancel':
+            await query.edit_message_text("✅ Rebuild cancelled")
 
     # ==================== NOTIFICATION METHODS ====================
 
@@ -860,10 +917,12 @@ class TelegramBot:
             self.app.add_handler(CommandHandler("pause", self.stop_command))  # Alias
             self.app.add_handler(CommandHandler("resume", self.resume_command))
             self.app.add_handler(CommandHandler("emergency", self.emergency_command))
+            self.app.add_handler(CommandHandler("rebuild", self.rebuild_command))
 
             # Add callback handlers
             self.app.add_handler(CallbackQueryHandler(self.stop_callback, pattern='^stop_'))
             self.app.add_handler(CallbackQueryHandler(self.emergency_callback, pattern='^emergency_'))
+            self.app.add_handler(CallbackQueryHandler(self.rebuild_callback, pattern='^rebuild_'))
 
             # Start bot
             logger.info("Starting Telegram bot...")

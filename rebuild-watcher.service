@@ -1,0 +1,14 @@
+[Unit]
+Description=IG Trading Bot Rebuild Watcher
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/root/ig-bot/rebuild-watcher.sh
+Restart=always
+RestartSec=10
+WorkingDirectory=/root/ig-bot
+
+[Install]
+WantedBy=multi-user.target
