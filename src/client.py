@@ -608,9 +608,9 @@ class IGClient:
         }
 
         if stop_distance:
-            payload["stopDistance"] = str(stop_distance)
+            payload["stopDistance"] = round(stop_distance, 1)
         if limit_distance:
-            payload["limitDistance"] = str(limit_distance)
+            payload["limitDistance"] = round(limit_distance, 1)
 
         try:
             response = self.session.post(

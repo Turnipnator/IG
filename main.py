@@ -749,6 +749,17 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             )
             return
 
+        # Spread check: reject if stop distance is too close to current spread
+        # (e.g. overnight sessions with wide spreads would trigger stop immediately)
+        if market.bid and market.offer:
+            spread = market.offer - market.bid
+            if spread > 0 and trade_signal.stop_distance < spread * 1.5:
+                logger.warning(
+                    f"[{market.name}] BLOCKED: stop_distance={trade_signal.stop_distance:.2f} "
+                    f"< 1.5x spread ({spread:.2f}). Spread too wide for safe entry."
+                )
+                return
+
         # Open position
         logger.info(
             f"Opening {trade_signal.signal.value} position on {market.name}: "
