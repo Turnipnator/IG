@@ -544,7 +544,7 @@ def should_close_position(
     if not use_macd_exit:
         # ADX ranging exit: close if market has gone ranging
         # Use a slightly lower threshold to avoid premature exits
-        adx_exit_threshold = adx_threshold - 3  # e.g., 25 -> 22
+        adx_exit_threshold = adx_threshold - 5  # e.g., 35 -> 30
         if adx < adx_exit_threshold:
             return True, f"Market turned ranging (ADX {adx:.1f} < {adx_exit_threshold})"
 

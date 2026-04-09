@@ -346,7 +346,7 @@ def run_backtest(
                         closed = True
 
                 if not closed and not strategy.use_macd_exit and not pd.isna(adx_now):
-                    adx_exit = strategy.adx_threshold - 3
+                    adx_exit = strategy.adx_threshold - 5
                     if adx_now < adx_exit:
                         trade.exit_price = close
                         trade.exit_reason = f"Market turned ranging (ADX {adx_now:.1f} < {adx_exit})"
