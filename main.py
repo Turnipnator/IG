@@ -1051,15 +1051,37 @@ def refresh_session() -> None:
 
         stream_service.disconnect()
 
-    # Re-login
+    # Cleanly end the old session before creating a new one. IG returns a
+    # misleading "api-key-invalid" when you POST /session while another
+    # session for the same user is still active, so always logout first.
+    try:
+        client.logout()
+    except Exception as e:
+        logger.debug(f"Logout before refresh failed (ignoring): {e}")
+    # Small pause — IG can take a moment to release the old session server-side.
+    time.sleep(2)
+
+    # Re-login (with a single retry in case of transient 403)
     if not client.login():
-        logger.error("Failed to refresh session")
-        if telegram and telegram_loop:
-            asyncio.run_coroutine_threadsafe(
-                telegram.notify_error("Failed to refresh IG session"),
-                telegram_loop,
-            )
-        return
+        logger.warning("Refresh login failed, retrying in 5s after explicit logout...")
+        try:
+            client.logout()
+        except Exception:
+            pass
+        time.sleep(5)
+        if not client.login():
+            logger.error("Failed to refresh session after retry")
+            if telegram and telegram_loop:
+                asyncio.run_coroutine_threadsafe(
+                    telegram.notify_error("Failed to refresh IG session"),
+                    telegram_loop,
+                )
+            return
+
+    # Need to switch back to SPREADBET account for streaming to work
+    spreadbet_id = client.get_spreadbet_account_id()
+    if spreadbet_id and spreadbet_id != client.account_id:
+        client.switch_account(spreadbet_id)
 
     # Reconnect streaming with new tokens, restoring preserved candles
     if LIGHTSTREAMER_AVAILABLE:

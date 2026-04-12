@@ -219,31 +219,70 @@ class IGClient:
             "Version": version,
         }
 
+    def _is_auth_error(self, response: requests.Response) -> bool:
+        """Check if a response indicates an expired/invalid session."""
+        if response.status_code not in (401, 403):
+            return False
+        body = (response.text or "").lower()
+        return (
+            "client-token-invalid" in body
+            or "security-token-invalid" in body
+            or "api-key-invalid" in body
+            or "oauth-token-invalid" in body
+        )
+
+    def _reauthenticate(self) -> bool:
+        """Re-login and switch back to the correct account. Used on token expiry."""
+        logger.info("Re-authenticating (session expired)...")
+        try:
+            self.logout()
+        except Exception:
+            pass
+        self._logged_in = False
+        self.cst = None
+        self.security_token = None
+        if not self.login():
+            return False
+        # Switch back to spreadbet account so subsequent calls work
+        spreadbet_id = self.get_spreadbet_account_id()
+        if spreadbet_id and spreadbet_id != self.account_id:
+            self.switch_account(spreadbet_id)
+        return True
+
     def get_account_info(self) -> Optional[dict]:
         """Get account balance and details."""
         if not self.is_logged_in:
             logger.error("Not logged in")
             return None
 
-        try:
-            headers = self._get_headers(version="1")
-            logger.debug(f"Account info request - CST length: {len(headers.get('CST', ''))}, Token length: {len(headers.get('X-SECURITY-TOKEN', ''))}")
+        for attempt in range(2):
+            try:
+                headers = self._get_headers(version="1")
+                logger.debug(f"Account info request - CST length: {len(headers.get('CST', ''))}, Token length: {len(headers.get('X-SECURITY-TOKEN', ''))}")
 
-            response = self.session.get(
-                f"{self.config.base_url}/accounts",
-                headers=headers,
-                timeout=30,
-            )
+                response = self.session.get(
+                    f"{self.config.base_url}/accounts",
+                    headers=headers,
+                    timeout=30,
+                )
 
-            if response.status_code == 200:
-                return response.json()
-            else:
+                if response.status_code == 200:
+                    return response.json()
+
+                if attempt == 0 and self._is_auth_error(response):
+                    logger.warning(f"Account info: auth error ({response.status_code}), reauth and retry")
+                    if self._reauthenticate():
+                        continue
+                    return None
+
                 logger.error(f"Failed to get account info: {response.text}")
                 return None
 
-        except requests.RequestException as e:
-            logger.error(f"Account info request failed: {e}")
-            return None
+            except requests.RequestException as e:
+                logger.error(f"Account info request failed: {e}")
+                return None
+
+        return None
 
     def get_balance(self) -> Optional[float]:
         """Get current account balance."""
@@ -518,55 +557,64 @@ class IGClient:
             logger.error("Not logged in")
             return []
 
-        try:
-            response = self.session.get(
-                f"{self.config.base_url}/positions",
-                headers=self._get_headers(version="2"),
-                timeout=30,
-            )
+        for attempt in range(2):
+            try:
+                response = self.session.get(
+                    f"{self.config.base_url}/positions",
+                    headers=self._get_headers(version="2"),
+                    timeout=30,
+                )
 
-            if response.status_code == 200:
-                data = response.json()
-                positions = []
+                if response.status_code == 200:
+                    data = response.json()
+                    positions = []
 
-                for pos in data.get("positions", []):
-                    position = pos.get("position", {})
-                    market = pos.get("market", {})
+                    for pos in data.get("positions", []):
+                        position = pos.get("position", {})
+                        market = pos.get("market", {})
 
-                    # Calculate P&L from current market prices
-                    direction = position.get("direction", "")
-                    open_level = position.get("level", 0.0)
-                    size = position.get("size", 0.0)
-                    bid = market.get("bid", 0.0)
-                    offer = market.get("offer", 0.0)
+                        # Calculate P&L from current market prices
+                        direction = position.get("direction", "")
+                        open_level = position.get("level", 0.0)
+                        size = position.get("size", 0.0)
+                        bid = market.get("bid", 0.0)
+                        offer = market.get("offer", 0.0)
 
-                    if direction == "BUY":
-                        pnl = (bid - open_level) * size if bid and open_level else 0.0
-                    elif direction == "SELL":
-                        pnl = (open_level - offer) * size if offer and open_level else 0.0
-                    else:
-                        pnl = 0.0
+                        if direction == "BUY":
+                            pnl = (bid - open_level) * size if bid and open_level else 0.0
+                        elif direction == "SELL":
+                            pnl = (open_level - offer) * size if offer and open_level else 0.0
+                        else:
+                            pnl = 0.0
 
-                    positions.append(Position(
-                        deal_id=position.get("dealId", ""),
-                        epic=market.get("epic", ""),
-                        direction=direction,
-                        size=size,
-                        open_level=open_level,
-                        stop_level=position.get("stopLevel"),
-                        limit_level=position.get("limitLevel"),
-                        profit_loss=round(pnl, 2),
-                        created_date=position.get("createdDate", ""),
-                    ))
+                        positions.append(Position(
+                            deal_id=position.get("dealId", ""),
+                            epic=market.get("epic", ""),
+                            direction=direction,
+                            size=size,
+                            open_level=open_level,
+                            stop_level=position.get("stopLevel"),
+                            limit_level=position.get("limitLevel"),
+                            profit_loss=round(pnl, 2),
+                            created_date=position.get("createdDate", ""),
+                        ))
 
-                return positions
-            else:
+                    return positions
+
+                if attempt == 0 and self._is_auth_error(response):
+                    logger.warning(f"Positions: auth error ({response.status_code}), reauth and retry")
+                    if self._reauthenticate():
+                        continue
+                    return []
+
                 logger.error(f"Failed to get positions: {response.text}")
                 return []
 
-        except requests.RequestException as e:
-            logger.error(f"Positions request failed: {e}")
-            return []
+            except requests.RequestException as e:
+                logger.error(f"Positions request failed: {e}")
+                return []
+
+        return []
 
     def open_position(
         self,
