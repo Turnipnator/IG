@@ -434,15 +434,20 @@ MARKETS = [
         min_confidence=0.55,
         strategy="indices",
     ),
-    MarketConfig(
-        epic="SI.D.ITBUS.DAILY.IP",
-        name="US Home Construction",
-        sector="Indices",
-        min_stop_distance=2.0,  # Min is 1.0 — 2x buffer for ATR-based stops
-        default_size=0.24,      # IG minimum deal size
-        min_confidence=0.55,
-        strategy="indices",     # Sector ETF — momentum strategy same as indices
-    ),
+    # iShares US Home Construction ETF — disabled. EPIC exists on demo
+    # (SI.D.ITBUS.DAILY.IP) but Lightstreamer rejects the L1 subscription
+    # with "[-1] Incorrect instrument setup", killing the entire streaming
+    # session for all markets (same failure mode as CC.D.* CFD-only EPICs).
+    # Re-enable only if IG confirms streaming support for this ETF.
+    # MarketConfig(
+    #     epic="SI.D.ITBUS.DAILY.IP",
+    #     name="US Home Construction",
+    #     sector="Indices",
+    #     min_stop_distance=2.0,
+    #     default_size=0.24,
+    #     min_confidence=0.55,
+    #     strategy="indices",
+    # ),
     # --- COMMODITIES (Big Winners Strategy) ---
     MarketConfig(
         epic="EN.D.CL.Month1.IP",
