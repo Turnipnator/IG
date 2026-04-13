@@ -434,6 +434,15 @@ MARKETS = [
         min_confidence=0.55,
         strategy="indices",
     ),
+    MarketConfig(
+        epic="SI.D.ITBUS.DAILY.IP",
+        name="US Home Construction",
+        sector="Indices",
+        min_stop_distance=2.0,  # Min is 1.0 — 2x buffer for ATR-based stops
+        default_size=0.24,      # IG minimum deal size
+        min_confidence=0.55,
+        strategy="indices",     # Sector ETF — momentum strategy same as indices
+    ),
     # --- COMMODITIES (Big Winners Strategy) ---
     MarketConfig(
         epic="EN.D.CL.Month1.IP",
