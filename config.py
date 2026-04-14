@@ -406,6 +406,8 @@ MARKETS = [
         default_size=0.5,
         min_confidence=0.55,
         strategy="indices",
+        trading_start=8,       # Xetra cash open 08:00 UTC
+        trading_end=17,        # Include 16:30 close auction (peak liquidity)
     ),
     MarketConfig(
         epic="IX.D.DOW.DAILY.IP",
@@ -424,6 +426,8 @@ MARKETS = [
         default_size=1.0,
         min_confidence=0.55,
         strategy="indices_tight",  # FTSE: tight 1.0x stops, PF=2.09 (60d backtest)
+        trading_start=8,       # LSE cash open 08:00 UTC
+        trading_end=17,        # Include 16:30 close auction (peak liquidity)
     ),
     MarketConfig(
         epic="IX.D.AIIDX.DAILY.IP",
@@ -494,8 +498,8 @@ MARKETS = [
         default_size=1.0,          # IG minimum is 1.0 (0.1/0.2 rejected with MINIMUM_ORDER_SIZE_ERROR)
         min_confidence=0.55,
         strategy="default",
-        trading_start=23,
-        trading_end=21,
+        trading_start=13,      # CME Copper: US session only. Asia hours are illiquid
+        trading_end=20,        # and the spread guard was rejecting overnight signals anyway
     ),
 
     # --- SOFT COMMODITIES ---
@@ -522,6 +526,8 @@ MARKETS = [
         candle_interval=15,
         min_confidence=0.55,
         strategy="default",
+        trading_start=13,      # ICE US softs session 12:45-17:30 UTC
+        trading_end=18,
     ),
     MarketConfig(
         epic="CO.D.CT.Month1.IP",
@@ -533,6 +539,8 @@ MARKETS = [
         candle_interval=15,
         min_confidence=0.55,
         strategy="default",
+        trading_start=13,      # ICE US softs session 12:45-17:30 UTC
+        trading_end=18,
     ),
 
     # --- FOREX (Big Winners Strategy) ---
