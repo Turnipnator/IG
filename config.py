@@ -576,12 +576,12 @@ MARKETS = [
         epic="CS.D.GBPUSD.TODAY.IP",
         name="GBP/USD",
         sector="Forex",
-        min_stop_distance=3.0,  # Raised from 2.0 — 5m ATR is only 2-3pts, IG rejects stops at minimum
+        min_stop_distance=4.0,  # Raised from 3.0 — IG rejects at 3.0 when pre-London spread widens
         default_size=0.5,
         candle_interval=5,     # Switched from 15m — no edge on 15m, +£19 on 5m (PF=1.81)
         min_confidence=0.55,
         strategy="forex",      # Tight 1.0x stops
-        trading_start=23,
+        trading_start=7,       # London open — avoid illiquid pre-London spread widening
         trading_end=21,
     ),
     MarketConfig(
