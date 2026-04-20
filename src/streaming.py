@@ -72,6 +72,7 @@ class MarketStream:
     change_pct: float = 0.0
     market_state: str = "CLOSED"
     last_update: Optional[datetime] = None
+    consecutive_rejections: int = 0
 
     # Candle data - rolling window
     candles: deque = field(default_factory=lambda: deque(maxlen=100))
@@ -132,15 +133,30 @@ class IGStreamListener(SubscriptionListener if LIGHTSTREAMER_AVAILABLE else obje
 
             market = self.stream_service.markets.get(epic)
             if market:
-                # Reject ticks that are >10% away from last known price (corrupted data)
+                # Reject ticks >10% from last known price — catches Lightstreamer
+                # corruption. Escape hatch: after N consecutive rejections, accept
+                # the next tick and re-seed (handles weekend gaps / stale caches
+                # where the reference itself is wrong).
                 if market.mid_price > 0:
                     pct_change = abs(mid_price - market.mid_price) / market.mid_price
                     if pct_change > 0.10:
-                        logger.warning(
-                            f"[{epic}] Rejected outlier tick: {mid_price:.2f} "
-                            f"vs last {market.mid_price:.2f} ({pct_change:.1%} change)"
-                        )
-                        return
+                        market.consecutive_rejections += 1
+                        if market.consecutive_rejections >= 20:
+                            logger.warning(
+                                f"[{epic}] Re-seeding mid_price after "
+                                f"{market.consecutive_rejections} consecutive rejections: "
+                                f"{market.mid_price:.2f} -> {mid_price:.2f} "
+                                f"(likely gap / stale cache)"
+                            )
+                            market.consecutive_rejections = 0
+                        else:
+                            logger.warning(
+                                f"[{epic}] Rejected outlier tick: {mid_price:.2f} "
+                                f"vs last {market.mid_price:.2f} ({pct_change:.1%} change)"
+                            )
+                            return
+                    else:
+                        market.consecutive_rejections = 0
 
                 market.bid = bid
                 market.offer = offer
