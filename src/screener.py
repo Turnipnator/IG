@@ -341,8 +341,9 @@ class MarketScreener:
             if score:
                 scores.append(score)
 
-        # Sort by score descending
-        scores.sort(key=lambda s: s.score, reverse=True)
+        # Sort by score desc, then ATR/spread desc, then ADX desc.
+        # Ties on score previously broke on stream insertion order — unfair.
+        scores.sort(key=lambda s: (s.score, s.atr_spread_ratio, s.adx), reverse=True)
 
         # Activate top N
         self.active_epics = set()
