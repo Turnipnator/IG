@@ -870,9 +870,15 @@ class IGClient:
                     logger.info(f"Stop updated for {deal_id}: new stop={new_stop_level}")
                     return True
                 return False
-            else:
-                logger.error(f"Failed to update stop for {deal_id}: {response.text}")
-                return False
+            # Position already closed (race between stop-hit and BE/trail update).
+            # Treat as success so the caller stops retrying.
+            if "position.details.null" in response.text:
+                logger.info(
+                    f"Stop update skipped for {deal_id}: position already closed"
+                )
+                return True
+            logger.error(f"Failed to update stop for {deal_id}: {response.text}")
+            return False
 
         except requests.RequestException as e:
             logger.error(f"Update stop request failed: {e}")

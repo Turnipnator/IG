@@ -542,9 +542,11 @@ def should_close_position(
     # Dynamic exit for non-MACD strategies (Gold, Forex, etc.)
     # These strategies need protection when market conditions change
     if not use_macd_exit:
-        # ADX ranging exit: close if market has gone ranging
-        # Use a slightly lower threshold to avoid premature exits
-        adx_exit_threshold = adx_threshold - 5  # e.g., 35 -> 30
+        # ADX ranging exit: close only on deep ranges.
+        # Journal showed the old threshold (-5) bled -£99 on 8 trades —
+        # closing trades near entry on mild ADX softening. Only exit when
+        # the market is clearly dead (-10).
+        adx_exit_threshold = adx_threshold - 10  # e.g., 35 -> 25
         if adx < adx_exit_threshold:
             return True, f"Market turned ranging (ADX {adx:.1f} < {adx_exit_threshold})"
 
