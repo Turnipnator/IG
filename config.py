@@ -395,7 +395,7 @@ MARKETS = [
         min_stop_distance=1.0,
         default_size=1.0,
         min_confidence=0.55,
-        strategy="indices_selective",  # ADX 40 — chronic -£32 loser on ADX 30
+        strategy="indices",  # Reverted from indices_selective — backtest showed ADX 40 kills all trades on Russell
     ),
 
     MarketConfig(
@@ -405,7 +405,7 @@ MARKETS = [
         min_stop_distance=2.0,
         default_size=0.5,
         min_confidence=0.55,
-        strategy="indices_selective",  # ADX 40 — chronic -£47 loser on ADX 30
+        strategy="indices",  # Reverted from indices_selective — backtest: ADX 30 +£48, ADX 40 -£13 (60d)
         trading_start=8,       # Xetra cash open 08:00 UTC
         trading_end=17,        # Include 16:30 close auction (peak liquidity)
     ),
