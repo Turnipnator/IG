@@ -891,92 +891,73 @@ class IGClient:
         cleaned = cleaned.replace("- ", "-")
         return float(cleaned)
 
+    def get_recent_transactions(self, hours: int = 24) -> list[dict]:
+        """Fetch recent IG transaction history. Costs 1 REST call (no data points)."""
+        if not self.is_logged_in:
+            return []
+        try:
+            now = datetime.utcnow()
+            from_date = (now - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+            to_date = now.strftime("%Y-%m-%dT%H:%M:%S")
+            response = self.session.get(
+                f"{self.config.base_url}/history/transactions",
+                params={"type": "ALL", "from": from_date, "to": to_date, "pageSize": 50},
+                headers=self._get_headers(version="2"),
+                timeout=30,
+            )
+            if response.status_code == 200:
+                return response.json().get("transactions", [])
+            logger.warning(f"Transaction history request failed: {response.status_code}")
+            return []
+        except Exception as e:
+            logger.warning(f"Failed to fetch transactions: {e}")
+            return []
+
+    def find_close_transaction(
+        self,
+        open_level: float,
+        direction: str,
+        transactions: Optional[list[dict]] = None,
+    ) -> Optional[dict]:
+        """
+        Find the IG DEAL transaction that closed a position with the given
+        open_level + direction. Returns the raw txn dict (with profitAndLoss,
+        closeLevel, etc.) so callers can extract whichever fields they need.
+
+        If `transactions` is provided, search within it (avoids extra API call —
+        useful when reconciling many provisional rows from a single fetch).
+        """
+        if transactions is None:
+            transactions = self.get_recent_transactions(hours=24)
+        for txn in transactions:
+            if txn.get("transactionType") != "DEAL":
+                continue
+            try:
+                txn_open = float(txn.get("openLevel", 0))
+                txn_size = float(str(txn.get("size", "0")).replace("+", ""))
+                txn_dir = "BUY" if txn_size > 0 else "SELL"
+                if abs(txn_open - open_level) < 1.0 and txn_dir == direction:
+                    return txn
+            except (ValueError, TypeError):
+                continue
+        return None
+
     def get_closed_position_pnl(
         self, deal_id: str, open_level: float = 0.0, direction: str = ""
     ) -> Optional[float]:
         """
-        Get actual P&L for a recently closed position from IG transaction history.
-
-        Matches by open_level + direction (IG's transaction 'reference' is the
-        closing deal ref, not the opening deal_id, so exact ID match won't work).
-
-        Costs 1 REST API call (not data points, so doesn't affect 10k/week limit).
-        Returns the P&L in account currency, or None if not found.
+        Backward-compat: return only the P&L for a recently closed position.
+        Prefer find_close_transaction() if you also need closeLevel.
         """
-        if not self.is_logged_in:
+        if not (open_level and direction):
             return None
-
-        try:
-            now = datetime.utcnow()
-            from_date = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
-            to_date = now.strftime("%Y-%m-%dT%H:%M:%S")
-
-            response = self.session.get(
-                f"{self.config.base_url}/history/transactions",
-                params={
-                    "type": "ALL",
-                    "from": from_date,
-                    "to": to_date,
-                    "pageSize": 50,
-                },
-                headers=self._get_headers(version="2"),
-                timeout=30,
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                transactions = data.get("transactions", [])
-                logger.info(
-                    f"P&L lookup for {deal_id}: searching {len(transactions)} transactions "
-                    f"(open_level={open_level}, direction={direction})"
-                )
-                for txn in transactions:
-                    txn_type = txn.get("transactionType", "")
-                    if txn_type != "DEAL":
-                        continue
-
-                    # Try matching by open_level + direction
-                    if open_level and direction:
-                        try:
-                            txn_open = float(txn.get("openLevel", 0))
-                            txn_size = float(txn.get("size", "0").replace("+", ""))
-                            txn_dir = "BUY" if txn_size > 0 else "SELL"
-                            level_diff = abs(txn_open - open_level)
-                            logger.debug(
-                                f"  Comparing: txn {txn.get('instrumentName')} "
-                                f"open={txn_open} vs {open_level} (diff={level_diff:.4f}), "
-                                f"dir={txn_dir} vs {direction}"
-                            )
-                            if level_diff < 1.0 and txn_dir == direction:
-                                pnl = self._parse_pnl(txn.get("profitAndLoss", "0"))
-                                logger.info(f"  Matched by level+direction: £{pnl:.2f}")
-                                return pnl
-                        except (ValueError, TypeError):
-                            continue
-
-                    # Fallback: exact reference match (works for bot-initiated closes)
-                    if txn.get("reference") == deal_id:
-                        pnl = self._parse_pnl(txn.get("profitAndLoss", "0"))
-                        logger.info(f"  Matched by reference: £{pnl:.2f}")
-                        return pnl
-
-                # Log what we couldn't match for debugging
-                for txn in transactions[:5]:
-                    if txn.get("transactionType") == "DEAL":
-                        logger.warning(
-                            f"  Unmatched txn: {txn.get('instrumentName')} "
-                            f"open={txn.get('openLevel')} size={txn.get('size')} "
-                            f"ref={txn.get('reference')}"
-                        )
-                logger.warning(f"No transaction match for deal {deal_id}")
-                return None
-            else:
-                logger.warning(f"Transaction history request failed: {response.status_code}")
-                return None
-
-        except Exception as e:
-            logger.warning(f"Failed to get transaction P&L for {deal_id}: {e}")
+        txn = self.find_close_transaction(open_level, direction)
+        if txn is None:
+            logger.warning(f"No transaction match for deal {deal_id}")
             return None
+        pnl = self._parse_pnl(txn.get("profitAndLoss", "0"))
+        logger.info(f"P&L for {deal_id}: £{pnl:.2f} (matched by level+direction)")
+        return pnl
 
     def search_markets(self, search_term: str) -> list[dict]:
         """Search for markets by name or keyword."""

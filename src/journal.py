@@ -131,8 +131,14 @@ class TradeJournal:
         exit_reason: str,
         exit_price: float = 0.0,
         adx_at_exit: float = 0.0,
+        status: str = "CLOSED",
     ) -> None:
-        """Log a trade exit with P&L and reason."""
+        """Log a trade exit with P&L and reason.
+
+        status: 'CLOSED' when pnl is broker-confirmed (deal confirmation or
+        matched IG transaction); 'PROVISIONAL' when pnl is the cached stream
+        value and awaits later reconciliation against transaction history.
+        """
         try:
             # Calculate duration
             row = self.db.execute(
@@ -147,15 +153,64 @@ class TradeJournal:
             self.db.execute(
                 """UPDATE trades SET
                    exit_price = ?, exit_time = ?, exit_reason = ?,
-                   pnl = ?, duration_mins = ?, adx_at_exit = ?, status = 'CLOSED'
+                   pnl = ?, duration_mins = ?, adx_at_exit = ?, status = ?
                    WHERE deal_id = ?""",
                 (exit_price, datetime.now().isoformat(), exit_reason,
-                 pnl, duration_mins, adx_at_exit, deal_id),
+                 pnl, duration_mins, adx_at_exit, status, deal_id),
             )
             self.db.commit()
-            logger.info(f"Journal: logged exit for {deal_id} — £{pnl:.2f} ({exit_reason})")
+            marker = " [PROVISIONAL]" if status == "PROVISIONAL" else ""
+            logger.info(f"Journal: logged exit for {deal_id} — £{pnl:.2f} ({exit_reason}){marker}")
         except Exception as e:
             logger.warning(f"Journal: failed to log exit: {e}")
+
+    # --- Reconciliation (PROVISIONAL → CLOSED via IG transaction history) ---
+
+    def has_provisional(self) -> bool:
+        """Cheap check — true if any PROVISIONAL rows exist (gates expensive API calls)."""
+        try:
+            row = self.db.execute(
+                "SELECT 1 FROM trades WHERE status = 'PROVISIONAL' LIMIT 1"
+            ).fetchone()
+            return row is not None
+        except Exception:
+            return False
+
+    def get_provisional_rows(self, max_age_hours: int = 24) -> list[dict]:
+        """All PROVISIONAL trades from the last N hours (IG txn history window)."""
+        cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+        rows = self.db.execute(
+            """SELECT deal_id, market_name, direction, size, entry_price,
+                      entry_time, exit_time, pnl
+               FROM trades
+               WHERE status = 'PROVISIONAL' AND entry_time > ?""",
+            (cutoff,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def confirm_provisional(self, deal_id: str, pnl: float, exit_price: float) -> None:
+        """Promote a PROVISIONAL row to CLOSED with broker-confirmed values."""
+        try:
+            self.db.execute(
+                """UPDATE trades SET pnl = ?, exit_price = ?, status = 'CLOSED'
+                   WHERE deal_id = ? AND status = 'PROVISIONAL'""",
+                (pnl, exit_price, deal_id),
+            )
+            self.db.commit()
+        except Exception as e:
+            logger.warning(f"Journal: confirm_provisional failed for {deal_id}: {e}")
+
+    def mark_unmatched(self, deal_id: str) -> None:
+        """Stop trying to reconcile — IG transaction never appeared (rare)."""
+        try:
+            self.db.execute(
+                """UPDATE trades SET status = 'UNMATCHED'
+                   WHERE deal_id = ? AND status = 'PROVISIONAL'""",
+                (deal_id,),
+            )
+            self.db.commit()
+        except Exception as e:
+            logger.warning(f"Journal: mark_unmatched failed for {deal_id}: {e}")
 
     def log_rejected_signal(
         self,

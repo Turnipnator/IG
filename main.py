@@ -891,15 +891,29 @@ def check_positions_from_stream() -> None:
             # Record close time for cooldown
             last_close_time[known_pos.epic] = datetime.now()
 
-            # Get actual P&L from IG transaction history (1 API call, no data points)
-            actual_pnl = client.get_closed_position_pnl(
-                deal_id, open_level=known_pos.open_level, direction=known_pos.direction
+            # Try to match the close against IG transaction history (1 API call).
+            # IG often hasn't published the txn yet at this exact moment, so on a miss
+            # we record PROVISIONAL with the cached pnl and let the reconciliation task
+            # in periodic_tasks() correct it once IG settles.
+            txn = client.find_close_transaction(
+                known_pos.open_level, known_pos.direction
             )
-            if actual_pnl is not None:
-                logger.info(f"Actual P&L for {market_name}: £{actual_pnl:.2f} (cached was £{known_pos.profit_loss:.2f})")
+            if txn is not None:
+                actual_pnl = client._parse_pnl(txn.get("profitAndLoss", "0"))
+                exit_price = float(txn.get("closeLevel") or 0.0)
+                journal_status = "CLOSED"
+                logger.info(
+                    f"Actual P&L for {market_name}: £{actual_pnl:.2f} "
+                    f"(cached was £{known_pos.profit_loss:.2f}), exit={exit_price}"
+                )
             else:
                 actual_pnl = known_pos.profit_loss
-                logger.warning(f"Could not fetch actual P&L for {market_name}, using cached: £{actual_pnl:.2f}")
+                exit_price = 0.0
+                journal_status = "PROVISIONAL"
+                logger.warning(
+                    f"Provisional P&L for {market_name}: £{actual_pnl:.2f} (cached) "
+                    f"— will reconcile against IG transactions"
+                )
 
             # If it was a loss, set extended loss cooldown
             if actual_pnl < 0:
@@ -909,7 +923,10 @@ def check_positions_from_stream() -> None:
             risk_manager.update_daily_pnl(actual_pnl)
 
             # Journal exit
-            journal.log_exit(deal_id, actual_pnl, "Stop/limit hit")
+            journal.log_exit(
+                deal_id, actual_pnl, "Stop/limit hit",
+                exit_price=exit_price, status=journal_status,
+            )
 
             if telegram_loop:
                 asyncio.run_coroutine_threadsafe(
@@ -974,8 +991,16 @@ def check_positions_from_stream() -> None:
                 # Record close time for cooldown
                 last_close_time[position.epic] = datetime.now()
 
-                # Get P&L from close confirmation (more accurate than position snapshot)
-                pnl = result.get("profit", 0.0) or position.profit_loss
+                # Get P&L + close fill level from deal confirmation (broker-authoritative).
+                # `profit` may legitimately be 0 (BE close), so distinguish "missing" via None.
+                confirmed_profit = result.get("profit")
+                exit_price = float(result.get("level") or 0.0)
+                if confirmed_profit is not None:
+                    pnl = float(confirmed_profit)
+                    journal_status = "CLOSED"
+                else:
+                    pnl = position.profit_loss
+                    journal_status = "PROVISIONAL"
 
                 # If it was a loss, set extended loss cooldown
                 if pnl < 0:
@@ -985,11 +1010,15 @@ def check_positions_from_stream() -> None:
                 # daily_pnl incremented in notify_trade_closed()
                 risk_manager.update_daily_pnl(pnl)
 
-                # Journal exit with current ADX
+                # Journal exit with current ADX + actual close fill level
                 exit_adx = 0.0
                 if df is not None and len(df) > 0 and "adx" in df.columns:
                     exit_adx = float(df.iloc[-1]["adx"])
-                journal.log_exit(position.deal_id, pnl, reason, adx_at_exit=exit_adx)
+                journal.log_exit(
+                    position.deal_id, pnl, reason,
+                    exit_price=exit_price, adx_at_exit=exit_adx,
+                    status=journal_status,
+                )
 
                 if telegram_loop:
                     asyncio.run_coroutine_threadsafe(
@@ -1003,12 +1032,64 @@ def check_positions_from_stream() -> None:
                     )
 
 
+def reconcile_provisional_trades() -> None:
+    """Match PROVISIONAL journal rows against IG transaction history.
+
+    Runs every minute. Gated by has_provisional() so we make zero API calls
+    on minutes where there's nothing to reconcile (the common case).
+
+    Rows older than 2h with still no match are flagged UNMATCHED so we stop
+    retrying — their cached pnl is the best we'll get.
+    """
+    if not journal.has_provisional():
+        return
+
+    txns = client.get_recent_transactions(hours=24)
+    if not txns:
+        return
+
+    rows = journal.get_provisional_rows(max_age_hours=24)
+    stale_cutoff = datetime.now() - timedelta(hours=2)
+    matched = 0
+    aged_out = 0
+    for row in rows:
+        txn = client.find_close_transaction(
+            row["entry_price"], row["direction"], transactions=txns
+        )
+        if txn is not None:
+            actual_pnl = IGClient._parse_pnl(txn.get("profitAndLoss", "0"))
+            exit_price = float(txn.get("closeLevel") or 0.0)
+            journal.confirm_provisional(row["deal_id"], actual_pnl, exit_price)
+            matched += 1
+            logger.info(
+                f"Reconciled {row['market_name']} ({row['deal_id']}): "
+                f"pnl £{row['pnl']:.2f} -> £{actual_pnl:.2f}, exit_price -> {exit_price}"
+            )
+        else:
+            try:
+                entry_dt = datetime.fromisoformat(row["entry_time"])
+            except (TypeError, ValueError):
+                continue
+            if entry_dt < stale_cutoff:
+                journal.mark_unmatched(row["deal_id"])
+                aged_out += 1
+                logger.warning(
+                    f"Marking {row['market_name']} ({row['deal_id']}) UNMATCHED — "
+                    f"no IG transaction after 2h"
+                )
+    if matched or aged_out:
+        logger.info(f"Reconciliation: {matched} confirmed, {aged_out} aged out")
+
+
 def periodic_tasks() -> None:
     """Run periodic tasks (position checks, etc.)."""
     while running:
         try:
             # Check positions every minute
             check_positions_from_stream()
+
+            # Reconcile any provisional pnl/exit_price against IG transactions
+            reconcile_provisional_trades()
 
             # Log streaming status every 5 minutes
             if stream_service and stream_service.connected:
