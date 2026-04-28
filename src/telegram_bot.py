@@ -4,6 +4,7 @@ Provides remote control and monitoring via Telegram
 """
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -442,21 +443,24 @@ class TelegramBot:
                     wr = (w / t * 100) if t > 0 else 0
                     pnl = m.get("total_pnl", 0) or 0
                     emoji = "📈" if pnl >= 0 else "📉"
-                    msg += f"  {emoji} {m['market_name']}: {t} trades, {wr:.0f}% win, £{pnl:.2f}\n"
+                    name = html.escape(str(m['market_name']))
+                    msg += f"  {emoji} {name}: {t} trades, {wr:.0f}% win, £{pnl:.2f}\n"
                 msg += "\n"
 
             if by_exit:
                 msg += f"<b>By Exit Type:</b>\n"
                 for e in by_exit:
                     pnl = e.get("total_pnl", 0) or 0
-                    msg += f"  {e['exit_reason']}: {e['total']} trades, £{pnl:.2f}\n"
+                    reason = html.escape(str(e['exit_reason']))
+                    msg += f"  {reason}: {e['total']} trades, £{pnl:.2f}\n"
                 msg += "\n"
 
             if rejected:
                 msg += f"<b>Rejected Signals (7d):</b>\n"
                 for r in rejected[:5]:
+                    name = html.escape(str(r['market_name']))
                     msg += (
-                        f"  {r['market_name']}: {r['rejected']}x "
+                        f"  {name}: {r['rejected']}x "
                         f"(avg ADX {r.get('avg_adx', 0):.1f})\n"
                     )
 
