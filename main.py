@@ -716,6 +716,22 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 logger.info(f"Calendar block for {market_config.name}: {cal_reason}")
                 return
 
+        # Clamp stop/limit to IG's live minNormalStopOrLimitDistance.
+        # Why: config.py min_stop_distance is the strategy floor, but IG's actual
+        # minimum varies by account tier / region / CFD-vs-spreadbet. If our value
+        # is below IG's, the order is rejected with ATTACHED_ORDER_LEVEL_ERROR.
+        live_market_info = client.get_market_info(epic)
+        if live_market_info and live_market_info.min_stop_distance > 0:
+            ig_min = live_market_info.min_stop_distance + 0.5  # 0.5pt buffer
+            if trade_signal.stop_distance < ig_min:
+                logger.info(
+                    f"[{market.name}] Raising stop {trade_signal.stop_distance:.2f} "
+                    f"-> {ig_min:.2f} (IG min {live_market_info.min_stop_distance:.2f})"
+                )
+                trade_signal.stop_distance = ig_min
+            if trade_signal.limit_distance < ig_min:
+                trade_signal.limit_distance = ig_min
+
         # Calculate position size (regime-adjusted)
         position_size = risk_manager.calculate_position_size(
             balance,
