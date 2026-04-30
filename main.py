@@ -721,16 +721,23 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         # minimum varies by account tier / region / CFD-vs-spreadbet. If our value
         # is below IG's, the order is rejected with ATTACHED_ORDER_LEVEL_ERROR.
         live_market_info = client.get_market_info(epic)
-        if live_market_info and live_market_info.min_stop_distance > 0:
-            ig_min = live_market_info.min_stop_distance + 0.5  # 0.5pt buffer
-            if trade_signal.stop_distance < ig_min:
+        if live_market_info:
+            if live_market_info.market_status != "TRADEABLE":
                 logger.info(
-                    f"[{market.name}] Raising stop {trade_signal.stop_distance:.2f} "
-                    f"-> {ig_min:.2f} (IG min {live_market_info.min_stop_distance:.2f})"
+                    f"[{market.name}] SKIP open: market_status={live_market_info.market_status} "
+                    f"(signal={trade_signal.signal.value}, confidence={trade_signal.confidence:.0%})"
                 )
-                trade_signal.stop_distance = ig_min
-            if trade_signal.limit_distance < ig_min:
-                trade_signal.limit_distance = ig_min
+                return
+            if live_market_info.min_stop_distance > 0:
+                ig_min = live_market_info.min_stop_distance + 0.5  # 0.5pt buffer
+                if trade_signal.stop_distance < ig_min:
+                    logger.info(
+                        f"[{market.name}] Raising stop {trade_signal.stop_distance:.2f} "
+                        f"-> {ig_min:.2f} (IG min {live_market_info.min_stop_distance:.2f})"
+                    )
+                    trade_signal.stop_distance = ig_min
+                if trade_signal.limit_distance < ig_min:
+                    trade_signal.limit_distance = ig_min
 
         # Calculate position size (regime-adjusted)
         position_size = risk_manager.calculate_position_size(
