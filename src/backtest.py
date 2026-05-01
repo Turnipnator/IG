@@ -96,6 +96,32 @@ DEFAULT_PARAMS = {
     "atr_period": 14,
     "stop_atr_multiplier": 1.5,
     "reward_risk_ratio": 2.0,
+    # RSI extreme cooldown: tighten entry rules after recent extreme RSI.
+    # 0 = disabled. Otherwise look back N prior candles; if any candle's RSI
+    # was outside [rsi_extreme_low, rsi_extreme_high] on the *opposite* side
+    # of the proposed entry, raise the bar:
+    #   SELL after recent oversold (RSI < rsi_extreme_low):
+    #     require ADX >= base + rsi_extreme_adx_boost
+    #     AND confidence >= base + rsi_extreme_confidence_boost
+    #   BUY after recent overbought (RSI > rsi_extreme_high): symmetric.
+    # Setting both boosts very high approximates a hard block.
+    "rsi_extreme_lookback": 0,
+    "rsi_extreme_low": 25,
+    "rsi_extreme_high": 75,
+    "rsi_extreme_adx_boost": 0,
+    "rsi_extreme_confidence_boost": 0.0,
+    # Long-only mode — skip all SELL signals (for structurally-bullish markets).
+    "long_only": False,
+    # Ranging exit (non-MACD strategies). Live logic closes a position when
+    # ADX drops below adx_threshold - ranging_exit_drop on a single candle —
+    # journal showed this fires too quickly and exits trends prematurely.
+    # consecutive=1 matches live; >1 requires N consecutive sub-threshold
+    # candles before firing. require_declining adds an additional check that
+    # ADX is monotonically declining across those N candles.
+    # 0 disables the exit entirely.
+    "ranging_exit_drop": 10,
+    "ranging_exit_consecutive": 0,
+    "ranging_exit_require_declining": False,
 }
 
 
@@ -236,12 +262,19 @@ class Backtester:
                 df = df.rename(columns={"datetime": "date"})
             elif "Datetime" in df.columns:
                 df = df.rename(columns={"Datetime": "date"})
+            elif "Date" in df.columns:
+                df = df.rename(columns={"Date": "date"})
             elif "index" in df.columns:
                 df = df.rename(columns={"index": "date"})
 
             # Convert date to datetime if needed
             if "date" in df.columns and not pd.api.types.is_datetime64_any_dtype(df["date"]):
                 df["date"] = pd.to_datetime(df["date"])
+
+            # Normalise to tz-naive so cross-interval comparisons work
+            if "date" in df.columns and pd.api.types.is_datetime64_any_dtype(df["date"]):
+                if df["date"].dt.tz is not None:
+                    df["date"] = df["date"].dt.tz_localize(None)
 
             logger.info(f"Fetched {len(df)} candles for {market}")
             return df
@@ -272,6 +305,12 @@ class Backtester:
 
         # ATR
         df["atr"] = calculate_atr(df["high"], df["low"], df["close"], self.params["atr_period"])
+
+        # RSI extreme rolling (prior N candles only — shift(1) excludes current)
+        lookback = self.params.get("rsi_extreme_lookback", 0)
+        if lookback > 0:
+            df["recent_rsi_min"] = df["rsi"].shift(1).rolling(lookback, min_periods=1).min()
+            df["recent_rsi_max"] = df["rsi"].shift(1).rolling(lookback, min_periods=1).max()
 
         return df
 
@@ -358,8 +397,22 @@ class Backtester:
         macd_already_bearish = macd_hist < 0 if not pd.isna(macd_hist) else False
         macd_already_bullish = macd_hist > 0 if not pd.isna(macd_hist) else False
 
+        # RSI extreme cooldown — flag direction-specific cooldown
+        lookback = self.params.get("rsi_extreme_lookback", 0)
+        recent_min = row.get("recent_rsi_min") if lookback > 0 else None
+        recent_max = row.get("recent_rsi_max") if lookback > 0 else None
+        sell_cooldown = lookback > 0 and recent_min is not None and not pd.isna(recent_min) \
+            and recent_min < self.params["rsi_extreme_low"]
+        buy_cooldown = lookback > 0 and recent_max is not None and not pd.isna(recent_max) \
+            and recent_max > self.params["rsi_extreme_high"]
+        adx_boost = self.params.get("rsi_extreme_adx_boost", 0)
+
         # BUY signal
         if bullish_ema and price_above_ema and rsi_buy_valid:
+            adx_required = self.params["adx_threshold"] + (adx_boost if buy_cooldown else 0)
+            if adx < adx_required:
+                tag = " (extreme cooldown)" if buy_cooldown else ""
+                return None, 0, f"ADX {adx:.1f} < {adx_required}{tag}"
             if macd_already_bearish:
                 return None, 0, "MACD already bearish"
 
@@ -372,8 +425,15 @@ class Backtester:
             confidence = self._calculate_confidence("BUY", rsi, adx, htf_trend)
             return "BUY", confidence, f"Bullish EMA, RSI={rsi:.1f}, ADX={adx:.1f}, HTF={htf_trend}"
 
-        # SELL signal
+        # SELL signal (skipped entirely in long-only mode)
+        if self.params.get("long_only", False):
+            return None, 0, ""
+
         if bearish_ema and price_below_ema and rsi_sell_valid:
+            adx_required = self.params["adx_threshold"] + (adx_boost if sell_cooldown else 0)
+            if adx < adx_required:
+                tag = " (extreme cooldown)" if sell_cooldown else ""
+                return None, 0, f"ADX {adx:.1f} < {adx_required}{tag}"
             if macd_already_bullish:
                 return None, 0, "MACD already bullish"
 
@@ -422,6 +482,7 @@ class Backtester:
         market: str,
         days: int = 30,
         interval: str = "5m",
+        htf_interval: str = "1h",
         require_htf_alignment: bool = False,
         min_confidence: Optional[float] = None,
         account_size: float = 10000,
@@ -456,8 +517,8 @@ class Backtester:
         # Add indicators
         df = self.add_indicators(df)
 
-        # Fetch hourly data for HTF trend
-        htf_df = self.fetch_data(market, days, "1h")
+        # Fetch HTF data
+        htf_df = self.fetch_data(market, days, htf_interval)
         if htf_df is not None and not htf_df.empty:
             htf_df["ema_9"] = calculate_ema(htf_df["close"], 9)
             htf_df["ema_21"] = calculate_ema(htf_df["close"], 21)
@@ -518,6 +579,35 @@ class Backtester:
                             last_3 = [df.iloc[i-j]["macd_hist"] for j in range(3)]
                             if all(h > 0 for h in last_3 if not pd.isna(h)):
                                 exit_reason = "MACD bullish"
+                                exit_price = close
+
+                # Ranging exit (non-MACD strategies). Mirrors live logic in
+                # src/strategy.py:should_close_position when use_macd_exit=False.
+                consecutive = self.params.get("ranging_exit_consecutive", 0)
+                if not exit_reason and consecutive > 0 and market in DISABLE_MACD_EXIT:
+                    drop = self.params.get("ranging_exit_drop", 10)
+                    require_declining = self.params.get(
+                        "ranging_exit_require_declining", False
+                    )
+                    adx_threshold = self.params.get("adx_threshold", 25)
+                    adx_exit_threshold = adx_threshold - drop
+                    if i >= consecutive:
+                        recent_adx = [df.iloc[i - j]["adx"] for j in range(consecutive)]
+                        all_below = all(
+                            (not pd.isna(a)) and a < adx_exit_threshold
+                            for a in recent_adx
+                        )
+                        if all_below:
+                            declining_ok = True
+                            if require_declining:
+                                # recent_adx[0] is the most recent — check it falls
+                                # monotonically as we go backwards in time.
+                                declining_ok = all(
+                                    recent_adx[j] <= recent_adx[j + 1]
+                                    for j in range(consecutive - 1)
+                                )
+                            if declining_ok:
+                                exit_reason = "Market turned ranging"
                                 exit_price = close
 
                 # Close position if exit triggered
@@ -584,6 +674,20 @@ class Backtester:
                 effective_min_confidence = max(min_confidence, regime_params.min_confidence)
             else:
                 effective_min_confidence = min_confidence
+
+            # RSI extreme cooldown — raise the confidence floor when the
+            # proposed direction follows a recent opposite-side extreme.
+            extreme_lookback = self.params.get("rsi_extreme_lookback", 0)
+            conf_boost = self.params.get("rsi_extreme_confidence_boost", 0.0)
+            if direction and extreme_lookback > 0 and conf_boost > 0:
+                if direction == "SELL":
+                    rmin = row.get("recent_rsi_min")
+                    if rmin is not None and not pd.isna(rmin) and rmin < self.params["rsi_extreme_low"]:
+                        effective_min_confidence += conf_boost
+                elif direction == "BUY":
+                    rmax = row.get("recent_rsi_max")
+                    if rmax is not None and not pd.isna(rmax) and rmax > self.params["rsi_extreme_high"]:
+                        effective_min_confidence += conf_boost
 
             if direction and confidence >= effective_min_confidence:
                 # Calculate stop and limit
