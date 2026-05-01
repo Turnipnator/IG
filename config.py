@@ -75,7 +75,8 @@ class MarketConfig:
     min_stop_distance: float
     default_size: float
     expiry: str = "DFB"  # DFB for daily funded bets, or specific like "MAR-26"
-    candle_interval: int = 5  # Candle duration in minutes (5 for indices/commodities, 15 for forex)
+    candle_interval: int = 5  # Candle duration in minutes (5 for indices/commodities, 15 for forex, 60 for natgas)
+    htf_resolution: str = "HOUR"  # IG resolution for HTF trend (HOUR, HOUR_4, DAY etc). Use DAY for 1h-candle markets.
     min_confidence: float = 0.5  # Minimum confidence to enter (higher = more selective)
     strategy: str = "default"  # Strategy profile to use: "default" or "indices"
     trading_start: int = 4   # UTC hour to start trading (inclusive)
@@ -150,6 +151,32 @@ STRATEGY_PROFILES = {
         require_htf=True,
         pullback_pct=0.3,
         breakeven_trigger_pct=0.7,  # Raised from 0.5 — 50% triggered on noise
+        atr_trail_mult=1.5,
+    ),
+
+    # =================================================================
+    # NATURAL GAS — 1h candles with daily HTF. Default profile + wider
+    # stops + R:R 3 was the clear winner across 730d / 73 trades.
+    # Backtest: +8.80% (PF 1.30, WR 54.8%, n=73 over 2 years).
+    # Volatile market — wider stops give trades room to develop.
+    # =================================================================
+    "natgas": StrategyConfig(
+        ema_fast=9,
+        ema_medium=21,
+        ema_slow=50,
+        rsi_period=7,
+        rsi_overbought=70,
+        rsi_oversold=30,
+        rsi_buy_max=60,
+        rsi_sell_min=40,
+        adx_threshold=25,
+        stop_atr_mult=2.5,    # Wider than default 1.8 — natgas needs room (PF 1.30 vs 1.26)
+        reward_risk=3.0,      # Higher R:R — let winners run on big swings
+        min_confidence=0.55,
+        use_macd_exit=True,
+        require_htf=True,
+        pullback_pct=0.3,
+        breakeven_trigger_pct=0.7,
         atr_trail_mult=1.5,
     ),
 
@@ -492,6 +519,23 @@ MARKETS = [
         min_confidence=0.55,
         strategy="crude",      # Custom: RSI 80/20, tight stops. Stops BE-exit problem.
         trading_start=23,      # Nearly 24h market — avoid IG reset window (21-23 UTC)
+        trading_end=21,
+    ),
+    MarketConfig(
+        # Natural Gas: 1h candles with daily HTF. Backtest 2026-05-01:
+        # +8.80% PF 1.30 WR 54.8% over 730d / 73 trades.
+        # CC.D.NG.UMP.IP rejected — streamingPricesAvailable=False on SPREADBET.
+        epic="EN.D.NG.Month1.IP",
+        name="Natural Gas",
+        sector="Commodities",
+        min_stop_distance=60.0,    # IG min normal stop = 60pts
+        default_size=0.5,          # 0.5/pt × 60pt stop = 30 USD risk per trade (~£24)
+        expiry="JUL-26",           # Front month — last dealing 2026-06-25, roll required
+        candle_interval=60,        # 1h candles — sweet spot for NG (5m too noisy)
+        htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
+        min_confidence=0.55,
+        strategy="natgas",
+        trading_start=23,          # Same as Crude — nearly 24h, avoid IG reset window
         trading_end=21,
     ),
     MarketConfig(

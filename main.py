@@ -54,6 +54,23 @@ telegram_loop = None
 # Track last analysis time per market to avoid duplicate signals
 last_analysis: dict[str, datetime] = {}
 
+
+def interval_to_resolution(minutes: int) -> str:
+    """Map a candle interval in minutes to an IG REST API resolution string.
+    IG accepts MINUTE_{1,2,3,5,10,15,30}, HOUR, HOUR_{2,3,4}, DAY, WEEK, MONTH.
+    """
+    minute_resolutions = {1, 2, 3, 5, 10, 15, 30}
+    if minutes in minute_resolutions:
+        return f"MINUTE_{minutes}"
+    if minutes == 60:
+        return "HOUR"
+    if minutes in (120, 180, 240):
+        return f"HOUR_{minutes // 60}"
+    if minutes == 1440:
+        return "DAY"
+    raise ValueError(f"Unsupported candle_interval: {minutes} minutes")
+
+
 # Track when positions were last closed - cooldown prevents immediate re-entry
 last_close_time: dict[str, datetime] = {}
 
@@ -214,7 +231,7 @@ def initialize_streaming(preserved_candles: dict = None) -> bool:
 
             # 3. Fall back to API (costs data points)
             rate_limiter.wait_if_needed()
-            resolution = f"MINUTE_{market.candle_interval}"
+            resolution = interval_to_resolution(market.candle_interval)
             df = client.get_historical_prices(
                 market.epic,
                 resolution=resolution,
@@ -243,14 +260,14 @@ def update_htf_trends() -> None:
     global market_regime, market_regime_confirmed
     from src.indicators import calculate_ema, add_all_indicators
 
-    logger.info("Updating higher timeframe trends (1H candles)...")
+    logger.info("Updating higher timeframe trends...")
 
     for market in MARKETS:
         try:
             rate_limiter.wait_if_needed()
             df = client.get_historical_prices(
                 market.epic,
-                resolution="HOUR",
+                resolution=market.htf_resolution,  # Per-market: HOUR for most, DAY for 1h-candle markets
                 num_points=30,  # Need ~21 for EMA + buffer. Reduced from 50 to save API budget.
                 use_cache=True,  # Use disk cache if fresh to save API calls
             )
