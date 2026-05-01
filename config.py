@@ -411,15 +411,20 @@ MARKETS = [
         min_confidence=0.55,
         strategy="indices_wide",  # NASDAQ: wider 2.5x stops, PF=2.33 (60d backtest)
     ),
-    MarketConfig(
-        epic="IX.D.RUSSELL.DAILY.IP",
-        name="US Russell 2000",
-        sector="Indices",
-        min_stop_distance=1.0,
-        default_size=1.0,
-        min_confidence=0.55,
-        strategy="indices_adx35",  # 60d backtest: ADX 30 was -0.22%, ADX 35 is -0.19% with half the trades
-    ),
+    # Disabled 2026-05-01 — strategy doesn't fit. Tested 5m/15m/30m/1h timeframes,
+    # ADX 30/35/40, slower EMAs, long-only, wide stops — no variant produced a
+    # clean edge. Best 1h/ADX 40 result was 4 trades over 730d (statistically
+    # meaningless). Live: 13 trades, 38% WR, -£11.50 over 57d. Revisit if we
+    # ever build a non-trend strategy (mean reversion / breakout).
+    # MarketConfig(
+    #     epic="IX.D.RUSSELL.DAILY.IP",
+    #     name="US Russell 2000",
+    #     sector="Indices",
+    #     min_stop_distance=1.0,
+    #     default_size=1.0,
+    #     min_confidence=0.55,
+    #     strategy="indices_adx35",
+    # ),
 
     MarketConfig(
         epic="IX.D.DAX.DAILY.IP",
