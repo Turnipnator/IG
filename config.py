@@ -252,6 +252,29 @@ STRATEGY_PROFILES = {
         atr_trail_mult=1.5,
     ),
 
+    # Germany 40 / US Russell 2000 — ADX 30 lets through too much chop;
+    # ADX 40 over-filters. 60d backtest: DAX -0.06% → +0.30% (PF 0.96 → 1.87),
+    # Russell -0.22% → -0.19% with halved trade count.
+    "indices_adx35": StrategyConfig(
+        ema_fast=5,
+        ema_medium=12,
+        ema_slow=26,
+        rsi_period=7,
+        rsi_overbought=70,
+        rsi_oversold=30,
+        rsi_buy_max=55,
+        rsi_sell_min=45,
+        adx_threshold=35,
+        stop_atr_mult=1.5,
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=True,
+        require_htf=True,
+        pullback_pct=0.2,
+        breakeven_trigger_pct=0.7,
+        atr_trail_mult=1.5,
+    ),
+
     # S&P 500 needs high ADX selectivity — too choppy at ADX 30
     "indices_selective": StrategyConfig(
         ema_fast=5,
@@ -395,7 +418,7 @@ MARKETS = [
         min_stop_distance=1.0,
         default_size=1.0,
         min_confidence=0.55,
-        strategy="indices",  # Reverted from indices_selective — backtest showed ADX 40 kills all trades on Russell
+        strategy="indices_adx35",  # 60d backtest: ADX 30 was -0.22%, ADX 35 is -0.19% with half the trades
     ),
 
     MarketConfig(
@@ -405,7 +428,7 @@ MARKETS = [
         min_stop_distance=2.0,
         default_size=0.5,
         min_confidence=0.55,
-        strategy="indices",  # Reverted from indices_selective — backtest: ADX 30 +£48, ADX 40 -£13 (60d)
+        strategy="indices_adx35",  # 60d backtest: ADX 30 was -0.06%, ADX 35 is +0.30% PF 1.87
         trading_start=8,       # Xetra cash open 08:00 UTC
         trading_end=17,        # Include 16:30 close auction (peak liquidity)
     ),
