@@ -831,17 +831,48 @@ class TelegramBot:
         direction: str,
         pnl: float,
         reason: str,
+        provisional: bool = False,
     ) -> bool:
-        """Notify when trade is closed."""
+        """Notify when trade is closed.
+
+        If provisional=True, the P&L is from the cached stream price and may
+        differ from IG's actual fill. notify_trade_reconciled() will follow up
+        once the IG transaction ledger settles (usually within minutes).
+        """
         emoji = "✅" if pnl >= 0 else "❌"
+        title = "POSITION CLOSED (provisional)" if provisional else "POSITION CLOSED"
+        pnl_label = "P&L (provisional)" if provisional else "P&L"
 
         message = (
-            f"{emoji} *POSITION CLOSED*\n\n"
+            f"{emoji} *{title}*\n\n"
             f"Market: {market_name}\n"
-            f"P&L: {format_pnl(pnl)}\n"
+            f"{pnl_label}: {format_pnl(pnl)}\n"
             f"Reason: {reason}"
         )
+        if provisional:
+            message += "\n\n_Awaiting IG settlement; will confirm._"
         self.daily_pnl += pnl
+        self.save_daily_stats()
+        return await self.send_notification(message)
+
+    async def notify_trade_reconciled(
+        self,
+        market_name: str,
+        provisional_pnl: float,
+        actual_pnl: float,
+    ) -> bool:
+        """Confirm a previously-provisional close with the broker-confirmed P&L."""
+        delta = actual_pnl - provisional_pnl
+        emoji = "✅" if actual_pnl >= 0 else "❌"
+        message = (
+            f"{emoji} *P&L CONFIRMED*\n\n"
+            f"Market: {market_name}\n"
+            f"Provisional: {format_pnl(provisional_pnl)}\n"
+            f"Actual: {format_pnl(actual_pnl)}\n"
+            f"Adjustment: {format_pnl(delta)}"
+        )
+        # Correct the running daily total by the delta (provisional was already added).
+        self.daily_pnl += delta
         self.save_daily_stats()
         return await self.send_notification(message)
 

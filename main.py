@@ -80,9 +80,11 @@ known_positions: dict[str, Position] = {}  # deal_id -> Position
 # Deal IDs we've recently fired a close-externally notification for. Guards
 # against IG's positions API transiently re-showing a closed position, which
 # was causing duplicate Telegram alerts, double-counted daily P&L, and reset
-# loss cooldowns. Entries expire after RECENTLY_CLOSED_TTL_MINUTES.
+# loss cooldowns. The 4h TTL covers slow IG-side flickers — a Gold trade on
+# 2026-05-04 re-appeared 32 min after the phantom close, just past the old
+# 30 min window, and triggered a second false detection.
 recently_closed_deals: dict[str, datetime] = {}  # deal_id -> close detection time
-RECENTLY_CLOSED_TTL_MINUTES = 30
+RECENTLY_CLOSED_TTL_MINUTES = 240
 
 # Higher timeframe trend per market (updated hourly from 1H candles)
 htf_trends: dict[str, str] = {}  # epic -> "BULLISH"/"BEARISH"/"NEUTRAL"
@@ -986,6 +988,7 @@ def check_positions_from_stream() -> None:
                         known_pos.direction,
                         actual_pnl,
                         "Stop/limit hit",
+                        provisional=(journal_status == "PROVISIONAL"),
                     ),
                     telegram_loop,
                 )
@@ -1114,12 +1117,25 @@ def reconcile_provisional_trades() -> None:
         if txn is not None:
             actual_pnl = IGClient._parse_pnl(txn.get("profitAndLoss", "0"))
             exit_price = float(txn.get("closeLevel") or 0.0)
+            provisional_pnl = row["pnl"] or 0.0
             journal.confirm_provisional(row["deal_id"], actual_pnl, exit_price)
             matched += 1
             logger.info(
                 f"Reconciled {row['market_name']} ({row['deal_id']}): "
-                f"pnl £{row['pnl']:.2f} -> £{actual_pnl:.2f}, exit_price -> {exit_price}"
+                f"pnl £{provisional_pnl:.2f} -> £{actual_pnl:.2f}, exit_price -> {exit_price}"
             )
+            # Correct risk_manager's running daily P&L by the delta and notify
+            # the user. notify_trade_reconciled corrects telegram.daily_pnl too.
+            delta = actual_pnl - provisional_pnl
+            if abs(delta) > 0.01:
+                risk_manager.update_daily_pnl(delta)
+            if telegram_loop:
+                asyncio.run_coroutine_threadsafe(
+                    telegram.notify_trade_reconciled(
+                        row["market_name"], provisional_pnl, actual_pnl,
+                    ),
+                    telegram_loop,
+                )
         else:
             try:
                 entry_dt = datetime.fromisoformat(row["entry_time"])
