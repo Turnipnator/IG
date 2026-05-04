@@ -77,6 +77,13 @@ last_close_time: dict[str, datetime] = {}
 # Track known open positions to detect external closes (stop/limit hit by IG)
 known_positions: dict[str, Position] = {}  # deal_id -> Position
 
+# Deal IDs we've recently fired a close-externally notification for. Guards
+# against IG's positions API transiently re-showing a closed position, which
+# was causing duplicate Telegram alerts, double-counted daily P&L, and reset
+# loss cooldowns. Entries expire after RECENTLY_CLOSED_TTL_MINUTES.
+recently_closed_deals: dict[str, datetime] = {}  # deal_id -> close detection time
+RECENTLY_CLOSED_TTL_MINUTES = 30
+
 # Higher timeframe trend per market (updated hourly from 1H candles)
 htf_trends: dict[str, str] = {}  # epic -> "BULLISH"/"BEARISH"/"NEUTRAL"
 
@@ -899,14 +906,34 @@ def check_positions_from_stream() -> None:
     positions = client.get_positions()
     current_deal_ids = {p.deal_id for p in positions}
 
+    # Drop expired entries from the recently-closed guard
+    now = datetime.now()
+    ttl = timedelta(minutes=RECENTLY_CLOSED_TTL_MINUTES)
+    for deal_id in list(recently_closed_deals.keys()):
+        if now - recently_closed_deals[deal_id] > ttl:
+            del recently_closed_deals[deal_id]
+
     # Detect positions closed externally (stop/limit hit by IG)
     for deal_id, known_pos in list(known_positions.items()):
         if deal_id not in current_deal_ids:
+            # Already fired close for this deal recently — IG's positions API
+            # is flickering. Just clean up local state and skip notification.
+            if deal_id in recently_closed_deals:
+                logger.debug(
+                    f"Suppressed duplicate close detection for {deal_id} "
+                    f"(already fired {(now - recently_closed_deals[deal_id]).total_seconds():.0f}s ago)"
+                )
+                breakeven_applied.discard(deal_id)
+                trailing_stop_levels.pop(deal_id, None)
+                del known_positions[deal_id]
+                continue
+
             # Position disappeared - closed by IG (stop or limit hit)
             market_config = next((m for m in MARKETS if m.epic == known_pos.epic), None)
             market_name = market_config.name if market_config else known_pos.epic
 
             logger.info(f"Position {deal_id} closed externally (stop/limit hit): {market_name}")
+            recently_closed_deals[deal_id] = now
 
             # Clean up break-even and trailing stop tracking
             breakeven_applied.discard(deal_id)
@@ -965,8 +992,12 @@ def check_positions_from_stream() -> None:
 
             del known_positions[deal_id]
 
-    # Update known positions with current state
+    # Update known positions with current state. Skip deals we've recently
+    # fired a close for — IG sometimes briefly re-shows closed positions and
+    # we don't want to start tracking them again only to fire another close.
     for position in positions:
+        if position.deal_id in recently_closed_deals:
+            continue
         known_positions[position.deal_id] = position
 
     # Break-even and ATR trailing stop now handled in on_price_update()
