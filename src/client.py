@@ -24,6 +24,13 @@ CACHE_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
 PRICE_CACHE_FILE = CACHE_DIR / "price_cache.json"
 DISK_CACHE_TTL_MINUTES = 360  # Use disk cache if < 6 hours old (saves API budget on restarts)
 
+# Positions-API watchdog thresholds. get_positions() runs every 60s, so 3
+# consecutive failures = ~3 min of broken position state before we try to
+# rebuild the requests.Session pool, and 10 = ~10 min before we hard-exit
+# and let Docker restart us.
+POSITION_FAILURES_BEFORE_RESET = 3
+POSITION_FAILURES_BEFORE_EXIT = 10
+
 
 @dataclass
 class CachedPriceData:
@@ -78,6 +85,13 @@ class IGClient:
         self._api_calls_today = 0
         self._last_reset_date = datetime.now().date()
         self.last_error: Optional[str] = None
+
+        # Positions API watchdog. On 2026-05-06 the bot's requests.Session
+        # connection pool went zombie — every /positions call timed out for
+        # 2h while a fresh Session in the same container hit it in 0.2s.
+        # On consecutive failures we recreate the Session; if that doesn't
+        # help, exit so Docker restarts the container.
+        self._consecutive_position_failures = 0
 
         # Try to load disk cache from previous session
         self._load_disk_cache()
@@ -244,6 +258,30 @@ class IGClient:
         if not self.login():
             return False
         # Switch back to spreadbet account so subsequent calls work
+        spreadbet_id = self.get_spreadbet_account_id()
+        if spreadbet_id and spreadbet_id != self.account_id:
+            self.switch_account(spreadbet_id)
+        return True
+
+    def _reset_session(self) -> bool:
+        """Drop the requests.Session pool entirely and re-login.
+
+        _reauthenticate() only refreshes credentials but reuses the same
+        Session object — so its underlying urllib3 connection pool is reused
+        too. When that pool goes zombie (sockets stuck in CLOSE_WAIT or
+        similar), every request times out. This forces a fresh pool.
+        """
+        logger.warning("Resetting HTTP session pool and re-authenticating...")
+        try:
+            self.session.close()
+        except Exception:
+            pass
+        self.session = requests.Session()
+        self._logged_in = False
+        self.cst = None
+        self.security_token = None
+        if not self.login():
+            return False
         spreadbet_id = self.get_spreadbet_account_id()
         if spreadbet_id and spreadbet_id != self.account_id:
             self.switch_account(spreadbet_id)
@@ -566,6 +604,7 @@ class IGClient:
                 )
 
                 if response.status_code == 200:
+                    self._consecutive_position_failures = 0
                     data = response.json()
                     positions = []
 
@@ -611,7 +650,21 @@ class IGClient:
                 return []
 
             except requests.RequestException as e:
-                logger.error(f"Positions request failed: {e}")
+                self._consecutive_position_failures += 1
+                logger.error(
+                    f"Positions request failed "
+                    f"({self._consecutive_position_failures} consecutive): {e}"
+                )
+                # Watchdog: zombie connection pool recovery + last-resort exit.
+                if self._consecutive_position_failures == POSITION_FAILURES_BEFORE_RESET:
+                    self._reset_session()
+                elif self._consecutive_position_failures >= POSITION_FAILURES_BEFORE_EXIT:
+                    logger.critical(
+                        f"Positions API failed {self._consecutive_position_failures} "
+                        f"times in a row — session reset did not recover. "
+                        f"Exiting so Docker restarts the container."
+                    )
+                    os._exit(1)
                 return []
 
         return []
