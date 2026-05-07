@@ -41,6 +41,16 @@ from backtest import run_backtest, print_result
 EPIC = "IX.D.AIIDX.DAILY.IP"
 NAME = "AI Index"
 
+# On-disk cache so we don't refetch from IG on repeat runs (the user is
+# rightly paranoid about burning API allowance).
+DATA_CACHE = Path("/app/data") if Path("/app").exists() else Path("data")
+CACHE_FILES = {
+    "5m": DATA_CACHE / "ai_index_5m.json",
+    "15m": DATA_CACHE / "ai_index_15m.json",
+    "htf": DATA_CACHE / "ai_index_htf.json",
+}
+CACHE_MAX_AGE_HOURS = 24
+
 
 def ig_to_df(prices: list) -> pd.DataFrame:
     """IGClient returns a DataFrame already, but normalize to backtest expects."""
@@ -55,15 +65,30 @@ def ig_to_df(prices: list) -> pd.DataFrame:
     return df.sort_values("date").reset_index(drop=True)
 
 
-def fetch_ig_history(client: IGClient, resolution: str, num_points: int) -> pd.DataFrame:
-    """Fetch via IGClient.get_historical_prices."""
-    print(f"  Fetching {num_points} points at {resolution}...", flush=True)
+def fetch_ig_history(client: IGClient, resolution: str, num_points: int, cache_key: str) -> pd.DataFrame:
+    """Fetch via IGClient.get_historical_prices, with on-disk cache to avoid
+    re-spending API allowance on re-runs."""
+    cache_file = CACHE_FILES.get(cache_key)
+    if cache_file and cache_file.exists():
+        age = datetime.now().timestamp() - cache_file.stat().st_mtime
+        if age < CACHE_MAX_AGE_HOURS * 3600:
+            df = pd.read_json(cache_file)
+            df["date"] = pd.to_datetime(df["date"])
+            print(f"  [cache hit] {cache_key}: {len(df)} candles "
+                  f"({age/3600:.1f}h old, range {df['date'].min()} -> {df['date'].max()})")
+            return df
+
+    print(f"  [API] Fetching {num_points} points at {resolution}...", flush=True)
     df = client.get_historical_prices(EPIC, resolution=resolution, num_points=num_points, use_cache=False)
     df = ig_to_df(df)
     if df is None or df.empty:
         print(f"  No data returned for {resolution}")
         return None
     print(f"  Got {len(df)} candles, range: {df['date'].min()} -> {df['date'].max()}")
+    if cache_file:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        df.to_json(cache_file, orient="records", date_format="iso")
+        print(f"  Saved to {cache_file}")
     return df
 
 
@@ -79,11 +104,11 @@ def main():
 
     print("Fetching IG historical data for AI Index...")
     print(f"--- 5-minute candles ---")
-    df_5m = fetch_ig_history(client, "MINUTE_5", 2000)
+    df_5m = fetch_ig_history(client, "MINUTE_5", 2000, "5m")
     print(f"--- 15-minute candles ---")
-    df_15m = fetch_ig_history(client, "MINUTE_15", 2000)
+    df_15m = fetch_ig_history(client, "MINUTE_15", 2000, "15m")
     print(f"--- 1-hour HTF candles ---")
-    df_htf = fetch_ig_history(client, "HOUR", 200)
+    df_htf = fetch_ig_history(client, "HOUR", 200, "htf")
 
     if df_5m is None or df_15m is None:
         print("Missing data — aborting")
@@ -140,6 +165,31 @@ def main():
             print(f"  No result for {interval_min}m")
             continue
         print_result(result)
+
+        # Per-trade timestamp dump + hours-window analysis
+        print(f"\n  Individual trades (UTC times):")
+        in_hours = 0  # 4-20 UTC (current AI Index trading window)
+        out_hours = 0
+        for t in result.trades:
+            ts = t.entry_time
+            hr = ts.hour if hasattr(ts, "hour") else pd.Timestamp(ts).hour
+            inside = 4 <= hr < 20
+            tag = "  inside" if inside else "OUTSIDE"
+            if inside:
+                in_hours += 1
+            else:
+                out_hours += 1
+            print(f"    {tag} 4-20 UTC | {ts} | {t.direction} | "
+                  f"P&L £{t.pnl:+.2f} | {t.exit_reason}")
+        total = in_hours + out_hours
+        if total > 0:
+            print(f"\n  Hours summary: {in_hours}/{total} trades inside 4-20 UTC, "
+                  f"{out_hours}/{total} blocked by current live filter")
+            blocked_pnl = sum(t.pnl for t in result.trades
+                              if not (4 <= (t.entry_time.hour if hasattr(t.entry_time, 'hour') else pd.Timestamp(t.entry_time).hour) < 20))
+            kept_pnl = sum(t.pnl for t in result.trades
+                           if 4 <= (t.entry_time.hour if hasattr(t.entry_time, 'hour') else pd.Timestamp(t.entry_time).hour) < 20)
+            print(f"  P&L breakdown: kept £{kept_pnl:+.2f}, would-block £{blocked_pnl:+.2f}")
 
     # Restore
     bt.fetch_data = original_fetch_data
