@@ -214,16 +214,17 @@ def main():
                     min_deal_size=0,
                     market_status=m.get("marketStatus", "UNKNOWN"),
                 ))
-            time.sleep(0.5)  # ease IG rate limit
-        print(f"  {category:20s}: {len(terms):2d} terms searched, {sum(1 for d in discovered if d.category == category):3d} markets so far")
+            # IG limit: 60 non-trading calls/min. Stay well under: 1.2s/call = 50/min.
+            time.sleep(1.2)
+        print(f"  {category:20s}: {len(terms):2d} terms searched, {sum(1 for d in discovered if d.category == category):3d} markets so far", flush=True)
 
     print(f"\nDiscovered {len(discovered)} unique spread bet EPICs")
 
     # Hydrate metadata for each
-    print("\n=== HYDRATION (get_market_info per epic) ===")
+    print("\n=== HYDRATION (get_market_info per epic) ===", flush=True)
     for i, e in enumerate(discovered):
         if i % 25 == 0:
-            print(f"  {i}/{len(discovered)}...")
+            print(f"  {i}/{len(discovered)}...", flush=True)
         try:
             info = c.get_market_info(e.epic)
             if info:
@@ -234,8 +235,9 @@ def main():
                 e.min_deal_size = info.min_deal_size or 0
                 e.market_status = info.market_status or e.market_status
         except Exception as ex:
-            print(f"  {e.epic}: hydrate failed: {ex}")
-        time.sleep(0.4)
+            print(f"  {e.epic}: hydrate failed: {ex}", flush=True)
+        # Same 50/min cap as discovery
+        time.sleep(1.2)
 
     # Score
     for e in discovered:
