@@ -215,7 +215,7 @@ def main():
                     market_status=m.get("marketStatus", "UNKNOWN"),
                 ))
             # IG limit: 60 non-trading calls/min. Stay well under: 1.2s/call = 50/min.
-            time.sleep(1.2)
+            time.sleep(2.0)
         print(f"  {category:20s}: {len(terms):2d} terms searched, {sum(1 for d in discovered if d.category == category):3d} markets so far", flush=True)
 
     print(f"\nDiscovered {len(discovered)} unique spread bet EPICs")
@@ -237,7 +237,7 @@ def main():
         except Exception as ex:
             print(f"  {e.epic}: hydrate failed: {ex}", flush=True)
         # Same 50/min cap as discovery
-        time.sleep(1.2)
+        time.sleep(2.0)
 
     # Score
     for e in discovered:
