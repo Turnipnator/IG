@@ -493,6 +493,38 @@ MARKETS = [
         min_confidence=0.55,
         strategy="indices",
     ),
+
+    # --- ASIAN INDICES (added 2026-05-07) ---
+    # Both filling the previously-dead 22:00-09:00 UTC window where the bot's
+    # only active markets were forex with usually-low overnight ADX.
+    # Backtest 30d (5m, indices strategy):
+    #   Japan 225:      3 trades, 66.7% WR, PF 6.24, +£93.94
+    #   Hong Kong HS50: 6 trades, 50.0% WR, PF 2.54, +£30.37
+    # Sample sizes are small (cash sessions only generate ~5–10 candle days),
+    # so default_size kept conservative until live data accumulates.
+    MarketConfig(
+        epic="IX.D.NIKKEI.DAILY.IP",
+        name="Japan 225",
+        sector="Indices",
+        min_stop_distance=20.0,
+        default_size=0.5,
+        min_confidence=0.55,
+        strategy="indices",
+        trading_start=0,       # Tokyo cash session opens 00:00 UTC (09:00 JST)
+        trading_end=8,         # closes ~06:00 UTC; pad to 8 for late-print candles
+    ),
+    MarketConfig(
+        epic="IX.D.HANGSENG.DAILY.IP",
+        name="Hong Kong HS50",
+        sector="Indices",
+        min_stop_distance=20.0,
+        default_size=0.5,
+        min_confidence=0.55,
+        strategy="indices",
+        trading_start=1,       # HK cash opens 01:30 UTC (09:30 HKT)
+        trading_end=9,         # closes 08:00 UTC; pad to 9
+    ),
+
     # iShares US Home Construction ETF — disabled. EPIC exists on demo
     # (SI.D.ITBUS.DAILY.IP) but Lightstreamer rejects the L1 subscription
     # with "[-1] Incorrect instrument setup", killing the entire streaming
