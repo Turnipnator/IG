@@ -570,6 +570,29 @@ class IGStreamService:
             logger.warning(f"Could not load candles from disk: {e}")
             return {}
 
+    def most_recent_tick_age(self) -> Optional[timedelta]:
+        """Age of the most recent tick across all subscribed markets.
+
+        Returns None if no market has ever ticked (e.g. streaming hasn't
+        started yet). The streaming watchdog uses this to detect a "looks
+        connected but no data flowing" failure mode.
+        """
+        latest: Optional[datetime] = None
+        for market in self.markets.values():
+            if market.last_update and (latest is None or market.last_update > latest):
+                latest = market.last_update
+        if latest is None:
+            return None
+        return datetime.now() - latest
+
+    def tradeable_market_count(self) -> int:
+        """Markets currently reporting MARKET_STATE=TRADEABLE in their last tick.
+
+        Used to suppress the staleness watchdog when all markets are closed
+        (e.g. forex weekend) — no ticks are expected, so silence is fine.
+        """
+        return sum(1 for m in self.markets.values() if m.market_state == "TRADEABLE")
+
     def get_status(self) -> dict:
         """Get streaming service status."""
         return {

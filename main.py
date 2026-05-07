@@ -7,11 +7,13 @@ Uses Lightstreamer for real-time price streaming to avoid API rate limits.
 
 import asyncio
 import logging
+import os
 import signal
 import sys
 import threading
 import time
 from datetime import datetime, timedelta
+from typing import Optional
 
 from config import (
     load_ig_config,
@@ -85,6 +87,20 @@ known_positions: dict[str, Position] = {}  # deal_id -> Position
 # 30 min window, and triggered a second false detection.
 recently_closed_deals: dict[str, datetime] = {}  # deal_id -> close detection time
 RECENTLY_CLOSED_TTL_MINUTES = 240
+
+# Streaming watchdog state. The Lightstreamer client doesn't auto-reconnect
+# and doesn't surface silent "connected but no ticks" failures, so the
+# watchdog tripped on 2026-05-07 when streaming died at 04:20 and the bot
+# sat as a Telegram-polling zombie for 5h until manual intervention. The
+# watchdog runs from periodic_tasks() once a minute, with a recovery ladder:
+# trip detected → refresh_session() (in-process recovery) → if still bad
+# 60s later, os._exit(1) so Docker brings us back clean.
+_streaming_disconnect_since: Optional[datetime] = None
+_streaming_stale_since: Optional[datetime] = None
+_streaming_recovery_attempted_at: Optional[datetime] = None
+STREAM_DISCONNECT_GRACE = timedelta(minutes=2)
+STREAM_STALE_GRACE = timedelta(minutes=3)
+STREAM_POST_RECOVERY_GRACE = timedelta(seconds=60)
 
 # Higher timeframe trend per market (updated hourly from 1H candles)
 htf_trends: dict[str, str] = {}  # epic -> "BULLISH"/"BEARISH"/"NEUTRAL"
@@ -600,12 +616,15 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         if market_config.strategy == "indices":
             if market_regime == "NEUTRAL":
                 logger.info(f"Market regime NEUTRAL (S&P sideways) - no trades allowed")
+                _log_suppressed_signal(market_config, df, trade_signal, "Regime NEUTRAL (S&P sideways)")
                 return
             elif market_regime == "BULLISH" and trade_signal.signal == Signal.SELL:
                 logger.info(f"Market regime BULLISH - blocking SELL on {market.name}")
+                _log_suppressed_signal(market_config, df, trade_signal, "Regime BULLISH blocks SELL")
                 return
             elif market_regime == "BEARISH" and trade_signal.signal == Signal.BUY:
                 logger.info(f"Market regime BEARISH - blocking BUY on {market.name}")
+                _log_suppressed_signal(market_config, df, trade_signal, "Regime BEARISH blocks BUY")
                 return
 
         # Per-market regime filter: check if regime allows trading
@@ -614,6 +633,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             if not per_market_regime.is_tradeable:
                 logger.info(
                     f"{market.name}: Regime {per_market_regime.code} not tradeable - skipping"
+                )
+                _log_suppressed_signal(
+                    market_config, df, trade_signal,
+                    f"Regime {per_market_regime.code} not tradeable",
                 )
                 return
 
@@ -692,6 +715,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 f"Outside trading hours for {market_config.name}: "
                 f"{current_hour:02d}:00 UTC (active: {t_start:02d}:00-{t_end:02d}:00)"
             )
+            _log_suppressed_signal(
+                market_config, df, trade_signal,
+                f"Outside hours ({current_hour:02d} UTC, active {t_start:02d}-{t_end:02d})",
+            )
             return
 
         # Post-restart cooldown: let indicators stabilise with fresh streaming data
@@ -700,6 +727,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             logger.info(
                 f"Startup cooldown for {market_config.name}: "
                 f"{mins_since_start:.0f}/{STARTUP_COOLDOWN_MINUTES} mins elapsed"
+            )
+            _log_suppressed_signal(
+                market_config, df, trade_signal,
+                f"Startup cooldown ({mins_since_start:.0f}/{STARTUP_COOLDOWN_MINUTES}m)",
             )
             return
 
@@ -710,6 +741,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 logger.info(
                     f"Loss cooldown active for {market_config.name}: "
                     f"{remaining:.0f} mins remaining"
+                )
+                _log_suppressed_signal(
+                    market_config, df, trade_signal,
+                    f"Loss cooldown ({remaining:.0f}m left)",
                 )
                 return
             else:
@@ -733,6 +768,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                     f"Cooldown active for {market_config.name}: "
                     f"{elapsed:.0f}/{cooldown_mins:.0f} mins elapsed"
                 )
+                _log_suppressed_signal(
+                    market_config, df, trade_signal,
+                    f"Re-entry cooldown ({elapsed:.0f}/{cooldown_mins:.0f}m)",
+                )
                 return
 
         # Check economic calendar - avoid trading around high-impact events
@@ -740,6 +779,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             is_safe, cal_reason = calendar.is_safe_to_trade(epic)
             if not is_safe:
                 logger.info(f"Calendar block for {market_config.name}: {cal_reason}")
+                _log_suppressed_signal(
+                    market_config, df, trade_signal,
+                    f"Calendar: {cal_reason}",
+                )
                 return
 
         # Clamp stop/limit to IG's live minNormalStopOrLimitDistance.
@@ -752,6 +795,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 logger.info(
                     f"[{market.name}] SKIP open: market_status={live_market_info.market_status} "
                     f"(signal={trade_signal.signal.value}, confidence={trade_signal.confidence:.0%})"
+                )
+                _log_suppressed_signal(
+                    market_config, df, trade_signal,
+                    f"market_status={live_market_info.market_status}",
                 )
                 return
             if live_market_info.min_stop_distance > 0:
@@ -775,6 +822,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
 
         if not position_size.approved:
             logger.warning(f"Position size not approved: {position_size.reason}")
+            _log_suppressed_signal(
+                market_config, df, trade_signal,
+                f"Position sizing: {position_size.reason}",
+            )
             return
 
         # Send signal notification
@@ -796,6 +847,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 f"[{market.name}] BLOCKED: stop_distance={trade_signal.stop_distance:.2f} "
                 f"exceeds safety limit {max_safe_stop:.1f}. Likely corrupted data."
             )
+            _log_suppressed_signal(
+                market_config, df, trade_signal,
+                f"Stop {trade_signal.stop_distance:.1f} > safety {max_safe_stop:.1f} (likely bad data)",
+            )
             return
 
         # Spread check: reject if stop distance is too close to current spread
@@ -806,6 +861,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 logger.warning(
                     f"[{market.name}] BLOCKED: stop_distance={trade_signal.stop_distance:.2f} "
                     f"< 1.5x spread ({spread:.2f}). Spread too wide for safe entry."
+                )
+                _log_suppressed_signal(
+                    market_config, df, trade_signal,
+                    f"Stop {trade_signal.stop_distance:.1f} < 1.5x spread ({spread:.1f})",
                 )
                 return
 
@@ -1152,6 +1211,162 @@ def reconcile_provisional_trades() -> None:
         logger.info(f"Reconciliation: {matched} confirmed, {aged_out} aged out")
 
 
+def _log_suppressed_signal(
+    market_config, df, trade_signal, reason: str
+) -> None:
+    """Journal a non-HOLD signal blocked downstream of strategy.analyze().
+
+    Without this, post-mortems can't tell whether a setup was filtered out
+    by the strategy itself (HOLD with a stream-log explanation) or by an
+    env/risk gate further down (silent return). The 2026-05-07 EUR/USD
+    investigation hit this gap: BUY 76% at 03:05 with no record of why we
+    didn't act.
+    """
+    try:
+        if not journal or df is None or df.empty:
+            return
+        latest = df.iloc[-1]
+        journal.log_rejected_signal(
+            market_config.epic,
+            market_config.name,
+            trade_signal.signal.value,
+            trade_signal.confidence,
+            float(latest.get("adx", 0) or 0),
+            float(latest.get("rsi", 0) or 0),
+            reason,
+        )
+    except Exception as e:
+        logger.debug(f"Journal: failed to log suppressed signal: {e}")
+
+
+def _maybe_rotate_daily_stats() -> None:
+    """Re-save daily_stats.json when the calendar date changes.
+
+    The 21:00 daily summary already rotates state at the operational boundary.
+    This handles the calendar boundary so the on-disk file's date field
+    matches today even on a no-trade day, which makes diagnostics less
+    confusing (file last touched yesterday vs. today).
+    """
+    if not telegram:
+        return
+    today = datetime.now().strftime("%Y-%m-%d")
+    if getattr(_maybe_rotate_daily_stats, "_last_date", None) == today:
+        return
+    try:
+        telegram.save_daily_stats()
+        _maybe_rotate_daily_stats._last_date = today
+    except Exception as e:
+        logger.debug(f"Failed to rotate daily stats: {e}")
+
+
+def _streaming_watchdog() -> None:
+    """Detect dead/stalled streaming and recover.
+
+    Two failure modes get tripped:
+      1. status flips to DISCONNECTED for >= STREAM_DISCONNECT_GRACE
+      2. last tick across all markets is older than STREAM_STALE_GRACE while
+         at least one market is still TRADEABLE (suppresses weekend silence)
+
+    Recovery ladder:
+      - First trip: call refresh_session() to logout/login/resubscribe
+      - Still bad >= STREAM_POST_RECOVERY_GRACE after that attempt: os._exit(1)
+        so Docker restarts us clean
+    """
+    global _streaming_disconnect_since, _streaming_stale_since
+    global _streaming_recovery_attempted_at
+
+    if not stream_service:
+        return
+
+    now = datetime.now()
+
+    # Signal 1: disconnected for too long
+    if not stream_service.connected:
+        if _streaming_disconnect_since is None:
+            _streaming_disconnect_since = now
+        disconnect_age = now - _streaming_disconnect_since
+    else:
+        _streaming_disconnect_since = None
+        disconnect_age = timedelta(0)
+
+    # Signal 2: connected but no ticks while markets are open
+    tick_age = stream_service.most_recent_tick_age()
+    tradeable = stream_service.tradeable_market_count()
+    is_stale = (
+        stream_service.connected
+        and tick_age is not None
+        and tradeable > 0
+        and tick_age > STREAM_STALE_GRACE
+    )
+    if is_stale:
+        if _streaming_stale_since is None:
+            _streaming_stale_since = now
+        stale_duration = now - _streaming_stale_since
+    else:
+        _streaming_stale_since = None
+        stale_duration = timedelta(0)
+
+    tripped = (
+        disconnect_age > STREAM_DISCONNECT_GRACE
+        or stale_duration > timedelta(0)
+    )
+
+    if not tripped:
+        # Recovery succeeded — clear the attempt marker once we see a fresh tick
+        if _streaming_recovery_attempted_at is not None and tick_age is not None:
+            if tick_age < STREAM_STALE_GRACE:
+                logger.info("Streaming watchdog: recovery confirmed, ticks flowing again")
+                _streaming_recovery_attempted_at = None
+        return
+
+    reason = (
+        f"disconnected for {disconnect_age}"
+        if disconnect_age > STREAM_DISCONNECT_GRACE
+        else f"no ticks for {tick_age} ({tradeable} markets tradeable)"
+    )
+
+    if _streaming_recovery_attempted_at is None:
+        logger.warning(f"Streaming watchdog tripped: {reason} — attempting refresh_session()")
+        _streaming_recovery_attempted_at = now
+        try:
+            refresh_session()
+        except Exception as e:
+            logger.error(f"refresh_session() raised during watchdog recovery: {e}")
+        return
+
+    # Recovery already attempted — wait the grace window before exiting
+    since_attempt = now - _streaming_recovery_attempted_at
+    if since_attempt < STREAM_POST_RECOVERY_GRACE:
+        logger.warning(
+            f"Streaming watchdog: still bad ({reason}) "
+            f"{since_attempt.total_seconds():.0f}s after recovery — "
+            f"giving it until {STREAM_POST_RECOVERY_GRACE.total_seconds():.0f}s"
+        )
+        return
+
+    logger.critical(
+        f"Streaming watchdog: refresh_session() did not recover ({reason}). "
+        f"Exiting so Docker restarts the container."
+    )
+    if telegram and telegram_loop:
+        try:
+            asyncio.run_coroutine_threadsafe(
+                telegram.notify_error(
+                    f"Streaming watchdog: {reason}. In-process recovery failed. "
+                    f"Restarting via Docker."
+                ),
+                telegram_loop,
+            )
+        except Exception:
+            pass
+    if stream_service:
+        try:
+            stream_service.save_candles_to_disk()
+        except Exception:
+            pass
+    os._exit(1)
+
+
 def periodic_tasks() -> None:
     """Run periodic tasks (position checks, etc.)."""
     while running:
@@ -1161,6 +1376,12 @@ def periodic_tasks() -> None:
 
             # Reconcile any provisional pnl/exit_price against IG transactions
             reconcile_provisional_trades()
+
+            # Detect dead/stalled streaming and recover (or hard-exit)
+            _streaming_watchdog()
+
+            # Keep daily_stats.json's date field current across midnight
+            _maybe_rotate_daily_stats()
 
             # Log streaming status every 5 minutes
             if stream_service and stream_service.connected:
