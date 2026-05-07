@@ -285,6 +285,10 @@ class IGClient:
         spreadbet_id = self.get_spreadbet_account_id()
         if spreadbet_id and spreadbet_id != self.account_id:
             self.switch_account(spreadbet_id)
+        # Reset the failure counter so the watchdog has a clean slate after a
+        # successful reset. Without this, a subsequent transient failure would
+        # carry forward the pre-reset count and skip past the reset threshold.
+        self._consecutive_position_failures = 0
         return True
 
     def get_account_info(self) -> Optional[dict]:
@@ -592,7 +596,24 @@ class IGClient:
     def get_positions(self) -> list[Position]:
         """Get all open positions."""
         if not self.is_logged_in:
-            logger.error("Not logged in")
+            # Stuck-not-logged-in failure mode: a previous _reset_session()
+            # got past the session.close() but its login() retry timed out
+            # against IG, leaving _logged_in=False with no further recovery.
+            # Feed this path into the same watchdog ladder as request failures
+            # so a stuck auth state self-heals (reset attempt then hard-exit
+            # → Docker restart). Triggered 2026-05-07 10:23 incident.
+            self._consecutive_position_failures += 1
+            logger.error(
+                f"Not logged in ({self._consecutive_position_failures} consecutive)"
+            )
+            if self._consecutive_position_failures == POSITION_FAILURES_BEFORE_RESET:
+                self._reset_session()
+            elif self._consecutive_position_failures >= POSITION_FAILURES_BEFORE_EXIT:
+                logger.critical(
+                    f"Stuck not-logged-in for {self._consecutive_position_failures} "
+                    f"consecutive checks — exiting so Docker restarts the container."
+                )
+                os._exit(1)
             return []
 
         for attempt in range(2):
