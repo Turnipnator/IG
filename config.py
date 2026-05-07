@@ -492,6 +492,11 @@ MARKETS = [
         default_size=1.0,
         min_confidence=0.55,
         strategy="indices",
+        trading_start=4,
+        trading_end=22,        # Extended from 20 (2026-05-07): 5m backtest showed
+                               # +£35/mo theoretical edge but live had only 1 trade
+                               # in 3 weeks. Hypothesis: end-of-US-session moves
+                               # were being cut off. Observe over next week.
     ),
 
     # --- ASIAN INDICES (added 2026-05-07) ---
