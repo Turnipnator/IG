@@ -411,6 +411,7 @@ class TelegramBot:
             by_market = self.journal.get_stats_by_market(days)
             by_exit = self.journal.get_stats_by_exit_reason(days)
             rejected = self.journal.get_rejected_count_by_market(days=7)
+            rejected_breakdown = self.journal.get_rejected_reasons_by_market(days=7)
 
             total = overall.get("total", 0) or 0
             if total == 0:
@@ -457,12 +458,17 @@ class TelegramBot:
 
             if rejected:
                 msg += f"<b>Rejected Signals (7d):</b>\n"
-                for r in rejected[:5]:
-                    name = html.escape(str(r['market_name']))
+                for r in rejected[:8]:
+                    name_raw = str(r['market_name'])
+                    name = html.escape(name_raw)
                     msg += (
                         f"  {name}: {r['rejected']}x "
                         f"(avg ADX {r.get('avg_adx', 0):.1f})\n"
                     )
+                    reasons = rejected_breakdown.get(name_raw, [])
+                    if reasons:
+                        top = [f"{html.escape(cat)}: {n}" for cat, n in reasons[:3]]
+                        msg += f"    └ {', '.join(top)}\n"
 
             await update.message.reply_text(msg, parse_mode="HTML")
             self.commands_executed += 1

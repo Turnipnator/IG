@@ -307,6 +307,35 @@ class TradeJournal:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_rejected_reasons_by_market(self, days: int = 7) -> dict[str, list[tuple[str, int]]]:
+        """For each market, count rejections grouped by reason category.
+
+        Returns {market_name: [(category, count), ...]} ordered most→least.
+        Reason categories are bucketed by stripping parenthetical detail and
+        threshold values so the same conceptual rejection groups together
+        (e.g. "Outside hours (14 UTC, active 00-08)" → "Outside hours").
+        """
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        rows = self.db.execute(
+            """SELECT market_name, reject_reason
+               FROM rejected_signals
+               WHERE timestamp > ?""",
+            (cutoff,),
+        ).fetchall()
+
+        from collections import defaultdict
+        buckets: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for r in rows:
+            reason = r["reject_reason"] or "unknown"
+            # Strip parenthetical detail and comparator clauses so categories collapse
+            category = reason.split("(")[0].split("<")[0].split(">")[0].strip()
+            buckets[r["market_name"]][category] += 1
+
+        return {
+            market: sorted(cats.items(), key=lambda x: x[1], reverse=True)
+            for market, cats in buckets.items()
+        }
+
     def get_recent_trades(self, limit: int = 10) -> list[dict]:
         """Get most recent closed trades."""
         rows = self.db.execute(
