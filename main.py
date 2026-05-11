@@ -21,7 +21,7 @@ _DATA_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
 LAST_STARTUP_FILE = _DATA_DIR / "last_startup.txt"
 LAST_HTF_REFRESH_FILE = _DATA_DIR / "last_htf_refresh.txt"
 HTF_TRENDS_FILE = _DATA_DIR / "htf_trends.json"
-QUIET_RESTART_WINDOW = timedelta(minutes=30)
+QUIET_RESTART_WINDOW = timedelta(hours=2)
 HTF_REFRESH_COOLDOWN = timedelta(hours=6)  # On startup, skip HTF fetch if one ran within this window
 
 from config import (
