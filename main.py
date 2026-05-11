@@ -6,6 +6,7 @@ Uses Lightstreamer for real-time price streaming to avoid API rate limits.
 """
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -16,8 +17,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-LAST_STARTUP_FILE = (Path("/app/data") if os.path.exists("/app") else Path("data")) / "last_startup.txt"
+_DATA_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
+LAST_STARTUP_FILE = _DATA_DIR / "last_startup.txt"
+LAST_HTF_REFRESH_FILE = _DATA_DIR / "last_htf_refresh.txt"
+HTF_TRENDS_FILE = _DATA_DIR / "htf_trends.json"
 QUIET_RESTART_WINDOW = timedelta(minutes=30)
+HTF_REFRESH_COOLDOWN = timedelta(hours=6)  # On startup, skip HTF fetch if one ran within this window
 
 from config import (
     load_ig_config,
@@ -280,14 +285,43 @@ def initialize_streaming(preserved_candles: dict = None) -> bool:
         return False
 
 
-def update_htf_trends() -> None:
+def update_htf_trends(force: bool = False) -> None:
     """
     Fetch 1H candles and determine higher timeframe trend for each market.
-    Called at startup and every 4 hours thereafter.
+    Called at startup (force=False) and every 24h thereafter (force=True).
     Also updates the market regime based on S&P 500 trend.
+
+    The startup call is skipped if a successful refresh ran within
+    HTF_REFRESH_COOLDOWN. Without this guard, every container restart spends
+    ~570 API points re-fetching HTF — disastrous during a watchdog-induced
+    restart loop. The scheduled 24h refresh sets force=True to bypass the guard.
     """
     global market_regime, market_regime_confirmed
     from src.indicators import calculate_ema, add_all_indicators
+
+    if not force:
+        try:
+            if LAST_HTF_REFRESH_FILE.exists() and HTF_TRENDS_FILE.exists():
+                last_ts = datetime.fromisoformat(LAST_HTF_REFRESH_FILE.read_text().strip())
+                since = datetime.now() - last_ts
+                if since < HTF_REFRESH_COOLDOWN:
+                    cached_trends = json.loads(HTF_TRENDS_FILE.read_text())
+                    htf_trends.update(cached_trends)
+                    # Also restore S&P 500 regime if present so trade decisions
+                    # don't fall back to BULLISH default unnecessarily.
+                    sp500_cached = htf_trends.get(SP500_EPIC)
+                    if sp500_cached:
+                        market_regime = sp500_cached
+                        market_regime_confirmed = True
+                    logger.info(
+                        f"Skipping HTF refresh on startup — last successful refresh "
+                        f"was {since.total_seconds()/3600:.1f}h ago "
+                        f"(cooldown {HTF_REFRESH_COOLDOWN.total_seconds()/3600:.0f}h). "
+                        f"Restored {len(cached_trends)} HTF trends from cache; saves ~570 API points."
+                    )
+                    return
+        except Exception as e:
+            logger.warning(f"Could not restore HTF trends from cache, will refresh: {e}")
 
     logger.info("Updating higher timeframe trends...")
 
@@ -354,6 +388,19 @@ def update_htf_trends() -> None:
                 logger.info("Market regime: Defaulting to BULLISH (weekend - markets closed)")
             else:
                 logger.info("Market regime: Defaulting to BULLISH (S&P 500 data unavailable - possible API issue)")
+
+    # Record successful refresh so startup calls can skip if recent. We mark
+    # the refresh as "successful" if at least half the markets returned data —
+    # avoids treating a full-allowance-exhausted run as a real refresh that
+    # blocks the next attempt.
+    fresh_count = sum(1 for epic in (m.epic for m in MARKETS) if epic in htf_trends)
+    if fresh_count >= len(MARKETS) // 2:
+        try:
+            LAST_HTF_REFRESH_FILE.parent.mkdir(parents=True, exist_ok=True)
+            LAST_HTF_REFRESH_FILE.write_text(datetime.now().isoformat())
+            HTF_TRENDS_FILE.write_text(json.dumps(dict(htf_trends)))
+        except Exception as e:
+            logger.warning(f"Could not write HTF refresh cache: {e}")
 
 
 def _auto_roll_contract(market_config: 'MarketConfig') -> None:
@@ -1591,7 +1638,7 @@ async def main_async():
         import schedule
 
         schedule.every(6).hours.do(refresh_session)
-        schedule.every(24).hours.do(update_htf_trends)  # 1x/day — 19 markets × 30pts = 570pts/day, 3,990/week
+        schedule.every(24).hours.do(update_htf_trends, force=True)  # 1x/day — 19 markets × 30pts = 570pts/day, 3,990/week
         schedule.every(15).minutes.do(stream_service.save_candles_to_disk)  # Persist candles for restarts
         # Screener at each major session open (zero API cost)
         schedule.every().day.at("23:00").do(run_daily_screen)  # Asia/forex open
