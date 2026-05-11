@@ -26,10 +26,13 @@ DISK_CACHE_TTL_MINUTES = 360  # Use disk cache if < 6 hours old (saves API budge
 
 # Positions-API watchdog thresholds. get_positions() runs every 60s, so 3
 # consecutive failures = ~3 min of broken position state before we try to
-# rebuild the requests.Session pool, and 10 = ~10 min before we hard-exit
-# and let Docker restart us.
+# rebuild the requests.Session pool, and 25 = ~25 min before we hard-exit
+# and let Docker restart us. The high tolerance is because IG demo's
+# /session and /positions endpoints intermittently time out at 30s for
+# several minutes at a stretch; 10 was too aggressive and caused restart
+# loops every 20-30 min.
 POSITION_FAILURES_BEFORE_RESET = 3
-POSITION_FAILURES_BEFORE_EXIT = 10
+POSITION_FAILURES_BEFORE_EXIT = 25
 
 
 @dataclass

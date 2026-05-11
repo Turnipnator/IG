@@ -13,7 +13,11 @@ import sys
 import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
+
+LAST_STARTUP_FILE = (Path("/app/data") if os.path.exists("/app") else Path("data")) / "last_startup.txt"
+QUIET_RESTART_WINDOW = timedelta(minutes=30)
 
 from config import (
     load_ig_config,
@@ -1543,14 +1547,35 @@ async def main_async():
     regime_summary = "\n".join(regime_lines) if regime_lines else "  (pending)"
 
     mode = "STREAMING" if streaming_enabled else "POLLING"
-    await telegram.send_notification(
-        f"🚀 *IG Trading Bot Started*\n\n"
-        f"Mode: {mode}\n"
-        f"Balance: £{balance:,.2f}\n"
-        f"Markets: {', '.join(market_names)}\n\n"
-        f"*Regimes:*\n{regime_summary}\n\n"
-        f"{'Real-time price streaming active!' if streaming_enabled else 'Using scheduled polling (API limited)'}"
-    )
+
+    # Quiet-restart guard: skip the Telegram banner if we restarted within
+    # the last 30 minutes. IG demo flakiness causes the watchdog to fire
+    # restart cycles; we don't want to spam the user with startup notifications.
+    skip_banner = False
+    try:
+        if LAST_STARTUP_FILE.exists():
+            last_ts = datetime.fromisoformat(LAST_STARTUP_FILE.read_text().strip())
+            since = datetime.now() - last_ts
+            if since < QUIET_RESTART_WINDOW:
+                skip_banner = True
+                logger.info(f"Quiet restart: last startup {since.total_seconds()/60:.1f} min ago, skipping Telegram banner")
+    except Exception as e:
+        logger.warning(f"Could not read last-startup timestamp: {e}")
+    try:
+        LAST_STARTUP_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LAST_STARTUP_FILE.write_text(datetime.now().isoformat())
+    except Exception as e:
+        logger.warning(f"Could not write last-startup timestamp: {e}")
+
+    if not skip_banner:
+        await telegram.send_notification(
+            f"🚀 *IG Trading Bot Started*\n\n"
+            f"Mode: {mode}\n"
+            f"Balance: £{balance:,.2f}\n"
+            f"Markets: {', '.join(market_names)}\n\n"
+            f"*Regimes:*\n{regime_summary}\n\n"
+            f"{'Real-time price streaming active!' if streaming_enabled else 'Using scheduled polling (API limited)'}"
+        )
 
     if streaming_enabled:
         logger.info("Bot running with real-time streaming. Analyzing on candle completion.")
