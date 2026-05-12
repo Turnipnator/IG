@@ -225,9 +225,12 @@ class Backtester:
             return None
 
         try:
-            # Yahoo Finance limits: 5m data only available for last 60 days
+            # Yahoo Finance limits: 5m data only available for last ~60 days.
+            # Use 59 — requesting exactly 60 trips a "must be within the last
+            # 60 days" rejection due to second-precision drift between
+            # start = now - 60d and Yahoo's server-side cutoff.
             if interval in ["1m", "2m", "5m", "15m", "30m"]:
-                max_days = 60
+                max_days = 59
                 days = min(days, max_days)
 
             end = datetime.now()
