@@ -637,13 +637,17 @@ MARKETS = [
     #     strategy="default",
     # ),
     MarketConfig(
+        # 1h candles: 365d backtest PF 7.03, +22.43%, 17 trades, 65% WR vs
+        # 15m PF 0.20, -2.55%, 6 trades. Cocoa moves in slow ~hour-long
+        # waves — 5m/15m chops it into noise.
         epic="CO.D.CC.Month2.IP",
         name="NY Cocoa",
         sector="Commodities",
         min_stop_distance=10.0,
         default_size=0.04,
         expiry="MAY-26",
-        candle_interval=15,
+        candle_interval=60,        # 1h candles (was 15m)
+        htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
         strategy="default",
         trading_start=13,      # ICE US softs session 12:45-17:30 UTC
@@ -681,12 +685,16 @@ MARKETS = [
     # ),
 
     MarketConfig(
+        # 1h candles: 365d backtest PF 1.25, +0.46%, 48 trades, 48% WR vs
+        # 5m PF 0.73, -0.28%, 50 trades, 36% WR. Prior 15m→5m tuning was
+        # for an earlier regime; 1h has the most stable edge over 12 months.
         epic="CS.D.EURUSD.TODAY.IP",
         name="EUR/USD",
         sector="Forex",
         min_stop_distance=3.0,  # Raised from 2.0 — 5m ATR is only 2-3pts, IG rejects stops at minimum
         default_size=0.5,
-        candle_interval=5,     # Switched from 15m — no edge on 15m, +£31 on 5m (PF=3.38)
+        candle_interval=60,        # 1h candles (was 5m)
+        htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
         strategy="forex",      # Tight 1.0x stops
         trading_start=23,
@@ -730,13 +738,17 @@ MARKETS = [
         strategy="default",
     ),
     MarketConfig(
+        # 1h candles: 365d backtest PF 1.44, +0.55%, 39 trades, 51% WR vs
+        # 15m PF 0.60, -0.38%, 20 trades, 40% WR. Treasury futures move
+        # on macro headlines — slow timeframe matches the data-release cadence.
         epic="IR.D.10YEAR100.Month2.IP",
         name="US 10-Year T-Note",
         sector="Rates",
         min_stop_distance=10.0,    # Spread is 4.0 — ATTACHED_ORDER_LEVEL_ERROR at 4.0
         default_size=1.0,
         expiry="JUN-26",
-        candle_interval=15,
+        candle_interval=60,        # 1h candles (was 15m)
+        htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
         strategy="default",
     ),
