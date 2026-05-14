@@ -454,13 +454,18 @@ MARKETS = [
     # ),
 
     MarketConfig(
+        # 1h candles after 5m showed zero edge (60d PF 1.04). 365d 1h backtest:
+        # PF 1.31, +1.49%, 20 trades. Slow/fast EMAs were identical at 1h —
+        # interval is the dominant factor, not EMA spacing.
         epic="IX.D.DAX.DAILY.IP",
         name="Germany 40",
         sector="Indices",
         min_stop_distance=2.0,
         default_size=0.5,
+        candle_interval=60,        # 1h candles (was 5m default)
+        htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
-        strategy="indices_adx35",  # 60d backtest: ADX 30 was -0.06%, ADX 35 is +0.30% PF 1.87
+        strategy="indices_adx35",
         trading_start=8,       # Xetra cash open 08:00 UTC
         trading_end=17,        # Include 16:30 close auction (peak liquidity)
     ),

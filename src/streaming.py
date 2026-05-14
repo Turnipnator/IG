@@ -546,6 +546,22 @@ class IGStreamService:
 
             result = {}
             for epic, item in cache_data.items():
+                # Skip cache if interval changed: loading 5m candles into a
+                # 1h-configured market would compute indicators on misaligned
+                # bars. Falls through to API fetch.
+                cached_interval = item.get("candle_interval")
+                current_market = self.markets.get(epic)
+                if (
+                    cached_interval is not None
+                    and current_market is not None
+                    and cached_interval != current_market.candle_interval
+                ):
+                    logger.info(
+                        f"  {item.get('name', epic)}: skipping disk cache "
+                        f"(interval changed {cached_interval}m → {current_market.candle_interval}m)"
+                    )
+                    continue
+
                 saved_at = datetime.fromisoformat(item["saved_at"])
                 age = datetime.now() - saved_at
 
