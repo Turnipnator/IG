@@ -605,11 +605,16 @@ MARKETS = [
     #     trading_end=21,
     # ),
     MarketConfig(
+        # 1h candles after 5m showed modest edge only (60d PF 1.28, +1.08%).
+        # 365d 1h backtest: PF 2.16, +7.10%, 41 trades, WR 51%. Same pattern
+        # as Germany 40 — interval is the dominant factor on 1h.
         epic="CS.D.COPPER.TODAY.IP",
         name="Copper",
         sector="Commodities",
         min_stop_distance=12.0,    # Spread is 22.0 — need comfortable margin
         default_size=1.0,          # IG minimum is 1.0 (0.1/0.2 rejected with MINIMUM_ORDER_SIZE_ERROR)
+        candle_interval=60,        # 1h candles (was 5m default)
+        htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
         strategy="default",
         trading_start=13,      # CME Copper: US session only. Asia hours are illiquid
