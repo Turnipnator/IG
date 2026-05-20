@@ -398,10 +398,12 @@ class IGStreamService:
             for epic, name, interval in zip(epics, names, candle_intervals):
                 self.markets[epic] = MarketStream(epic=epic, name=name, candle_interval=interval)
 
-            # Create subscription using L1 (Level 1) prefix for price data
-            # Note: "Invalid account type" errors may occur if IG hasn't fully enabled
-            # streaming for the account. Contact IG helpdesk if this persists.
-            items = [f"L1:{epic}" for epic in epics]
+            # Create subscription using MARKET prefix for price data.
+            # NB: the older "L1:" group was deauthorised on the account ~2026-05-15
+            # (subscriptions return "[21] Invalid group"). The MARKET group serves the
+            # same BID/OFFER/HIGH/LOW/CHANGE/MARKET_STATE fields and works fine — verified
+            # with scripts/stream_alt_probe.py. The parser below strips either prefix.
+            items = [f"MARKET:{epic}" for epic in epics]
             logger.info(f"Subscribing to items: {items[:2]}...")
 
             self.subscription = Subscription(
