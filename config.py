@@ -567,23 +567,27 @@ MARKETS = [
         trading_start=23,      # Nearly 24h market — avoid IG reset window (21-23 UTC)
         trading_end=21,
     ),
-    MarketConfig(
-        # Natural Gas: 1h candles with daily HTF. Backtest 2026-05-01:
-        # +8.80% PF 1.30 WR 54.8% over 730d / 73 trades.
-        # CC.D.NG.UMP.IP rejected — streamingPricesAvailable=False on SPREADBET.
-        epic="EN.D.NG.Month1.IP",
-        name="Natural Gas",
-        sector="Commodities",
-        min_stop_distance=60.0,    # IG min normal stop = 60pts
-        default_size=0.5,          # 0.5/pt × 60pt stop = 30 USD risk per trade (~£24)
-        expiry="JUL-26",           # Front month — last dealing 2026-06-25, roll required
-        candle_interval=60,        # 1h candles — sweet spot for NG (5m too noisy)
-        htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
-        min_confidence=0.55,
-        strategy="natgas",
-        trading_start=23,          # Same as Crude — nearly 24h, avoid IG reset window
-        trading_end=21,
-    ),
+    # Disabled 2026-05-21 — edge has decayed. Added 2026-05-01, never traded live
+    # (rarely fires + screened out). The 720d backtest's +5.06% was all earned
+    # mid-2024→mid-2025; the trailing 365d is -5.29% (every ADX negative) and the
+    # last ~6 months ≈ -7.4%. No config rescues it: tighter stops -3.84%,
+    # ADX20/30 -5.29%/-10.51%, long-only -4.86%, short-only -0.43% (best, still
+    # not profitable). Looks like a NatGas regime shift trend-following can't fit.
+    # natgas profile kept defined for a future revival. See scripts/backtest_natgas_review.py.
+    # MarketConfig(
+    #     epic="EN.D.NG.Month1.IP",
+    #     name="Natural Gas",
+    #     sector="Commodities",
+    #     min_stop_distance=60.0,    # IG min normal stop = 60pts
+    #     default_size=0.5,          # 0.5/pt × 60pt stop = 30 USD risk per trade (~£24)
+    #     expiry="JUL-26",           # Front month — last dealing 2026-06-25, roll required
+    #     candle_interval=60,        # 1h candles — sweet spot for NG (5m too noisy)
+    #     htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
+    #     min_confidence=0.55,
+    #     strategy="natgas",
+    #     trading_start=23,          # Same as Crude — nearly 24h, avoid IG reset window
+    #     trading_end=21,
+    # ),
     MarketConfig(
         epic="CS.D.USCGC.TODAY.IP",
         name="Gold",
