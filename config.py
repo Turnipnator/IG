@@ -457,6 +457,10 @@ MARKETS = [
         # 1h candles after 5m showed zero edge (60d PF 1.04). 365d 1h backtest:
         # PF 1.31, +1.49%, 20 trades. Slow/fast EMAs were identical at 1h —
         # interval is the dominant factor, not EMA spacing.
+        # 2026-05-21: moved indices_adx35 -> indices (ADX30). On 1h the lower
+        # ADX threshold wins (^GDAXI 365d backtest: ADX30 PF 3.47/75%WR/+4.42%
+        # vs ADX35 PF 2.52/62%/+2.72%). ADX35 was a 5m-era fix; 1h already
+        # filters the chop it was compensating for.
         epic="IX.D.DAX.DAILY.IP",
         name="Germany 40",
         sector="Indices",
@@ -465,7 +469,7 @@ MARKETS = [
         candle_interval=60,        # 1h candles (was 5m default)
         htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
-        strategy="indices_adx35",
+        strategy="indices",
         trading_start=8,       # Xetra cash open 08:00 UTC
         trading_end=17,        # Include 16:30 close auction (peak liquidity)
     ),

@@ -122,10 +122,17 @@ class TradingStrategy:
         adx = latest["adx"]
         close = latest["close"]
 
-        # Sanity check: detect corrupted/stale streaming data
-        # ATR > 50x min_stop is absurd (the real corruption signal — causes billion-point stops)
-        # ADX > 80 alone is legitimate in strong trends, so only flag it alongside bad ATR
-        max_sane_atr = market.min_stop_distance * 50
+        # Sanity check: detect corrupted/stale streaming data.
+        # Real corruption shows up as an ATR many multiples of price (the
+        # billion-point stops). Legitimate intraday ATR tops out near ~1.4% of
+        # price, so a 5%-of-price ceiling never trips on real volatility while
+        # still catching corruption. The min_stop*50 term keeps a floor for
+        # low-priced instruments; the price term is what saves high-priced
+        # indices with tiny min_stops — e.g. Germany 40 (min_stop 2 -> 100)
+        # whose true 1h ATR is ~90-130 was being false-flagged as corrupt.
+        # ADX > 80 alone is legitimate in strong trends, so only flag it
+        # alongside bad ATR.
+        max_sane_atr = max(market.min_stop_distance * 50, close * 0.05)
         if atr > max_sane_atr or atr <= 0:
             logger.warning(
                 f"[{market.name}] Corrupted indicator data detected — "
