@@ -166,21 +166,6 @@ class TradingStrategy:
                 reason=f"ADX too low ({adx:.1f} < {adx_threshold}), market ranging",
             )
 
-        # ADX direction filter: skip if trend is weakening (ADX declining)
-        prev_adx = df.iloc[-2]["adx"] if len(df) >= 2 else adx
-        adx_declining = adx < prev_adx - 0.5  # Allow small fluctuations (0.5 tolerance)
-        if adx_declining:
-            return TradeSignal(
-                signal=Signal.HOLD,
-                epic=market.epic,
-                market_name=market.name,
-                confidence=0.0,
-                entry_price=current_price,
-                stop_distance=market.min_stop_distance,
-                limit_distance=market.min_stop_distance,
-                reason=f"ADX declining ({prev_adx:.1f} → {adx:.1f}), trend weakening",
-            )
-
         # Calculate dynamic stop/limit based on ATR and strategy R:R
         stop_distance = max(atr * strategy.stop_atr_mult, market.min_stop_distance)
         # Cap stop at 20x min_stop_distance to prevent runaway values from bad data
