@@ -201,7 +201,9 @@ STRATEGY_PROFILES = {
         use_macd_exit=False,
         require_htf=True,
         pullback_pct=0.3,
-        breakeven_trigger_pct=0.7,  # Let trades breathe before locking BE
+        breakeven_trigger_pct=0.5,  # Lowered 0.7→0.5 (2026-05-31): Yahoo backtest
+                                    # shows +0.33%/55d (5m) and +17.19%/365d PF 4.99
+                                    # (1h) vs live 0.7 at -1.01% / +15.96% PF 3.78
         atr_trail_mult=1.5,
     ),
 
