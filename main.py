@@ -630,10 +630,6 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         if not market_config:
             return
 
-        # Skip if screener has deactivated this market
-        if screener and not screener.is_active(epic):
-            return
-
         # Skip if market not tradeable
         if market.market_state != "TRADEABLE":
             logger.debug(f"{market.name} not tradeable: {market.market_state}")
@@ -654,12 +650,36 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         # Analyze with multi-timeframe context
         trade_signal = strategy.analyze(df, market_config, current_price, htf_trend)
 
+        # Screener gate (instrumented). The strategy is now evaluated for ALL
+        # markets — including screener-inactive ones — so we can measure what
+        # the top-N cap is actually vetoing. Trading behaviour is unchanged:
+        # inactive markets still never open a position (the return below).
+        # Common case (inactive + HOLD) stays on the old quiet fast path.
+        screener_inactive = bool(screener and not screener.is_active(epic))
+        if screener_inactive and trade_signal.signal == Signal.HOLD:
+            return
+
         logger.info(
             f"[STREAM] {market.name}: {trade_signal.signal.value} "
             f"(confidence: {trade_signal.confidence:.0%}) - {trade_signal.reason}"
         )
 
         if trade_signal.signal == Signal.HOLD:
+            return
+
+        if screener_inactive:
+            # Actionable signal on a market the screener benched. Log + journal
+            # it (log-only, no trade) so the veto cost is measurable. sc.reason
+            # distinguishes "Below top 8" (cap veto) from "Score too low (N)".
+            sc = screener.get_score(epic)
+            detail = f"score {sc.score}, {sc.reason}" if sc else "no score"
+            logger.info(
+                f"📋 Screener veto: {market.name} {trade_signal.signal.value} "
+                f"@ {trade_signal.confidence:.0%} would have traded but inactive ({detail})"
+            )
+            _log_suppressed_signal(
+                market_config, df, trade_signal, f"Screener-inactive ({detail})"
+            )
             return
 
         # Market regime filter: only applied to indices (S&P, NASDAQ)

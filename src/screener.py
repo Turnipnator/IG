@@ -377,6 +377,18 @@ class MarketScreener:
             return True
         return epic in self.active_epics
 
+    def get_score(self, epic: str) -> Optional["MarketScore"]:
+        """Return the most recent MarketScore for an epic, or None.
+
+        Used to annotate instrumentation logs with the market's rank/score
+        (e.g. its `reason` is "Below top 8" or "Score too low (37)") when a
+        screener-inactive market would have generated a tradeable signal.
+        """
+        for s in self.scores:
+            if s.epic == epic:
+                return s
+        return None
+
     def build_market_config(
         self,
         epic: str,
