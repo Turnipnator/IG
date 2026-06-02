@@ -705,18 +705,23 @@ MARKETS = [
         default_size=0.5,
         candle_interval=60,        # 1h candles (was 5m)
         htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
-        min_confidence=0.55,
+        min_confidence=0.65,   # Raised from 0.55 — 365d backtest: PF 1.37→1.99, +0.64%→+1.13%, WR 49%→54% (37 vs 47 trades)
         strategy="forex",      # Tight 1.0x stops
         trading_start=23,
         trading_end=21,
     ),
     MarketConfig(
+        # 1h candles: 365d backtest +1.52%, PF 1.94, 56% WR vs 5m +0.50% PF 2.01.
+        # 5m looked OK on paper but bled live (-£31.72): every loss a 3-28min
+        # stop-out on a ~4.5pip stop, where IG spread is 30-45% of the stop.
+        # 1h's wider ATR stops dilute spread cost — same fix EUR/USD already got.
         epic="CS.D.GBPUSD.TODAY.IP",
         name="GBP/USD",
         sector="Forex",
         min_stop_distance=4.0,  # Raised from 3.0 — IG rejects at 3.0 when pre-London spread widens
         default_size=0.5,
-        candle_interval=5,     # Switched from 15m — no edge on 15m, +£19 on 5m (PF=1.81)
+        candle_interval=60,    # Switched from 5m — 5m bled live on spread vs tiny stops; 1h has the durable edge
+        htf_resolution="DAY",  # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
         strategy="forex",      # Tight 1.0x stops
         trading_start=7,       # London open — avoid illiquid pre-London spread widening
