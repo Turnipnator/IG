@@ -667,6 +667,23 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         if trade_signal.signal == Signal.HOLD:
             return
 
+        # Leg-size (exhaustion) filter — OBSERVATIONAL (log + journal only) for
+        # markets that opt in via MarketConfig.leg_filter_lookback (currently
+        # NASDAQ 100). Records entries an enforced filter WOULD block so we can
+        # measure their realised P&L before turning enforcement on. The trade
+        # still proceeds; query journal rejected_signals LIKE 'Leg-filter%'.
+        if trade_signal.leg_would_block:
+            logger.info(
+                f"🔬 Leg filter [{market.name}]: {trade_signal.signal.value} @ "
+                f"{trade_signal.confidence:.0%} would be BLOCKED "
+                f"(legATR={trade_signal.leg_atr:.1f} > {market_config.leg_filter_threshold}, "
+                f"lookback={market_config.leg_filter_lookback}) — observational, trade proceeds"
+            )
+            _log_suppressed_signal(
+                market_config, df, trade_signal,
+                f"Leg-filter-would-block (legATR={trade_signal.leg_atr:.1f})",
+            )
+
         if screener_inactive:
             # Actionable signal on a market the screener benched. Log + journal
             # it (log-only, no trade) so the veto cost is measurable. sc.reason

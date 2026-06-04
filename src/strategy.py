@@ -38,6 +38,12 @@ class TradeSignal:
     stop_distance: float
     limit_distance: float
     reason: str
+    # Leg-size (exhaustion) filter annotations. leg_atr is the in-direction
+    # leg size / ATR over the configured lookback; leg_would_block is True when
+    # that exceeds the market's threshold. Populated only for markets that opt
+    # in (MarketConfig.leg_filter_lookback > 0); observational unless enforced.
+    leg_atr: float = 0.0
+    leg_would_block: bool = False
 
 
 class TradingStrategy:
@@ -264,7 +270,7 @@ class TradingStrategy:
             confidence = self._calculate_confidence(
                 df, "bullish", rsi, rsi_overbought, adx, htf_trend
             )
-            return TradeSignal(
+            signal = TradeSignal(
                 signal=Signal.BUY,
                 epic=market.epic,
                 market_name=market.name,
@@ -274,6 +280,7 @@ class TradingStrategy:
                 limit_distance=round(limit_distance, 2),
                 reason=f"Bullish EMA alignment, RSI={rsi:.1f}, ADX={adx:.1f}, HTF={htf_trend}",
             )
+            return self._apply_leg_filter(signal, df, market, atr)
 
         elif bearish_ema and price_below_ema and rsi_sell_valid:
             # Pullback filter: price must be near fast EMA (not overextended)
@@ -331,7 +338,7 @@ class TradingStrategy:
             confidence = self._calculate_confidence(
                 df, "bearish", rsi, rsi_oversold, adx, htf_trend
             )
-            return TradeSignal(
+            signal = TradeSignal(
                 signal=Signal.SELL,
                 epic=market.epic,
                 market_name=market.name,
@@ -341,6 +348,7 @@ class TradingStrategy:
                 limit_distance=round(limit_distance, 2),
                 reason=f"Bearish EMA alignment, RSI={rsi:.1f}, ADX={adx:.1f}, HTF={htf_trend}",
             )
+            return self._apply_leg_filter(signal, df, market, atr)
 
         else:
             return TradeSignal(
@@ -356,6 +364,71 @@ class TradingStrategy:
                     rsi_overbought, rsi_oversold, adx, adx_threshold
                 ),
             )
+
+    def _apply_leg_filter(
+        self,
+        signal: TradeSignal,
+        df: pd.DataFrame,
+        market: MarketConfig,
+        atr: float,
+    ) -> TradeSignal:
+        """Annotate (and optionally block) an entry that chases an exhausted move.
+
+        Mirrors src/backtest.py and the Oanda_Gold _calculateLegInfo: over the
+        last `leg_filter_lookback` candles, leg = max(high) - min(low); the leg's
+        direction is sign(last_close - first_open); legATR = leg / ATR. If the
+        leg ran in the SAME direction as the entry and legATR exceeds the
+        threshold, the move is treated as exhausted.
+
+        Sets signal.leg_atr / signal.leg_would_block for observation. Only when
+        market.leg_filter_enforce is True is the signal actually converted to
+        HOLD — by default this is log-only (main.py records would-blocks).
+        """
+        lookback = getattr(market, "leg_filter_lookback", 0)
+        if not lookback or lookback <= 0:
+            return signal
+        try:
+            if df is None or len(df) < lookback or atr is None or atr <= 0:
+                return signal
+            if not {"open", "high", "low", "close"}.issubset(df.columns):
+                return signal
+            window = df.iloc[-lookback:]
+            leg_size = float(window["high"].max() - window["low"].min())
+            first_open = float(window.iloc[0]["open"])
+            last_close = float(window.iloc[-1]["close"])
+            leg_is_short = last_close < first_open
+            leg_atr = leg_size / atr if atr else 0.0
+
+            direction = signal.signal.value  # "BUY" or "SELL"
+            leg_in_direction = (
+                (leg_is_short and direction == "SELL")
+                or (not leg_is_short and direction == "BUY")
+            )
+            threshold = getattr(market, "leg_filter_threshold", 5.0)
+            would_block = leg_in_direction and leg_atr > threshold
+
+            signal.leg_atr = round(leg_atr, 2)
+            signal.leg_would_block = bool(would_block)
+
+            if would_block and getattr(market, "leg_filter_enforce", False):
+                return TradeSignal(
+                    signal=Signal.HOLD,
+                    epic=market.epic,
+                    market_name=market.name,
+                    confidence=0.0,
+                    entry_price=signal.entry_price,
+                    stop_distance=signal.stop_distance,
+                    limit_distance=signal.limit_distance,
+                    reason=(
+                        f"Leg filter: chasing exhausted move "
+                        f"(legATR {leg_atr:.1f} > {threshold}, lookback {lookback})"
+                    ),
+                    leg_atr=round(leg_atr, 2),
+                    leg_would_block=True,
+                )
+        except Exception as e:  # never let instrumentation break signal flow
+            logger.debug(f"[{market.name}] leg filter check failed: {e}")
+        return signal
 
     def _calculate_confidence(
         self,

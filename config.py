@@ -81,6 +81,17 @@ class MarketConfig:
     strategy: str = "default"  # Strategy profile to use: "default" or "indices"
     trading_start: int = 4   # UTC hour to start trading (inclusive)
     trading_end: int = 20    # UTC hour to stop trading (exclusive)
+    # Leg-size (exhaustion) filter — blocks entries chasing a move that already
+    # ran > leg_filter_threshold × ATR in the trade direction over the last
+    # leg_filter_lookback candles. Ported from the Oanda_Gold EMA-Trend bot.
+    # leg_filter_lookback=0 disables it. leg_filter_enforce=False makes it
+    # OBSERVATIONAL (log + journal only, trade still proceeds) so we can measure
+    # the realised P&L of would-be-blocked entries before enforcing.
+    # NB threshold is in legATR units calibrated to the candle interval — on 5m
+    # a 12-candle (1h) leg sits ~3.5-6.5× ATR, so ~5.0 blocks the most extended.
+    leg_filter_lookback: int = 0
+    leg_filter_threshold: float = 5.0
+    leg_filter_enforce: bool = False
 
 
 # Load configurations from environment
@@ -439,6 +450,14 @@ MARKETS = [
         default_size=0.2,
         min_confidence=0.55,
         strategy="indices_wide",  # NASDAQ: wider 2.5x stops, PF=2.33 (60d backtest)
+        # Leg-size filter OBSERVATIONAL (log-only, trade proceeds). 59d Yahoo
+        # sweep (scripts/backtest_leg_filter.py, 2026-06-04): lb12/blkTop35%
+        # (legATR>5.0) lifted PF 1.79→2.28, P&L +0.71%→+0.88%. NASDAQ was the
+        # one market with a consistent edge across configs. Gathering live data
+        # before enforcing — set leg_filter_enforce=True once confirmed.
+        leg_filter_lookback=12,
+        leg_filter_threshold=5.0,
+        leg_filter_enforce=False,
     ),
     # Disabled 2026-05-01 — strategy doesn't fit. Tested 5m/15m/30m/1h timeframes,
     # ADX 30/35/40, slower EMAs, long-only, wide stops — no variant produced a
