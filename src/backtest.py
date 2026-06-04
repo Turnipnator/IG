@@ -122,6 +122,16 @@ DEFAULT_PARAMS = {
     "ranging_exit_drop": 10,
     "ranging_exit_consecutive": 0,
     "ranging_exit_require_declining": False,
+    # Leg-size (exhaustion) filter — ported from the Oanda_Gold EMA-Trend bot.
+    # Over the prior `leg_filter_lookback` candles, measure the leg
+    # (highest_high - lowest_low). If that leg ran in the SAME direction as the
+    # proposed entry and travelled more than `leg_filter_threshold` × ATR, the
+    # move is treated as exhausted and the entry is skipped (chasing).
+    # 0 = disabled (default → zero change to existing backtests).
+    # NB: Oanda tuned 6×H1 / 2.0×. On 5m candles the equivalent "leg" needs a
+    # much larger lookback (12=1h, 24=2h, 36=3h) — recalibrate per timeframe.
+    "leg_filter_lookback": 0,
+    "leg_filter_threshold": 2.0,
 }
 
 
@@ -314,6 +324,18 @@ class Backtester:
         if lookback > 0:
             df["recent_rsi_min"] = df["rsi"].shift(1).rolling(lookback, min_periods=1).min()
             df["recent_rsi_max"] = df["rsi"].shift(1).rolling(lookback, min_periods=1).max()
+
+        # Leg-size (exhaustion) filter columns. Mirrors Oanda's _calculateLegInfo:
+        # leg = max(high) - min(low) over the lookback window ending at this candle;
+        # leg direction = sign(close - open_at_window_start); leg_atr = leg / ATR.
+        leg_lb = self.params.get("leg_filter_lookback", 0)
+        if leg_lb and leg_lb > 0:
+            leg_high = df["high"].rolling(leg_lb).max()
+            leg_low = df["low"].rolling(leg_lb).min()
+            leg_size = leg_high - leg_low
+            first_open = df["open"].shift(leg_lb - 1)
+            df["leg_is_short"] = df["close"] < first_open
+            df["leg_atr"] = leg_size / df["atr"]
 
         return df
 
@@ -691,6 +713,22 @@ class Backtester:
                     rmax = row.get("recent_rsi_max")
                     if rmax is not None and not pd.isna(rmax) and rmax > self.params["rsi_extreme_high"]:
                         effective_min_confidence += conf_boost
+
+            # Leg-size (exhaustion) filter — skip entries that chase a move that
+            # has already run > threshold × ATR in the trade direction.
+            leg_lb = self.params.get("leg_filter_lookback", 0)
+            if direction and leg_lb and leg_lb > 0:
+                leg_atr_val = row.get("leg_atr")
+                leg_is_short = row.get("leg_is_short")
+                if leg_atr_val is not None and not pd.isna(leg_atr_val):
+                    leg_in_direction = (
+                        (bool(leg_is_short) and direction == "SELL")
+                        or (not bool(leg_is_short) and direction == "BUY")
+                    )
+                    if leg_in_direction and leg_atr_val > self.params.get(
+                        "leg_filter_threshold", 2.0
+                    ):
+                        continue
 
             if direction and confidence >= effective_min_confidence:
                 # Calculate stop and limit
