@@ -42,6 +42,12 @@ class TradingConfig:
     check_interval: int    # Minutes between market checks
     price_data_points: int # Number of historical data points to fetch
     cache_ttl_minutes: int # How long to cache price data
+    # Max multiple of the per-trade risk budget a position may carry. When an
+    # instrument's minimum dealing size (default_size) forces the £ risk above
+    # this multiple of the budget, the trade is skipped rather than silently
+    # over-risked. 1.3 = allow up to 30% over budget; large-stop commodities
+    # (Copper/Gold min size 1.0 × big ATR stop) are the typical trippers.
+    max_risk_multiple: float = 1.3
 
 
 @dataclass
@@ -120,6 +126,7 @@ def load_trading_config() -> TradingConfig:
         check_interval=int(os.getenv("CHECK_INTERVAL", "60")),  # 60 mins to conserve API allowance
         price_data_points=int(os.getenv("PRICE_DATA_POINTS", "50")),  # 50 points (saves 50% vs 100)
         cache_ttl_minutes=int(os.getenv("CACHE_TTL_MINUTES", "55")),  # Cache for 55 mins
+        max_risk_multiple=float(os.getenv("MAX_RISK_MULTIPLE", "1.3")),
     )
 
 

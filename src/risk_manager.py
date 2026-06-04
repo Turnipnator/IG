@@ -112,13 +112,37 @@ class RiskManager:
         # Most markets allow 0.1 increments, some allow smaller
         size = round(raw_size, 1)
 
-        # Ensure minimum size
+        # Ensure minimum size. The instrument's minimum dealing size can force
+        # the size ABOVE the risk-based figure — for large-stop markets (e.g.
+        # Copper/Gold, min size 1.0 × a big ATR stop) this silently risks well
+        # over the per-trade budget and is where the big single-trade losses
+        # concentrate (2026-06-04 journal forensics).
         min_size = market.default_size
-        if size < min_size:
+        floored_up = size < min_size
+        if floored_up:
             size = min_size
 
         # Calculate actual max loss
         max_loss = size * stop_distance
+
+        # Risk-cap: if the min-size floor pushes the £ risk above
+        # max_risk_multiple × the per-trade budget, skip rather than over-risk.
+        # Only the floor can trip this (risk-based sizing is budget by design),
+        # so a normal-sized trade is never blocked.
+        max_allowed_loss = risk_amount * self.config.max_risk_multiple
+        if floored_up and max_loss > max_allowed_loss:
+            return PositionSize(
+                size=0.0,
+                risk_amount=risk_amount,
+                stop_distance=stop_distance,
+                max_loss=max_loss,
+                approved=False,
+                reason=(
+                    f"Min size {min_size} × stop {stop_distance:.1f} risks "
+                    f"£{max_loss:.2f} > {self.config.max_risk_multiple:.2f}× budget "
+                    f"(£{max_allowed_loss:.2f}) — skipping to avoid over-risk"
+                ),
+            )
 
         return PositionSize(
             size=size,
