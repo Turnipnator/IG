@@ -354,8 +354,8 @@ STRATEGY_PROFILES = {
         rsi_buy_max=55,
         rsi_sell_min=45,
         adx_threshold=30,
-        stop_atr_mult=1.0,    # Tightened from 2.5 — cut losers fast. PF 0.74→1.69 on 30d backtest
-        reward_risk=1.5,      # Lowered from 2.0 — more trades reach target. +£18 vs -£6
+        stop_atr_mult=2.0,    # Widened 1.0→2.0 (2026-06-04 stop-width sweep): tight 1.0x whipsawed sound entries out before MACD could manage them. NASDAQ WR 64→77%, PF 1.58→2.11 (59d, regime stop-override neutralized). Paper-trial, review after a few trades.
+        reward_risk=2.0,      # Raised 1.5→2.0 to match the wider stop (2026-06-04 sweep)
         min_confidence=0.55,
         use_macd_exit=True,
         require_htf=True,
@@ -364,7 +364,8 @@ STRATEGY_PROFILES = {
         atr_trail_mult=1.5,
     ),
 
-    # FTSE needs tight stops — PF=2.09 at 1.0x vs 1.24 at 1.5x
+    # FTSE: stop 2.0x / R:R 2.0 since 2026-06-04 (profile name now a misnomer —
+    # no longer "tight"). 1.0x was full-stopping sound entries on 5m noise.
     "indices_tight": StrategyConfig(
         ema_fast=5,
         ema_medium=12,
@@ -375,7 +376,7 @@ STRATEGY_PROFILES = {
         rsi_buy_max=55,
         rsi_sell_min=45,
         adx_threshold=30,
-        stop_atr_mult=1.0,    # Tight stops — FTSE trends are cleaner
+        stop_atr_mult=2.0,    # Widened 1.0→2.0 (2026-06-04 stop-width sweep): 1.0x full-stopped good entries on 5m noise before MACD could manage them. FTSE WR 52→61%, PF 1.70→2.77, P&L ~2x (59d, 28-31t, monotonic). Supersedes the old 30d "tight" result — that sweep's stop param was masked by the regime override.
         reward_risk=2.0,
         min_confidence=0.55,
         use_macd_exit=True,
@@ -456,7 +457,7 @@ MARKETS = [
         min_stop_distance=4.0,
         default_size=0.2,
         min_confidence=0.55,
-        strategy="indices_wide",  # NASDAQ: wider 2.5x stops, PF=2.33 (60d backtest)
+        strategy="indices_wide",  # NASDAQ: stop 2.0x / R:R 2.0 (2026-06-04 sweep, paper-trial)
         # Leg-size filter OBSERVATIONAL (log-only, trade proceeds). 59d Yahoo
         # sweep (scripts/backtest_leg_filter.py, 2026-06-04): lb12/blkTop35%
         # (legATR>5.0) lifted PF 1.79→2.28, P&L +0.71%→+0.88%. NASDAQ was the
@@ -517,7 +518,7 @@ MARKETS = [
         min_stop_distance=1.0,
         default_size=1.0,
         min_confidence=0.55,
-        strategy="indices_tight",  # FTSE: tight 1.0x stops, PF=2.09 (60d backtest)
+        strategy="indices_tight",  # FTSE: stop 2.0x / R:R 2.0 (2026-06-04 sweep)
         trading_start=8,       # LSE cash open 08:00 UTC
         trading_end=17,        # Include 16:30 close auction (peak liquidity)
     ),
