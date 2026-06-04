@@ -760,11 +760,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
 
         if not is_valid:
             logger.info(f"Trade not validated: {reason}")
-            latest = df.iloc[-1]
             journal.log_rejected_signal(
                 epic, market_config.name, trade_signal.signal.value,
-                trade_signal.confidence, float(latest.get("adx", 0)),
-                float(latest.get("rsi", 0)), reason,
+                trade_signal.confidence, trade_signal.adx,
+                trade_signal.rsi, reason,
             )
             return
 
@@ -779,11 +778,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             logger.info(
                 f"Confidence too low for {market_config.name}: {trade_signal.confidence:.0%} < {min_confidence:.0%}"
             )
-            latest = df.iloc[-1]
             journal.log_rejected_signal(
                 epic, market_config.name, trade_signal.signal.value,
-                trade_signal.confidence, float(latest.get("adx", 0)),
-                float(latest.get("rsi", 0)), f"Confidence {trade_signal.confidence:.0%} < {min_confidence:.0%}",
+                trade_signal.confidence, trade_signal.adx,
+                trade_signal.rsi, f"Confidence {trade_signal.confidence:.0%} < {min_confidence:.0%}",
             )
             return
 
@@ -990,8 +988,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                     created_date=datetime.now().isoformat(),
                 )
 
-                # Journal entry with indicator snapshot
-                latest = df.iloc[-1]
+                # Journal entry with indicator snapshot. Read indicators from
+                # the signal, not from df — main.py's df has no indicator
+                # columns (they're computed inside strategy.analyze() on a
+                # copy), so latest.get(...) used to silently store 0.0.
                 journal.log_entry(
                     deal_id=deal_id,
                     epic=epic,
@@ -1004,12 +1004,12 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                     confidence=trade_signal.confidence,
                     reason=trade_signal.reason,
                     strategy=market_config.strategy,
-                    adx=float(latest.get("adx", 0)),
-                    rsi=float(latest.get("rsi", 0)),
-                    atr=float(latest.get("atr", 0)),
-                    ema_fast=float(latest.get("ema_fast", 0)),
-                    ema_medium=float(latest.get("ema_medium", 0)),
-                    ema_slow=float(latest.get("ema_slow", 0)),
+                    adx=trade_signal.adx,
+                    rsi=trade_signal.rsi,
+                    atr=trade_signal.atr,
+                    ema_fast=trade_signal.ema_fast,
+                    ema_medium=trade_signal.ema_medium,
+                    ema_slow=trade_signal.ema_slow,
                     htf_trend=htf_trends.get(epic, "NEUTRAL"),
                 )
 
@@ -1313,14 +1313,14 @@ def _log_suppressed_signal(
     try:
         if not journal or df is None or df.empty:
             return
-        latest = df.iloc[-1]
         journal.log_rejected_signal(
             market_config.epic,
             market_config.name,
             trade_signal.signal.value,
             trade_signal.confidence,
-            float(latest.get("adx", 0) or 0),
-            float(latest.get("rsi", 0) or 0),
+            # From the signal, not df — df here has no indicator columns.
+            float(getattr(trade_signal, "adx", 0) or 0),
+            float(getattr(trade_signal, "rsi", 0) or 0),
             reason,
         )
     except Exception as e:

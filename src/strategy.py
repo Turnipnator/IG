@@ -44,6 +44,15 @@ class TradeSignal:
     # in (MarketConfig.leg_filter_lookback > 0); observational unless enforced.
     leg_atr: float = 0.0
     leg_would_block: bool = False
+    # Entry indicator snapshot (computed inside analyze() on the indicator-laden
+    # copy of df). Carried here because main.py's df has no indicator columns,
+    # so the journal can record real entry values instead of 0.0.
+    adx: float = 0.0
+    rsi: float = 0.0
+    atr: float = 0.0
+    ema_fast: float = 0.0
+    ema_medium: float = 0.0
+    ema_slow: float = 0.0
 
 
 class TradingStrategy:
@@ -279,6 +288,8 @@ class TradingStrategy:
                 stop_distance=round(stop_distance, 2),
                 limit_distance=round(limit_distance, 2),
                 reason=f"Bullish EMA alignment, RSI={rsi:.1f}, ADX={adx:.1f}, HTF={htf_trend}",
+                adx=float(adx), rsi=float(rsi), atr=float(atr),
+                ema_fast=float(ema_fast), ema_medium=float(ema_medium), ema_slow=float(ema_slow),
             )
             return self._apply_leg_filter(signal, df, market, atr)
 
@@ -347,6 +358,8 @@ class TradingStrategy:
                 stop_distance=round(stop_distance, 2),
                 limit_distance=round(limit_distance, 2),
                 reason=f"Bearish EMA alignment, RSI={rsi:.1f}, ADX={adx:.1f}, HTF={htf_trend}",
+                adx=float(adx), rsi=float(rsi), atr=float(atr),
+                ema_fast=float(ema_fast), ema_medium=float(ema_medium), ema_slow=float(ema_slow),
             )
             return self._apply_leg_filter(signal, df, market, atr)
 
