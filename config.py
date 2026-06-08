@@ -126,7 +126,7 @@ def load_telegram_config() -> TelegramConfig:
 
 def load_trading_config() -> TradingConfig:
     return TradingConfig(
-        risk_per_trade=float(os.getenv("RISK_PER_TRADE", "0.01")),
+        risk_per_trade=float(os.getenv("RISK_PER_TRADE", "0.02")),
         max_positions=int(os.getenv("MAX_POSITIONS", "5")),
         trading_enabled=os.getenv("TRADING_ENABLED", "true").lower() == "true",
         check_interval=int(os.getenv("CHECK_INTERVAL", "60")),  # 60 mins to conserve API allowance
@@ -488,26 +488,26 @@ MARKETS = [
     #     strategy="indices_adx35",
     # ),
 
-    MarketConfig(
-        # 1h candles after 5m showed zero edge (60d PF 1.04). 365d 1h backtest:
-        # PF 1.31, +1.49%, 20 trades. Slow/fast EMAs were identical at 1h —
-        # interval is the dominant factor, not EMA spacing.
-        # 2026-05-21: moved indices_adx35 -> indices (ADX30). On 1h the lower
-        # ADX threshold wins (^GDAXI 365d backtest: ADX30 PF 3.47/75%WR/+4.42%
-        # vs ADX35 PF 2.52/62%/+2.72%). ADX35 was a 5m-era fix; 1h already
-        # filters the chop it was compensating for.
-        epic="IX.D.DAX.DAILY.IP",
-        name="Germany 40",
-        sector="Indices",
-        min_stop_distance=2.0,
-        default_size=0.5,
-        candle_interval=60,        # 1h candles (was 5m default)
-        htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
-        min_confidence=0.55,
-        strategy="indices",
-        trading_start=8,       # Xetra cash open 08:00 UTC
-        trading_end=17,        # Include 16:30 close auction (peak liquidity)
-    ),
+    # DISABLED 2026-06-08: no real edge. The config's documented "ADX30 PF 3.47"
+    # did NOT reproduce — that figure came from the backtest's regime stop-override
+    # (which live never applies). Re-run forcing the live profile stop (1.5x), the
+    # ^GDAXI 365d 1h result is PF 1.05 / +0.37% — break-even — degrading to PF 0.60
+    # over the recent 120d, and -£21.50 live across 8 trades. Per the per-EPIC
+    # profitability principle (prefer fewer profitable markets), benched. Profile
+    # kept; uncomment to revive if a future regime re-establishes an edge.
+    # MarketConfig(
+    #     epic="IX.D.DAX.DAILY.IP",
+    #     name="Germany 40",
+    #     sector="Indices",
+    #     min_stop_distance=2.0,
+    #     default_size=0.5,
+    #     candle_interval=60,        # 1h candles (was 5m default)
+    #     htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
+    #     min_confidence=0.55,
+    #     strategy="indices",
+    #     trading_start=8,       # Xetra cash open 08:00 UTC
+    #     trading_end=17,        # Include 16:30 close auction (peak liquidity)
+    # ),
     MarketConfig(
         epic="IX.D.DOW.DAILY.IP",
         name="Wall Street",

@@ -183,12 +183,22 @@ class TradingStrategy:
 
         # Calculate dynamic stop/limit based on ATR and strategy R:R
         stop_distance = max(atr * strategy.stop_atr_mult, market.min_stop_distance)
-        # Cap stop at 20x min_stop_distance to prevent runaway values from bad data
-        max_stop = market.min_stop_distance * 20
+        # Ceiling guard against runaway stops from corrupt data. Price-relative,
+        # mirroring the ATR corruption guard above (close*0.05): the old flat
+        # min_stop*20 truncated LEGITIMATE ATR stops on high-priced indices with
+        # tiny min_stops — e.g. Wall Street (min_stop 4 -> cap 80) whose true 1.5x
+        # ATR stop is ~148, Germany 40 (cap 40) wanting ~183. That capped them to
+        # 0.3-0.8x effective (the tight-stop whipsaw) AND made live diverge from
+        # the backtest, which applies no such cap. The close*0.05 term gives the
+        # full ATR stop room on real volatility (intraday ATR tops ~1.4% of price)
+        # while still catching genuine corruption (>5% of price). min_stop*20 stays
+        # as the floor-of-ceiling for low-priced instruments (forex) where close is
+        # not in stop-point units.
+        max_stop = max(market.min_stop_distance * 20, close * 0.05)
         if stop_distance > max_stop:
             logger.warning(
                 f"[{market.name}] Stop distance {stop_distance:.2f} exceeds max "
-                f"{max_stop:.1f} (20x min). Capping."
+                f"{max_stop:.1f} (price-relative). Capping."
             )
             stop_distance = max_stop
         limit_distance = stop_distance * strategy.reward_risk  # Strategy-specific R:R

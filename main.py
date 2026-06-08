@@ -926,8 +926,13 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 telegram_loop,
             )
 
-        # Final safety check: reject absurd stop/limit distances
-        max_safe_stop = market_config.min_stop_distance * 25
+        # Final safety check: reject absurd stop/limit distances. Price-relative
+        # to match the strategy ceiling (close*0.05): the old flat min_stop*25
+        # would reject legitimate full-ATR index stops once strategy.py stopped
+        # truncating them (e.g. NASDAQ ~190 > 4*25=100). current_price*0.0625
+        # keeps the same 20:25 ratio vs the strategy cap while still rejecting
+        # genuine corruption. min_stop*25 stays as the floor for low-priced markets.
+        max_safe_stop = max(market_config.min_stop_distance * 25, current_price * 0.0625)
         if trade_signal.stop_distance > max_safe_stop:
             logger.error(
                 f"[{market.name}] BLOCKED: stop_distance={trade_signal.stop_distance:.2f} "
