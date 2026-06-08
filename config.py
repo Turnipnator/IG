@@ -42,18 +42,20 @@ class TradingConfig:
     check_interval: int    # Minutes between market checks
     price_data_points: int # Number of historical data points to fetch
     cache_ttl_minutes: int # How long to cache price data
-    # Max multiple of the per-trade risk budget a position may carry. When an
-    # instrument's minimum dealing size (default_size) forces the £ risk above
-    # this multiple of the budget, the trade is skipped rather than silently
-    # over-risked. 1.8 = allow up to 80% over budget; large-stop commodities
-    # (Copper/Gold min size 1.0 × big ATR stop) are the typical trippers.
-    # Bumped 1.3->1.8 on 2026-06-08: the demo balance drew down to ~£5.9k, so the
-    # per-trade budget shrank to ~£11.77 and the 2.0x FTSE/NASDAQ stops (min size
-    # 1.0 x ~20pt = £20) tripped the cap and blocked the very markets we'd just
-    # tuned. 1.8 (cap ~£21.19 at this balance) admits FTSE £20 / NASDAQ £16 while
-    # still blocking the £29-30 over-risk trades. NB this is balance-relative: if
-    # the account is topped back toward £10k, revisit (1.3 was calibrated there).
-    max_risk_multiple: float = 1.8
+    # Absolute £ ceiling on the loss a single trade may carry at its stop. When an
+    # instrument's minimum dealing size (default_size) forces the £ risk above this
+    # amount, the trade is skipped rather than silently over-risked. Replaced the
+    # old `max_risk_multiple × per-trade budget` (2026-06-08): a balance-relative
+    # multiple DRIFTS — as the account draws down or is topped up, the same trade
+    # flips between blocked and admitted, and the multiple had to be re-tuned each
+    # time (1.3→1.8 chased exactly this). An absolute £ is stable: a trade that
+    # risks £50 is too risky at any balance. Set it >= the per-trade budget (only
+    # min-size-forced trades can exceed the budget, so only they trip it). £45
+    # admits the un-truncated index stops (FTSE £24 / AI £36 / NASDAQ £38 / Wall
+    # St £15) while blocking genuinely large min-size risk (Germany-type £90+,
+    # corrupt stops). Market SELECTION (no-edge markets) is the screener/disable's
+    # job, not this ceiling's — it is a safety cap, not an edge filter.
+    max_risk_gbp: float = 45.0
 
 
 @dataclass
@@ -132,7 +134,7 @@ def load_trading_config() -> TradingConfig:
         check_interval=int(os.getenv("CHECK_INTERVAL", "60")),  # 60 mins to conserve API allowance
         price_data_points=int(os.getenv("PRICE_DATA_POINTS", "50")),  # 50 points (saves 50% vs 100)
         cache_ttl_minutes=int(os.getenv("CACHE_TTL_MINUTES", "55")),  # Cache for 55 mins
-        max_risk_multiple=float(os.getenv("MAX_RISK_MULTIPLE", "1.8")),
+        max_risk_gbp=float(os.getenv("MAX_RISK_GBP", "45")),
     )
 
 

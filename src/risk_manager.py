@@ -125,11 +125,13 @@ class RiskManager:
         # Calculate actual max loss
         max_loss = size * stop_distance
 
-        # Risk-cap: if the min-size floor pushes the £ risk above
-        # max_risk_multiple × the per-trade budget, skip rather than over-risk.
-        # Only the floor can trip this (risk-based sizing is budget by design),
-        # so a normal-sized trade is never blocked.
-        max_allowed_loss = risk_amount * self.config.max_risk_multiple
+        # Absolute risk-cap: if the min-size floor pushes the £ loss-at-stop above
+        # max_risk_gbp, skip rather than over-risk. Only the floor can trip this
+        # (risk-based sizing targets the per-trade budget by design, which is set
+        # at/under the cap), so a normal-sized trade is never blocked. Absolute £
+        # (not a balance×multiple) so the threshold doesn't drift as the account
+        # balance moves — see TradingConfig.max_risk_gbp.
+        max_allowed_loss = self.config.max_risk_gbp
         if floored_up and max_loss > max_allowed_loss:
             return PositionSize(
                 size=0.0,
@@ -139,8 +141,8 @@ class RiskManager:
                 approved=False,
                 reason=(
                     f"Min size {min_size} × stop {stop_distance:.1f} risks "
-                    f"£{max_loss:.2f} > {self.config.max_risk_multiple:.2f}× budget "
-                    f"(£{max_allowed_loss:.2f}) — skipping to avoid over-risk"
+                    f"£{max_loss:.2f} > £{max_allowed_loss:.2f} absolute cap "
+                    f"— skipping to avoid over-risk"
                 ),
             )
 
