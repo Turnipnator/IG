@@ -45,9 +45,15 @@ class TradingConfig:
     # Max multiple of the per-trade risk budget a position may carry. When an
     # instrument's minimum dealing size (default_size) forces the £ risk above
     # this multiple of the budget, the trade is skipped rather than silently
-    # over-risked. 1.3 = allow up to 30% over budget; large-stop commodities
+    # over-risked. 1.8 = allow up to 80% over budget; large-stop commodities
     # (Copper/Gold min size 1.0 × big ATR stop) are the typical trippers.
-    max_risk_multiple: float = 1.3
+    # Bumped 1.3->1.8 on 2026-06-08: the demo balance drew down to ~£5.9k, so the
+    # per-trade budget shrank to ~£11.77 and the 2.0x FTSE/NASDAQ stops (min size
+    # 1.0 x ~20pt = £20) tripped the cap and blocked the very markets we'd just
+    # tuned. 1.8 (cap ~£21.19 at this balance) admits FTSE £20 / NASDAQ £16 while
+    # still blocking the £29-30 over-risk trades. NB this is balance-relative: if
+    # the account is topped back toward £10k, revisit (1.3 was calibrated there).
+    max_risk_multiple: float = 1.8
 
 
 @dataclass
@@ -126,7 +132,7 @@ def load_trading_config() -> TradingConfig:
         check_interval=int(os.getenv("CHECK_INTERVAL", "60")),  # 60 mins to conserve API allowance
         price_data_points=int(os.getenv("PRICE_DATA_POINTS", "50")),  # 50 points (saves 50% vs 100)
         cache_ttl_minutes=int(os.getenv("CACHE_TTL_MINUTES", "55")),  # Cache for 55 mins
-        max_risk_multiple=float(os.getenv("MAX_RISK_MULTIPLE", "1.3")),
+        max_risk_multiple=float(os.getenv("MAX_RISK_MULTIPLE", "1.8")),
     )
 
 
