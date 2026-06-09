@@ -619,6 +619,13 @@ MARKETS = [
         strategy="crude",      # Custom: RSI 80/20, tight stops. Stops BE-exit problem.
         trading_start=23,      # Nearly 24h market — avoid IG reset window (21-23 UTC)
         trading_end=21,
+        # ADX-ceiling OBSERVATIONAL (log-only, trade proceeds). All-EPIC sweep
+        # (scripts/backtest_adx_ceiling_all.py, 2026-06-09, CL=F 15m/59d 49t):
+        # capping ADX>50 → PF 1.82→2.31, P&L +8.10→+9.42% (−9t). NB Yahoo
+        # continuous futures ≠ IG contract exactly, so gather live would-blocks
+        # before enforcing. Set adx_ceiling_enforce=True once confirmed.
+        adx_ceiling=50.0,
+        adx_ceiling_enforce=False,
     ),
     # Disabled 2026-05-21 — edge has decayed. Added 2026-05-01, never traded live
     # (rarely fires + screened out). The 720d backtest's +5.06% was all earned
@@ -681,6 +688,13 @@ MARKETS = [
         strategy="default",
         trading_start=13,      # CME Copper: US session only. Asia hours are illiquid
         trading_end=20,        # and the spread guard was rejecting overnight signals anyway
+        # ADX-ceiling OBSERVATIONAL (log-only, trade proceeds). All-EPIC sweep
+        # (scripts/backtest_adx_ceiling_all.py, 2026-06-09, HG=F 1h/700d 92t):
+        # high-ADX tail is a net loser — capping ~55-60 → PF 1.22→1.41,
+        # P&L +5.47→+9.33%. ΔP&L noisy across ceilings (exact value approximate).
+        # Yahoo continuous futures ≠ IG contract; gather live before enforcing.
+        adx_ceiling=55.0,
+        adx_ceiling_enforce=False,
     ),
 
     # --- SOFT COMMODITIES ---
@@ -713,6 +727,12 @@ MARKETS = [
         strategy="default",
         trading_start=13,      # ICE US softs session 12:45-17:30 UTC
         trading_end=18,
+        # ADX-ceiling OBSERVATIONAL (log-only, trade proceeds). All-EPIC sweep
+        # (scripts/backtest_adx_ceiling_all.py, 2026-06-09, CC=F 1h/700d 47t):
+        # capping ADX>55 → PF 1.24→1.49, P&L +8.84→+14.46% (−6t). Yahoo
+        # continuous futures ≠ IG contract; gather live before enforcing.
+        adx_ceiling=55.0,
+        adx_ceiling_enforce=False,
     ),
     MarketConfig(
         epic="CO.D.CT.Month1.IP",
