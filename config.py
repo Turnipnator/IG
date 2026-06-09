@@ -114,6 +114,14 @@ class MarketConfig:
     # leg filter above. Backtested via scripts/backtest_adx_ceiling.py (Yahoo).
     adx_ceiling: float = 0.0
     adx_ceiling_enforce: bool = False
+    # Side the ceiling applies to. "" (default) = both directions; "SELL" caps
+    # only short entries, "BUY" only longs. Exhaustion is empirically ONE-SIDED
+    # per market (the direction-split backtest 2026-06-09): index/most-commodity
+    # climaxes are capitulation LOWS (cap SELLs), but some — e.g. Cocoa — blow
+    # off at the TOP (cap BUYs). ADX itself is non-directional, so without this a
+    # symmetric cap would also block the healthy-continuation side (it removed 5
+    # winning Copper longs in backtest). Set per market to the climax side.
+    adx_ceiling_direction: str = ""
 
 
 # Load configurations from environment
@@ -490,6 +498,7 @@ MARKETS = [
         # adx_ceiling_enforce=True once would-blocks confirm as net losers.
         adx_ceiling=55.0,
         adx_ceiling_enforce=False,
+        adx_ceiling_direction="SELL",  # short-side: longs never reach 55 (dir-split 2026-06-09)
     ),
     # Disabled 2026-05-01 — strategy doesn't fit. Tested 5m/15m/30m/1h timeframes,
     # ADX 30/35/40, slower EMAs, long-only, wide stops — no variant produced a
@@ -626,6 +635,7 @@ MARKETS = [
         # before enforcing. Set adx_ceiling_enforce=True once confirmed.
         adx_ceiling=50.0,
         adx_ceiling_enforce=False,
+        adx_ceiling_direction="SELL",  # short-side: SELL helps +1.62, BUY hurts (dir-split 2026-06-09)
     ),
     # Disabled 2026-05-21 — edge has decayed. Added 2026-05-01, never traded live
     # (rarely fires + screened out). The 720d backtest's +5.06% was all earned
@@ -695,6 +705,7 @@ MARKETS = [
         # Yahoo continuous futures ≠ IG contract; gather live before enforcing.
         adx_ceiling=55.0,
         adx_ceiling_enforce=False,
+        adx_ceiling_direction="SELL",  # short-side STRONG: SELL +2.39, BUY HURTS -2.02 (dir-split 2026-06-09)
     ),
 
     # --- SOFT COMMODITIES ---
@@ -733,6 +744,7 @@ MARKETS = [
         # continuous futures ≠ IG contract; gather live before enforcing.
         adx_ceiling=55.0,
         adx_ceiling_enforce=False,
+        adx_ceiling_direction="BUY",  # LONG-side (the inverse!): BUY +5.61, shorts never reach 55 (dir-split 2026-06-09)
     ),
     MarketConfig(
         epic="CO.D.CT.Month1.IP",

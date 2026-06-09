@@ -479,6 +479,12 @@ class TradingStrategy:
         ceiling = getattr(market, "adx_ceiling", 0.0)
         if not ceiling or ceiling <= 0:
             return signal
+        # Only cap the side the market actually exhausts on (if configured).
+        # Exhaustion is one-sided per market; capping the continuation side
+        # removes winners (see adx_ceiling_direction on MarketConfig).
+        side = getattr(market, "adx_ceiling_direction", "") or ""
+        if side and signal.signal.value != side:
+            return signal
         try:
             if signal.adx <= ceiling:
                 return signal
