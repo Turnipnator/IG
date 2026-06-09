@@ -684,6 +684,23 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 f"Leg-filter-would-block (legATR={trade_signal.leg_atr:.1f})",
             )
 
+        # ADX-ceiling (exhaustion) filter — OBSERVATIONAL (log + journal only)
+        # for markets that opt in via MarketConfig.adx_ceiling (currently
+        # NASDAQ 100, ceiling 55). Records entries an enforced filter WOULD block
+        # so we can measure their realised P&L before turning enforcement on. The
+        # trade still proceeds; query journal rejected_signals LIKE 'ADX-ceiling%'.
+        if trade_signal.adx_ceiling_would_block:
+            logger.info(
+                f"🔬 ADX ceiling [{market.name}]: {trade_signal.signal.value} @ "
+                f"{trade_signal.confidence:.0%} would be BLOCKED "
+                f"(ADX={trade_signal.adx:.1f} > {market_config.adx_ceiling}) "
+                f"— observational, trade proceeds"
+            )
+            _log_suppressed_signal(
+                market_config, df, trade_signal,
+                f"ADX-ceiling-would-block (ADX={trade_signal.adx:.1f})",
+            )
+
         if screener_inactive:
             # Actionable signal on a market the screener benched. Log + journal
             # it (log-only, no trade) so the veto cost is measurable. sc.reason

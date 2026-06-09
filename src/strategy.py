@@ -44,6 +44,9 @@ class TradeSignal:
     # in (MarketConfig.leg_filter_lookback > 0); observational unless enforced.
     leg_atr: float = 0.0
     leg_would_block: bool = False
+    # ADX-ceiling (exhaustion) annotation. True when this entry's ADX exceeds
+    # the market's adx_ceiling — observational unless adx_ceiling_enforce.
+    adx_ceiling_would_block: bool = False
     # Entry indicator snapshot (computed inside analyze() on the indicator-laden
     # copy of df). Carried here because main.py's df has no indicator columns,
     # so the journal can record real entry values instead of 0.0.
@@ -301,7 +304,9 @@ class TradingStrategy:
                 adx=float(adx), rsi=float(rsi), atr=float(atr),
                 ema_fast=float(ema_fast), ema_medium=float(ema_medium), ema_slow=float(ema_slow),
             )
-            return self._apply_leg_filter(signal, df, market, atr)
+            return self._apply_adx_ceiling(
+                self._apply_leg_filter(signal, df, market, atr), market
+            )
 
         elif bearish_ema and price_below_ema and rsi_sell_valid:
             # Pullback filter: price must be near fast EMA (not overextended)
@@ -371,7 +376,9 @@ class TradingStrategy:
                 adx=float(adx), rsi=float(rsi), atr=float(atr),
                 ema_fast=float(ema_fast), ema_medium=float(ema_medium), ema_slow=float(ema_slow),
             )
-            return self._apply_leg_filter(signal, df, market, atr)
+            return self._apply_adx_ceiling(
+                self._apply_leg_filter(signal, df, market, atr), market
+            )
 
         else:
             return TradeSignal(
@@ -451,6 +458,49 @@ class TradingStrategy:
                 )
         except Exception as e:  # never let instrumentation break signal flow
             logger.debug(f"[{market.name}] leg filter check failed: {e}")
+        return signal
+
+    def _apply_adx_ceiling(
+        self,
+        signal: TradeSignal,
+        market: MarketConfig,
+    ) -> TradeSignal:
+        """Annotate (and optionally block) an entry whose ADX marks exhaustion.
+
+        Thesis: a momentum signal is strongest at a climax, so an extreme ADX
+        often precedes mean-reversion rather than continuation. If signal.adx
+        exceeds market.adx_ceiling, set adx_ceiling_would_block for observation.
+        Only when market.adx_ceiling_enforce is True is the signal converted to
+        HOLD — by default this is log-only (main.py records would-blocks).
+        Mirrors _apply_leg_filter.
+        """
+        if signal.signal == Signal.HOLD:
+            return signal
+        ceiling = getattr(market, "adx_ceiling", 0.0)
+        if not ceiling or ceiling <= 0:
+            return signal
+        try:
+            if signal.adx <= ceiling:
+                return signal
+            signal.adx_ceiling_would_block = True
+            if getattr(market, "adx_ceiling_enforce", False):
+                return TradeSignal(
+                    signal=Signal.HOLD,
+                    epic=market.epic,
+                    market_name=market.name,
+                    confidence=0.0,
+                    entry_price=signal.entry_price,
+                    stop_distance=signal.stop_distance,
+                    limit_distance=signal.limit_distance,
+                    reason=(
+                        f"ADX ceiling: exhaustion climax "
+                        f"(ADX {signal.adx:.1f} > {ceiling})"
+                    ),
+                    adx=signal.adx, rsi=signal.rsi, atr=signal.atr,
+                    adx_ceiling_would_block=True,
+                )
+        except Exception as e:  # never let instrumentation break signal flow
+            logger.debug(f"[{market.name}] ADX ceiling check failed: {e}")
         return signal
 
     def _calculate_confidence(

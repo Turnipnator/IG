@@ -106,6 +106,14 @@ class MarketConfig:
     leg_filter_lookback: int = 0
     leg_filter_threshold: float = 5.0
     leg_filter_enforce: bool = False
+    # ADX-ceiling (exhaustion) filter — skips entries whose ADX exceeds
+    # adx_ceiling, on the thesis that an extreme ADX marks a climax about to
+    # mean-revert rather than a trend to ride. adx_ceiling=0 disables it.
+    # adx_ceiling_enforce=False makes it OBSERVATIONAL (log + journal only,
+    # trade still proceeds) — same gather-data-before-enforcing pattern as the
+    # leg filter above. Backtested via scripts/backtest_adx_ceiling.py (Yahoo).
+    adx_ceiling: float = 0.0
+    adx_ceiling_enforce: bool = False
 
 
 # Load configurations from environment
@@ -474,6 +482,14 @@ MARKETS = [
         leg_filter_lookback=12,
         leg_filter_threshold=5.0,
         leg_filter_enforce=False,
+        # ADX-ceiling OBSERVATIONAL (log-only, trade proceeds). 59d Yahoo sweep
+        # (scripts/backtest_adx_ceiling.py, 2026-06-09): capping at ADX 55
+        # removed only 2/15 trades (the ADX 55-60 tail) yet lifted PF 2.59→4.65,
+        # P&L +2.03→+2.44%. Triggered by a live S&P SELL @ ADX 57.2 losing on a
+        # bounce. Gathering live data before enforcing — set
+        # adx_ceiling_enforce=True once would-blocks confirm as net losers.
+        adx_ceiling=55.0,
+        adx_ceiling_enforce=False,
     ),
     # Disabled 2026-05-01 — strategy doesn't fit. Tested 5m/15m/30m/1h timeframes,
     # ADX 30/35/40, slower EMAs, long-only, wide stops — no variant produced a
