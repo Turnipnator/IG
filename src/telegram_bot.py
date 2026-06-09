@@ -32,6 +32,25 @@ logger = logging.getLogger(__name__)
 STATS_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
 STATS_FILE = STATS_DIR / "daily_stats.json"
 
+# The daily stats reset at the 21:00 UTC trading-session boundary
+# (send_daily_summary -> reset_daily_stats, scheduled at 21:00). Persistence
+# must use the SAME boundary, not calendar midnight — otherwise a restart in the
+# 00:00-21:00 window wrongly discards a session that began before midnight.
+SESSION_RESET_HOUR = 21
+
+
+def _session_date(now: Optional[datetime] = None) -> str:
+    """Date label of the trading session current at `now`.
+
+    A session runs from one 21:00 UTC boundary to the next, so before 21:00 the
+    live session is the one that began the previous calendar day. Used as the
+    stats file's identity so persistence and the 21:00 reset agree.
+    """
+    now = now or datetime.now()
+    if now.hour < SESSION_RESET_HOUR:
+        now = now - timedelta(days=1)
+    return now.strftime("%Y-%m-%d")
+
 
 def format_pnl(value: float) -> str:
     """Format P&L with sign and emoji."""
@@ -109,7 +128,7 @@ class TelegramBot:
         try:
             STATS_DIR.mkdir(parents=True, exist_ok=True)
             stats = {
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "date": _session_date(),
                 "trades_today": self.trades_today,
                 "daily_pnl": self.daily_pnl,
                 "risk_daily_pnl": self.risk_manager.daily_pnl if self.risk_manager else 0.0,
@@ -125,8 +144,8 @@ class TelegramBot:
             if not STATS_FILE.exists():
                 return
             stats = json.loads(STATS_FILE.read_text())
-            if stats.get("date") != datetime.now().strftime("%Y-%m-%d"):
-                logger.info("Daily stats file is from a previous day, starting fresh")
+            if stats.get("date") != _session_date():
+                logger.info("Daily stats file is from a previous session, starting fresh")
                 return
             self.trades_today = stats.get("trades_today", 0)
             self.daily_pnl = stats.get("daily_pnl", 0.0)
