@@ -1274,8 +1274,18 @@ def check_positions_from_stream() -> None:
                     )
 
 
-def reconcile_provisional_trades() -> None:
+def reconcile_provisional_trades(closing_books: bool = False) -> None:
     """Match PROVISIONAL journal rows against IG transaction history.
+
+    closing_books=True is called ONCE from send_daily_summary at 21:00, before
+    the reset, to make the summary reconciliation-aware: it bypasses the session
+    gate (so a trade that closed in the session being summarised but whose IG
+    transaction only posted around the 21:00 boundary is still pulled into the
+    summary figure) and updates risk_manager.daily_pnl IN PLACE — which the
+    summary reads. It deliberately skips the per-trade Telegram messages and the
+    telegram.daily_pnl coroutine adjustment: a deferred coroutine could land
+    after reset_daily_stats and re-introduce the cross-session leak, and the
+    summary itself already reports the corrected total.
 
     Runs every minute. Gated by has_provisional() so we make zero API calls
     on minutes where there's nothing to reconcile (the common case).
@@ -1329,9 +1339,13 @@ def reconcile_provisional_trades() -> None:
                     )
                 except (TypeError, ValueError):
                     same_session = True
-            if abs(delta) > 0.01 and same_session:
+            apply = same_session or closing_books
+            if abs(delta) > 0.01 and apply:
                 risk_manager.update_daily_pnl(delta)
-            if telegram_loop:
+            # In closing_books mode the summary reports the correction itself, so
+            # skip the per-trade message + the deferred telegram.daily_pnl bump
+            # (which could land post-reset and re-leak into the new session).
+            if telegram_loop and not closing_books:
                 asyncio.run_coroutine_threadsafe(
                     telegram.notify_trade_reconciled(
                         row["market_name"], provisional_pnl, actual_pnl,
@@ -1546,17 +1560,45 @@ def periodic_tasks() -> None:
 
 
 def send_daily_summary() -> None:
-    """Send daily summary."""
+    """Send daily summary (reconciliation-aware).
+
+    Force a final reconciliation sweep first so any trade that closed this
+    session but only got booked by IG around the 21:00 boundary is reflected in
+    the headline P&L (closing_books bypasses the session gate and corrects
+    risk_manager.daily_pnl in place). Whatever is still PROVISIONAL afterwards
+    (IG hasn't booked it yet) is reported as pending so the figure is honestly
+    labelled rather than silently provisional.
+    """
+    try:
+        reconcile_provisional_trades(closing_books=True)
+    except Exception as e:
+        logger.warning(f"Closing-books reconcile before daily summary failed: {e}")
+
+    # Trades that closed this session but IG hasn't confirmed yet. Anything from
+    # a prior session would already be aged-out to UNMATCHED (3h), so these are
+    # all this-session closes.
+    try:
+        pending = journal.get_provisional_rows(max_age_hours=24)
+    except Exception:
+        pending = []
+    pending_count = len(pending)
+    pending_pnl = sum((p.get("pnl") or 0.0) for p in pending)
+
     balance = client.get_balance()
     positions = client.get_positions()
+    # risk_manager.daily_pnl is synchronously corrected by the sweep above and
+    # tracks telegram.daily_pnl in lockstep — use it as the authoritative figure.
+    summary_pnl = risk_manager.daily_pnl
 
     if balance and telegram and telegram_loop:
         asyncio.run_coroutine_threadsafe(
             telegram.notify_daily_summary(
                 balance,
-                telegram.daily_pnl,
+                summary_pnl,
                 telegram.trades_today,
                 positions,
+                pending_count=pending_count,
+                pending_pnl=pending_pnl,
             ),
             telegram_loop,
         )

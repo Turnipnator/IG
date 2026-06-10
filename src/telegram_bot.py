@@ -943,8 +943,15 @@ class TelegramBot:
         daily_pnl: float,
         trades_count: int,
         positions: List,
+        pending_count: int = 0,
+        pending_pnl: float = 0.0,
     ) -> bool:
-        """Send daily summary."""
+        """Send daily summary.
+
+        pending_count/pending_pnl describe trades that closed this session but
+        IG hasn't booked yet — included in daily_pnl at their provisional value
+        and flagged so the headline figure is honestly labelled.
+        """
         pnl_emoji = "📈" if daily_pnl >= 0 else "📉"
 
         positions_text = ""
@@ -953,12 +960,20 @@ class TelegramBot:
             for pos in positions:
                 positions_text += f"• {pos.epic}: {pos.direction} ({format_pnl(pos.profit_loss)})\n"
 
+        pending_text = ""
+        if pending_count > 0:
+            pending_text = (
+                f"\n\n⏳ {pending_count} trade(s) ({format_pnl(pending_pnl)}) "
+                f"awaiting broker confirmation — final total may differ."
+            )
+
         message = (
             f"{pnl_emoji} *DAILY SUMMARY*\n\n"
             f"Balance: £{balance:,.2f}\n"
             f"Daily P&L: {format_pnl(daily_pnl)}\n"
             f"Trades: {trades_count}"
             f"{positions_text}"
+            f"{pending_text}"
         )
         return await self.send_notification(message)
 
