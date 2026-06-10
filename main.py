@@ -35,7 +35,7 @@ from config import (
 from src.client import IGClient, Position
 from src.strategy import TradingStrategy, Signal, should_close_position
 from src.risk_manager import RiskManager
-from src.telegram_bot import TelegramBot
+from src.telegram_bot import TelegramBot, _session_date
 from src.streaming import IGStreamService, MarketStream, LIGHTSTREAMER_AVAILABLE
 from src.calendar import EconomicCalendar
 from src.journal import TradeJournal
@@ -1312,13 +1312,30 @@ def reconcile_provisional_trades() -> None:
             )
             # Correct risk_manager's running daily P&L by the delta and notify
             # the user. notify_trade_reconciled corrects telegram.daily_pnl too.
+            # BUT only touch the LIVE daily counters when this trade's close
+            # belongs to the current 21:00-reset session. A trade reconciled
+            # after the daily summary + reset belongs to the already-summarised
+            # prior session; applying its delta leaks a phantom P&L (with 0
+            # trades) into the fresh session. The journal correction above
+            # (confirm_provisional) is unconditional, so history stays accurate.
             delta = actual_pnl - provisional_pnl
-            if abs(delta) > 0.01:
+            exit_ref = row.get("exit_time") or row.get("entry_time")
+            same_session = True
+            if exit_ref:
+                try:
+                    same_session = (
+                        _session_date(datetime.fromisoformat(exit_ref))
+                        == _session_date()
+                    )
+                except (TypeError, ValueError):
+                    same_session = True
+            if abs(delta) > 0.01 and same_session:
                 risk_manager.update_daily_pnl(delta)
             if telegram_loop:
                 asyncio.run_coroutine_threadsafe(
                     telegram.notify_trade_reconciled(
                         row["market_name"], provisional_pnl, actual_pnl,
+                        adjust_counter=same_session,
                     ),
                     telegram_loop,
                 )

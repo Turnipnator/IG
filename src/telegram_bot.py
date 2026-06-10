@@ -885,8 +885,15 @@ class TelegramBot:
         market_name: str,
         provisional_pnl: float,
         actual_pnl: float,
+        adjust_counter: bool = True,
     ) -> bool:
-        """Confirm a previously-provisional close with the broker-confirmed P&L."""
+        """Confirm a previously-provisional close with the broker-confirmed P&L.
+
+        adjust_counter=False when the trade closed in a prior (already-summarised,
+        already-reset) session — the journal/history is still corrected by the
+        caller, but the live daily counter must NOT absorb the delta or a phantom
+        P&L leaks into the new session (shown with 0 trades).
+        """
         delta = actual_pnl - provisional_pnl
         emoji = "✅" if actual_pnl >= 0 else "❌"
         message = (
@@ -896,9 +903,13 @@ class TelegramBot:
             f"Actual: {format_pnl(actual_pnl)}\n"
             f"Adjustment: {format_pnl(delta)}"
         )
-        # Correct the running daily total by the delta (provisional was already added).
-        self.daily_pnl += delta
-        self.save_daily_stats()
+        # Correct the running daily total by the delta (provisional was already
+        # added) — but only if the trade belongs to the current session.
+        if adjust_counter:
+            self.daily_pnl += delta
+            self.save_daily_stats()
+        else:
+            message += "\n\n_Prior session — today's total unchanged._"
         return await self.send_notification(message)
 
     async def notify_signal(
