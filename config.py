@@ -77,6 +77,9 @@ class StrategyConfig:
     require_htf: bool = False
     pullback_pct: float = 0.3  # Max % distance from fast EMA to enter (0.3 = 0.3%)
     breakeven_trigger_pct: float = 0.7  # Move stop to break-even when profit >= X% of stop distance (0.7 = 70%)
+    breakeven_lock_pct: float = 0.0  # When BE triggers, lock in this fraction of stop distance as profit
+                                     # (0.0 = stop at exact entry; 0.25 = lock ~25% of stop as guaranteed profit).
+                                     # Must be < breakeven_trigger_pct so the locked stop stays behind price.
     atr_trail_mult: float = 1.5  # ATR multiplier for trailing stop distance (after break-even)
 
 
@@ -246,6 +249,10 @@ STRATEGY_PROFILES = {
         breakeven_trigger_pct=0.5,  # Lowered 0.7→0.5 (2026-05-31): Yahoo backtest
                                     # shows +0.33%/55d (5m) and +17.19%/365d PF 4.99
                                     # (1h) vs live 0.7 at -1.01% / +15.96% PF 3.78
+        breakeven_lock_pct=0.25,    # 2026-06-10: lock ~25% of stop (~2-3pts) as profit
+                                    # instead of dead-entry. Gold ATR ~10 snapped BE-at-entry
+                                    # back to £0 on noise (e.g. 01:10 SELL +£12→£0). 0.25 < 0.5
+                                    # trigger so the locked stop stays behind price at arm time.
         atr_trail_mult=1.5,
     ),
 

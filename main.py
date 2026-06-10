@@ -514,12 +514,23 @@ def on_price_update(epic: str, market: MarketStream) -> None:
             if stop_distance > 0 and (market.bid or 0) > 0:
                 trigger_points = stop_distance * strategy_cfg.breakeven_trigger_pct
                 if current_profit >= trigger_points:
-                    new_stop = position.open_level
+                    # Lock in a fraction of the stop as profit instead of dead-entry.
+                    # lock_pct < trigger_pct guarantees the new stop stays behind price.
+                    lock_offset = stop_distance * getattr(
+                        strategy_cfg, "breakeven_lock_pct", 0.0
+                    )
+                    if position.direction == "BUY":
+                        new_stop = position.open_level + lock_offset
+                    else:
+                        new_stop = position.open_level - lock_offset
+                    lock_note = (
+                        f" (+{lock_offset:.1f}pt profit locked)" if lock_offset > 0 else ""
+                    )
                     logger.info(
                         f"Break-even trigger for {market_config.name}: "
                         f"profit {current_profit:.1f} pts >= {trigger_points:.1f} pts "
                         f"({strategy_cfg.breakeven_trigger_pct:.0%} of stop). "
-                        f"Moving stop {position.stop_level:.1f} -> {new_stop:.1f}"
+                        f"Moving stop {position.stop_level:.1f} -> {new_stop:.1f}{lock_note}"
                     )
                     success = client.update_position_stop(
                         deal_id=deal_id,
@@ -538,7 +549,11 @@ def on_price_update(epic: str, market: MarketStream) -> None:
                                     f"Entry: {position.open_level}\n"
                                     f"Stop moved: {position.stop_level:.1f} → {new_stop:.1f}\n"
                                     f"Current profit: {current_profit:.1f} pts\n\n"
-                                    f"_Trade is now risk-free! ATR trail active._"
+                                    + (
+                                        f"_Stop locks +{lock_offset:.1f}pt profit. ATR trail active._"
+                                        if lock_offset > 0
+                                        else "_Trade is now risk-free! ATR trail active._"
+                                    )
                                 ),
                                 telegram_loop,
                             )
@@ -1265,8 +1280,10 @@ def reconcile_provisional_trades() -> None:
     Runs every minute. Gated by has_provisional() so we make zero API calls
     on minutes where there's nothing to reconcile (the common case).
 
-    Rows older than 2h with still no match are flagged UNMATCHED so we stop
-    retrying — their cached pnl is the best we'll get.
+    Rows older than 3h with still no match are flagged UNMATCHED so we stop
+    retrying — their cached pnl is the best we'll get. (3h, raised from 2h on
+    2026-06-10: overnight commodity bookings can post >2h late, causing false
+    UNMATCHED warnings on trades that did reconcile fine — e.g. Gold £21.31.)
     """
     if not journal.has_provisional():
         return
@@ -1276,7 +1293,7 @@ def reconcile_provisional_trades() -> None:
         return
 
     rows = journal.get_provisional_rows(max_age_hours=24)
-    stale_cutoff = datetime.now() - timedelta(hours=2)
+    stale_cutoff = datetime.now() - timedelta(hours=3)
     matched = 0
     aged_out = 0
     for row in rows:
@@ -1315,7 +1332,7 @@ def reconcile_provisional_trades() -> None:
                 aged_out += 1
                 logger.warning(
                     f"Marking {row['market_name']} ({row['deal_id']}) UNMATCHED — "
-                    f"no IG transaction after 2h"
+                    f"no IG transaction after 3h"
                 )
     if matched or aged_out:
         logger.info(f"Reconciliation: {matched} confirmed, {aged_out} aged out")
