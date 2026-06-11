@@ -227,6 +227,46 @@ STRATEGY_PROFILES = {
         breakeven_trigger_pct=0.7,  # Raised from 0.5 — 50% triggered on noise
         atr_trail_mult=1.5,
     ),
+    # Dedicated Copper / Cocoa profiles (2026-06-11, scripts/backtest_copper_cocoa_profile.py).
+    # Both were bare `default`; the cull review found one-sided edges (Copper long,
+    # Cocoa short) and the param sweep (HG=F / CC=F 1h/700d, daily-HTF gated to match
+    # the default's require_htf=True) showed the edge concentrates at a LOWER ADX floor.
+    # Lowering ADX 30→25 is the one robust, validated change (more trend-continuation
+    # entries qualify); other params kept at the proven default to avoid overfitting
+    # Yahoo-vs-IG noise. Direction is restricted on the MARKET via allowed_direction.
+    #   Copper long, HTF-gated adx25: PF ~1.28 / +13% vs default adx30 PF 1.07 / +2.6%.
+    #   Cocoa  short, HTF-gated adx25: PF ~1.15 / +11.6% vs default adx30 PF 0.91 / -5.4%
+    #     (NB the cull review's PF 2.26 did NOT replicate on a bigger sample — Cocoa is
+    #      a MODEST, HTF-dependent edge; paper-trial it before trusting, candidate to
+    #      disable if it doesn't hold up live).
+    "copper": StrategyConfig(
+        ema_fast=9, ema_medium=21, ema_slow=50,
+        rsi_period=7, rsi_overbought=70, rsi_oversold=30,
+        rsi_buy_max=55, rsi_sell_min=45,
+        adx_threshold=25,           # Lowered 30→25 (2026-06-11 sweep) — the validated lever
+        stop_atr_mult=1.8,
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=False,
+        require_htf=True,
+        pullback_pct=0.3,
+        breakeven_trigger_pct=0.7,
+        atr_trail_mult=1.5,
+    ),
+    "cocoa": StrategyConfig(
+        ema_fast=9, ema_medium=21, ema_slow=50,
+        rsi_period=7, rsi_overbought=70, rsi_oversold=30,
+        rsi_buy_max=55, rsi_sell_min=45,
+        adx_threshold=25,           # Lowered 30→25 (2026-06-11 sweep) — the validated lever
+        stop_atr_mult=1.8,
+        reward_risk=2.0,
+        min_confidence=0.55,
+        use_macd_exit=False,
+        require_htf=True,
+        pullback_pct=0.3,
+        breakeven_trigger_pct=0.7,
+        atr_trail_mult=1.5,
+    ),
 
     # =================================================================
     # NATURAL GAS — 1h candles with daily HTF. Default profile + wider
@@ -753,7 +793,8 @@ MARKETS = [
         candle_interval=60,        # 1h candles (was 5m default)
         htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
-        strategy="default",
+        strategy="copper",     # 2026-06-11: dedicated long-bias profile (ADX 25)
+        allowed_direction="BUY",  # cull review + sweep: Copper edge is long-side
         trading_start=13,      # CME Copper: US session only. Asia hours are illiquid
         trading_end=20,        # and the spread guard was rejecting overnight signals anyway
         # ADX-ceiling OBSERVATIONAL (log-only, trade proceeds). All-EPIC sweep
@@ -793,7 +834,8 @@ MARKETS = [
         candle_interval=60,        # 1h candles (was 15m)
         htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
-        strategy="default",
+        strategy="cocoa",          # 2026-06-11: dedicated short-only profile (ADX 25)
+        allowed_direction="SELL",  # cull review + sweep: Cocoa edge is short-side (HTF-dependent, modest)
         trading_start=13,      # ICE US softs session 12:45-17:30 UTC
         trading_end=18,
         # ADX-ceiling OBSERVATIONAL (log-only, trade proceeds). All-EPIC sweep
