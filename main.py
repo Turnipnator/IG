@@ -137,6 +137,19 @@ trailing_stop_levels: dict[str, float] = {}  # deal_id -> current trail stop lev
 # Post-restart cooldown: skip opening new positions for 15 mins after startup
 # to let indicators stabilise with fresh streaming data
 STARTUP_COOLDOWN_MINUTES = 15
+
+# Correlation-cluster filter — OBSERVATIONAL by default. Markets sharing a
+# MarketConfig.correlation_group are one underlying bet; a 2nd group member
+# opening the SAME direction within CLUSTER_FILTER_WINDOW_MIN of the first is a
+# doubled position. Journal mining (2026-06-11) found same-window same-direction
+# equity-index clusters at -£8.23 avg / PF 0.13 vs solo +£2.62 / PF 1.81 (n=7,
+# thin — hence observational). With CLUSTER_FILTER_ENFORCE=False the would-block
+# is logged + journalled (rejected_signals LIKE 'Cluster-filter%') and the trade
+# proceeds; set True to actually skip the 2nd correlated entry. recent_group_entries
+# records the last entry time + direction per epic for the window check.
+CLUSTER_FILTER_WINDOW_MIN = 15
+CLUSTER_FILTER_ENFORCE = False
+recent_group_entries: dict[str, tuple[datetime, str]] = {}  # epic -> (entry_time, direction)
 bot_start_time: datetime = datetime.now()
 
 
@@ -991,6 +1004,44 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 )
                 return
 
+        # Correlation-cluster filter — OBSERVATIONAL (log + journal only unless
+        # CLUSTER_FILTER_ENFORCE). When a correlated group member already opened
+        # the SAME direction within the window, this 2nd entry is a doubled bet
+        # that historically whipsaws (cluster avg -£8.23 vs solo +£2.62, journal
+        # 2026-06-11). The first member is let through; only the 2nd+ is flagged
+        # — which is exactly what an enforced guard would block. Placed last so
+        # only trades that would actually open are counted (matches the backtest).
+        if market_config.correlation_group:
+            now_t = datetime.now()
+            cluster_peer = None
+            for o_epic, (o_time, o_dir) in recent_group_entries.items():
+                if o_epic == epic or o_dir != trade_signal.signal.value:
+                    continue
+                o_cfg = next((m for m in MARKETS if m.epic == o_epic), None)
+                if not o_cfg or o_cfg.correlation_group != market_config.correlation_group:
+                    continue
+                age_min = (now_t - o_time).total_seconds() / 60
+                if 0 <= age_min <= CLUSTER_FILTER_WINDOW_MIN:
+                    cluster_peer = (o_cfg.name, age_min)
+                    break
+            if cluster_peer:
+                peer_name, peer_age = cluster_peer
+                verb = "BLOCKED" if CLUSTER_FILTER_ENFORCE else "would be BLOCKED"
+                tail = "enforced" if CLUSTER_FILTER_ENFORCE else "observational, trade proceeds"
+                logger.info(
+                    f"🔬 Cluster filter [{market.name}]: {trade_signal.signal.value} @ "
+                    f"{trade_signal.confidence:.0%} {verb} — correlated {peer_name} "
+                    f"opened {trade_signal.signal.value} {peer_age:.0f}m ago "
+                    f"(window {CLUSTER_FILTER_WINDOW_MIN}m) — {tail}"
+                )
+                _log_suppressed_signal(
+                    market_config, df, trade_signal,
+                    f"Cluster-filter-would-block (corr {peer_name} "
+                    f"{trade_signal.signal.value} {peer_age:.0f}m ago)",
+                )
+                if CLUSTER_FILTER_ENFORCE:
+                    return
+
         # Open position
         logger.info(
             f"Opening {trade_signal.signal.value} position on {market.name}: "
@@ -1009,6 +1060,11 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
 
         if result:
             # trades_today incremented in notify_trade_opened()
+
+            # Record group entry for the correlation-cluster window check so a
+            # later correlated same-direction entry can detect this one.
+            if market_config.correlation_group:
+                recent_group_entries[epic] = (datetime.now(), trade_signal.signal.value)
 
             # Track in known_positions for external close detection
             deal_id = result.get("dealId", "")

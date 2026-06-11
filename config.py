@@ -125,6 +125,17 @@ class MarketConfig:
     # symmetric cap would also block the healthy-continuation side (it removed 5
     # winning Copper longs in backtest). Set per market to the climax side.
     adx_ceiling_direction: str = ""
+    # Correlation-cluster filter — markets sharing a non-empty correlation_group
+    # are treated as the same underlying bet. When a 2nd market in the group
+    # tries to open the SAME direction within CLUSTER_FILTER_WINDOW_MIN of the
+    # first (main.py), it is a doubled position that historically whipsaws:
+    # journal mining (2026-06-11) showed same-window same-direction equity-index
+    # clusters at -£8.23 avg / PF 0.13 vs solo index entries +£2.62 / PF 1.81.
+    # OBSERVATIONAL by default (CLUSTER_FILTER_ENFORCE=False in main.py) — logs +
+    # journals the would-block, trade proceeds; query rejected_signals LIKE
+    # 'Cluster-filter%'. "" disables. Only the 6 backtested equity indices are
+    # grouped; AI Index is a candidate to add once data confirms.
+    correlation_group: str = ""
 
 
 # Load configurations from environment
@@ -480,6 +491,7 @@ MARKETS = [
         default_size=1.0,
         min_confidence=0.55,   # Raised from 0.4 for quality entries
         strategy="indices_selective",  # ADX 40 — S&P too choppy at 30, only trade strong trends
+        correlation_group="equity_index",  # cluster filter (2026-06-11)
     ),
     MarketConfig(
         epic="IX.D.NASDAQ.CASH.IP",
@@ -506,6 +518,7 @@ MARKETS = [
         adx_ceiling=55.0,
         adx_ceiling_enforce=False,
         adx_ceiling_direction="SELL",  # short-side: longs never reach 55 (dir-split 2026-06-09)
+        correlation_group="equity_index",  # cluster filter (2026-06-11)
     ),
     # Disabled 2026-05-01 — strategy doesn't fit. Tested 5m/15m/30m/1h timeframes,
     # ADX 30/35/40, slower EMAs, long-only, wide stops — no variant produced a
@@ -550,6 +563,7 @@ MARKETS = [
         default_size=0.1,
         min_confidence=0.55,
         strategy="indices",
+        correlation_group="equity_index",  # cluster filter (2026-06-11)
     ),
     MarketConfig(
         epic="IX.D.FTSE.DAILY.IP",
@@ -559,6 +573,7 @@ MARKETS = [
         default_size=1.0,
         min_confidence=0.55,
         strategy="indices_tight",  # FTSE: stop 2.0x / R:R 2.0 (2026-06-04 sweep)
+        correlation_group="equity_index",  # cluster filter (2026-06-11)
         trading_start=8,       # LSE cash open 08:00 UTC
         trading_end=17,        # Include 16:30 close auction (peak liquidity)
     ),
@@ -593,6 +608,7 @@ MARKETS = [
         default_size=0.5,
         min_confidence=0.55,
         strategy="indices",
+        correlation_group="equity_index",  # cluster filter (2026-06-11)
         trading_start=0,       # Tokyo cash session opens 00:00 UTC (09:00 JST)
         trading_end=8,         # closes ~06:00 UTC; pad to 8 for late-print candles
     ),
@@ -604,6 +620,7 @@ MARKETS = [
         default_size=0.5,
         min_confidence=0.55,
         strategy="indices",
+        correlation_group="equity_index",  # cluster filter (2026-06-11)
         trading_start=1,       # HK cash opens 01:30 UTC (09:30 HKT)
         trading_end=9,         # closes 08:00 UTC; pad to 9
     ),
