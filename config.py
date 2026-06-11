@@ -81,6 +81,17 @@ class StrategyConfig:
                                      # (0.0 = stop at exact entry; 0.25 = lock ~25% of stop as guaranteed profit).
                                      # Must be < breakeven_trigger_pct so the locked stop stays behind price.
     atr_trail_mult: float = 1.5  # ATR multiplier for trailing stop distance (after break-even)
+    # MTF-style pullback entry. When >0, a fresh signal does NOT enter immediately;
+    # instead it ARMS a pending order and waits up to pullback_entry_window candles
+    # for price to retrace pullback_entry_atr_frac × ATR back TOWARD the EMA (a
+    # bounce to short into / a dip to buy). If reached, enter at that better level;
+    # if not, drop the signal (skips the runaway-reversal entries). Ports the Oanda
+    # MTF discipline (waits for an M15 pullback after the H1 signal). Backtested
+    # 2026-06-11 (scripts/backtest_gold_pullback.py, GC=F): 0.5×ATR/win6 lifts Gold
+    # 5m PF 1.91→3.28 (WR 60→78%) and 1h PF 3.54→8.27 (WR 44→68%), P&L flat-to-up.
+    # 0.0 = disabled (immediate entry, every market's default behaviour unchanged).
+    pullback_entry_atr_frac: float = 0.0
+    pullback_entry_window: int = 0  # candles to wait for the pullback before dropping
 
 
 @dataclass
@@ -272,6 +283,12 @@ STRATEGY_PROFILES = {
                                     # back to £0 on noise (e.g. 01:10 SELL +£12→£0). 0.25 < 0.5
                                     # trigger so the locked stop stays behind price at arm time.
         atr_trail_mult=1.5,
+        pullback_entry_atr_frac=0.5,  # 2026-06-11: MTF pullback entry (Oanda-style).
+        pullback_entry_window=6,      # Wait ≤6 candles for a 0.5×ATR retrace toward the
+                                      # EMA before entering; drop the signal if it never
+                                      # comes. Backtest GC=F: 5m PF 1.91→3.28 / 1h 3.54→8.27.
+                                      # Addresses the instant-reversal shorts (e.g. 06-11
+                                      # 00:25 SELL stopped in 2min as price bounced +17).
     ),
 
     # =================================================================

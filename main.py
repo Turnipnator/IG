@@ -150,6 +150,12 @@ STARTUP_COOLDOWN_MINUTES = 15
 CLUSTER_FILTER_WINDOW_MIN = 15
 CLUSTER_FILTER_ENFORCE = False
 recent_group_entries: dict[str, tuple[datetime, str]] = {}  # epic -> (entry_time, direction)
+
+# MTF pullback-entry state (StrategyConfig.pullback_entry_atr_frac/window). When a
+# signal arms a pullback, we hold it here until price retraces frac×ATR toward the
+# EMA (then enter at the better level) or the window expires (then drop it). Keyed
+# by epic -> {"signal": TradeSignal, "target": float, "deadline": datetime}.
+pending_pullback: dict[str, dict] = {}
 bot_start_time: datetime = datetime.now()
 
 
@@ -692,6 +698,48 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             f"(confidence: {trade_signal.confidence:.0%}) - {trade_signal.reason}"
         )
 
+        # MTF pullback-entry resolution (StrategyConfig.pullback_entry_*). Runs
+        # BEFORE the HOLD return so a pending order resolves on price action even
+        # when the current candle produces no fresh signal (it's a resting limit,
+        # not a re-evaluation). Gold opts in; every other profile has frac=0 and
+        # skips this whole block. See scripts/backtest_gold_pullback.py.
+        strategy_cfg = get_strategy_for_market(market_config)
+        pb_frac = getattr(strategy_cfg, "pullback_entry_atr_frac", 0.0)
+        pb_window = getattr(strategy_cfg, "pullback_entry_window", 0)
+        pullback_enabled = pb_frac > 0 and pb_window > 0
+        pullback_resolved = False
+        if pullback_enabled and epic in pending_pullback:
+            pend = pending_pullback[epic]
+            if datetime.now() > pend["deadline"]:
+                logger.info(
+                    f"🔬 Pullback [{market.name}]: no {pb_frac}xATR retrace within "
+                    f"{pb_window} candles — signal dropped (runaway avoided)"
+                )
+                _log_suppressed_signal(
+                    market_config, df, pend["signal"],
+                    f"Pullback-entry-expired ({pb_frac}xATR/{pb_window}c)",
+                )
+                del pending_pullback[epic]
+                # fall through — a fresh signal this candle may re-arm below
+            else:
+                pend_dir = pend["signal"].signal.value
+                reached = (current_price >= pend["target"]) if pend_dir == "SELL" \
+                    else (current_price <= pend["target"])
+                if reached:
+                    logger.info(
+                        f"✅ Pullback [{market.name}]: {pend_dir} retrace reached "
+                        f"(price {current_price:.1f} vs target {pend['target']:.1f}) — entering"
+                    )
+                    trade_signal = pend["signal"]
+                    del pending_pullback[epic]
+                    pullback_resolved = True
+                else:
+                    logger.debug(
+                        f"Pullback [{market.name}]: waiting, {current_price:.1f} "
+                        f"not yet at {pend['target']:.1f}"
+                    )
+                    return
+
         if trade_signal.signal == Signal.HOLD:
             return
 
@@ -709,6 +757,32 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 f"Direction-restricted ({market_config.allowed_direction}-only)",
             )
             return
+
+        # MTF pullback-entry ARM. A fresh, valid signal does NOT enter immediately
+        # when pullback is enabled — it arms a pending order and waits for price to
+        # retrace frac×ATR toward the EMA (resolved at the top of a later call). If
+        # ATR is unavailable we fall through to immediate entry (safe default).
+        if pullback_enabled and not pullback_resolved:
+            atr_val = getattr(trade_signal, "atr", 0.0) or 0.0
+            if atr_val > 0:
+                offset = pb_frac * atr_val
+                if trade_signal.signal.value == "SELL":
+                    target = current_price + offset   # wait for a bounce UP to short into
+                else:
+                    target = current_price - offset   # wait for a dip DOWN to buy
+                pending_pullback[epic] = {
+                    "signal": trade_signal,
+                    "target": target,
+                    "deadline": datetime.now() + timedelta(
+                        minutes=pb_window * market_config.candle_interval
+                    ),
+                }
+                logger.info(
+                    f"🔬 Pullback [{market.name}]: {trade_signal.signal.value} armed @ "
+                    f"{trade_signal.confidence:.0%} — wait ≤{pb_window} candles for price "
+                    f"to reach {target:.1f} ({pb_frac}xATR={offset:.1f} from {current_price:.1f})"
+                )
+                return
 
         # Leg-size (exhaustion) filter — OBSERVATIONAL (log + journal only) for
         # markets that opt in via MarketConfig.leg_filter_lookback (currently
