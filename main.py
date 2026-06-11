@@ -695,6 +695,21 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         if trade_signal.signal == Signal.HOLD:
             return
 
+        # Hard direction restriction (MarketConfig.allowed_direction). For
+        # markets with a one-sided edge (e.g. US 10-Year T-Note long-only,
+        # 2026-06-11 cull review) — block the disallowed side outright.
+        if (market_config.allowed_direction
+                and trade_signal.signal.value != market_config.allowed_direction):
+            logger.info(
+                f"{market.name}: {trade_signal.signal.value} blocked — "
+                f"market is {market_config.allowed_direction}-only"
+            )
+            _log_suppressed_signal(
+                market_config, df, trade_signal,
+                f"Direction-restricted ({market_config.allowed_direction}-only)",
+            )
+            return
+
         # Leg-size (exhaustion) filter — OBSERVATIONAL (log + journal only) for
         # markets that opt in via MarketConfig.leg_filter_lookback (currently
         # NASDAQ 100). Records entries an enforced filter WOULD block so we can

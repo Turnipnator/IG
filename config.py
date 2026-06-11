@@ -136,6 +136,13 @@ class MarketConfig:
     # 'Cluster-filter%'. "" disables. Only the 6 backtested equity indices are
     # grouped; AI Index is a candidate to add once data confirms.
     correlation_group: str = ""
+    # Hard direction restriction. "" (default) = trade both sides; "BUY" = long
+    # only (skip SELL signals), "SELL" = short only. For markets whose edge is
+    # empirically one-sided — unlike adx_ceiling_direction (which only scopes the
+    # exhaustion ceiling), this blocks the disallowed side outright. Set on US
+    # 10-Year T-Note ("BUY") 2026-06-11: cull review showed long PF 1.26 vs short
+    # PF 0.63 (700d Yahoo), so the short side is dead weight.
+    allowed_direction: str = ""
 
 
 # Load configurations from environment
@@ -770,19 +777,23 @@ MARKETS = [
         adx_ceiling_enforce=False,
         adx_ceiling_direction="BUY",  # LONG-side (the inverse!): BUY +5.61, shorts never reach 55 (dir-split 2026-06-09)
     ),
-    MarketConfig(
-        epic="CO.D.CT.Month1.IP",
-        name="NY Cotton",
-        sector="Commodities",
-        min_stop_distance=40.0,
-        default_size=0.04,
-        expiry="DEC-26",
-        candle_interval=15,
-        min_confidence=0.55,
-        strategy="default",
-        trading_start=13,      # ICE US softs session 12:45-17:30 UTC
-        trading_end=18,
-    ),
+    # Disabled 2026-06-11 (cull review) — INERT, not a loser: bare `default`
+    # profile generates ~1 trade in 60d (15m Yahoo) and 0 live trades ever. No
+    # edge to validate, just an idle market slot. Profile kept; re-enable only
+    # with a dedicated profile that actually trades.
+    # MarketConfig(
+    #     epic="CO.D.CT.Month1.IP",
+    #     name="NY Cotton",
+    #     sector="Commodities",
+    #     min_stop_distance=40.0,
+    #     default_size=0.04,
+    #     expiry="DEC-26",
+    #     candle_interval=15,
+    #     min_confidence=0.55,
+    #     strategy="default",
+    #     trading_start=13,      # ICE US softs session 12:45-17:30 UTC
+    #     trading_end=18,
+    # ),
 
     # --- FOREX (Big Winners Strategy) ---
 
@@ -848,17 +859,20 @@ MARKETS = [
     ),
 
     # --- RATES / BONDS (Big Winners Strategy) ---
-    MarketConfig(
-        epic="IR.D.02YEAR100.Month2.IP",
-        name="US 2-Year T-Note",
-        sector="Rates",
-        min_stop_distance=6.0,     # Spread is 2.0 — need 3x spread minimum
-        default_size=1.0,
-        expiry="JUN-26",
-        candle_interval=15,
-        min_confidence=0.55,
-        strategy="default",
-    ),
+    # US 2-Year T-Note disabled 2026-06-11 (cull review) — NO EDGE: 44t/59d
+    # Yahoo dead flat (PF 0.93, -0.02%), neither side works (long 0.72 / short
+    # 1.07). 1 live trade ever (-£11.80). Profile kept.
+    # MarketConfig(
+    #     epic="IR.D.02YEAR100.Month2.IP",
+    #     name="US 2-Year T-Note",
+    #     sector="Rates",
+    #     min_stop_distance=6.0,     # Spread is 2.0 — need 3x spread minimum
+    #     default_size=1.0,
+    #     expiry="JUN-26",
+    #     candle_interval=15,
+    #     min_confidence=0.55,
+    #     strategy="default",
+    # ),
     MarketConfig(
         # 1h candles: 365d backtest PF 1.44, +0.55%, 39 trades, 51% WR vs
         # 15m PF 0.60, -0.38%, 20 trades, 40% WR. Treasury futures move
@@ -873,6 +887,9 @@ MARKETS = [
         htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
         strategy="default",
+        allowed_direction="BUY",   # 2026-06-11 cull review: long-only. 700d Yahoo
+                                   # long PF 1.26 vs short PF 0.63; both-sides was a
+                                   # net loser only because shorts dragged it down.
     ),
 ]
 
