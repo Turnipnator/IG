@@ -581,6 +581,16 @@ MARKETS = [
         min_confidence=0.55,
         strategy="indices_tight",  # FTSE: stop 2.0x / R:R 2.0 (2026-06-04 sweep)
         correlation_group="equity_index",  # cluster filter (2026-06-11)
+        allowed_direction="BUY",   # 2026-06-11: long-bias. All 4 current-era live
+                                   # trades were SHORTS, all faded (price rose into
+                                   # each — hourly pullback shorts inside FTSE's
+                                   # daily uptrend). Yahoo says shorts are +EV
+                                   # (PF 1.71) but that modest edge doesn't survive
+                                   # the IG DFB spread (0/4 live); long is robust
+                                   # (PF 10.26). Backtest stop-width is INERT (exits
+                                   # are MACD-driven), so 2.0x is a red herring —
+                                   # direction was the real lever. Revisit if FTSE
+                                   # enters a sustained downtrend.
         trading_start=8,       # LSE cash open 08:00 UTC
         trading_end=17,        # Include 16:30 close auction (peak liquidity)
     ),
