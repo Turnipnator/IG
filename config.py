@@ -438,7 +438,12 @@ STRATEGY_PROFILES = {
         rsi_oversold=30,
         rsi_buy_max=55,
         rsi_sell_min=45,
-        adx_threshold=40,     # Only trade strong trends — ADX 30 was -£11, ADX 40 is +£10
+        adx_threshold=25,     # 2026-06-11: 40→25. ADX 40 strangled S&P to ~1 trade/59d
+                              # (9 live trades in 3mo); ^GSPC sweep shows the long edge
+                              # lives at adx25 (8t PF 1.98 +0.31%) vs adx40 1t. Paired with
+                              # allowed_direction="BUY" — short loses every level. NB the
+                              # +0.31% is thin (Yahoo cash); paper-trial, disable if it
+                              # doesn't clear the IG spread live.
         stop_atr_mult=1.5,
         reward_risk=2.0,
         min_confidence=0.55,
@@ -554,7 +559,11 @@ MARKETS = [
         min_stop_distance=2.0,  # Raised from 1.0 — cap was 20pts, ATR*1.5 can exceed that
         default_size=1.0,
         min_confidence=0.55,   # Raised from 0.4 for quality entries
-        strategy="indices_selective",  # ADX 40 — S&P too choppy at 30, only trade strong trends
+        strategy="indices_selective",  # ADX 25 (2026-06-11, was 40 — strangled it to ~0 trades)
+        allowed_direction="BUY",       # 2026-06-11 ^GSPC sweep: long-only. Short loses every
+                                       # ADX level (live 6 shorts −£12). Long-only adx25 trial —
+                                       # S&P's hyper-efficiency thins our momentum edge; disable
+                                       # if the marginal +0.31% doesn't survive the live spread.
         correlation_group="equity_index",  # cluster filter (2026-06-11)
     ),
     MarketConfig(
