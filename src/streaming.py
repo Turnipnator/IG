@@ -21,10 +21,14 @@ import pandas as pd
 CANDLE_CACHE_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
 CANDLE_CACHE_FILE = CANDLE_CACHE_DIR / "streamed_candles.json"
 # Durable, append-only candle history harvested from the free stream (zero API
-# cost). Unlike the 100-candle rolling cache above, this NEVER drops candles —
-# it accumulates a permanent OHLC history per EPIC so IG-only instruments with
-# no Yahoo equivalent (e.g. AI Index) become backtestable on the real contract.
+# cost). Unlike the 100-candle rolling cache above, this accumulates a permanent
+# OHLC history per EPIC so IG-only instruments with no Yahoo equivalent (e.g. AI
+# Index) become backtestable on the real contract. Bounded by a daily prune
+# (prune_candle_archive) so it can't grow without limit — project HDD rule.
 CANDLE_ARCHIVE_DIR = CANDLE_CACHE_DIR / "candle_archive"
+# Retention for the durable archive. 365d ≈ 125MB across all markets (~116B/candle)
+# — generous (6× Yahoo's 59d 5m depth) yet hard-bounded. Env-tunable (e.g. 90).
+CANDLE_ARCHIVE_RETENTION_DAYS = int(os.getenv("CANDLE_ARCHIVE_RETENTION_DAYS", "365"))
 
 try:
     from lightstreamer.client import (
@@ -608,6 +612,52 @@ class IGStreamService:
                 logger.info(f"Archived {total_new} new candles to durable history")
         except Exception as e:
             logger.warning(f"Could not archive candles: {e}")
+
+    def prune_candle_archive(
+        self, retention_days: int = CANDLE_ARCHIVE_RETENTION_DAYS
+    ) -> None:
+        """Bound the durable archive: drop candles older than retention_days from
+        each per-EPIC JSONL via an atomic rewrite. Keeps the archive size-bounded
+        (project HDD rule). Only removes OLD lines — never the recent tail — so the
+        append cursor stays valid. Runs daily on the SAME scheduler thread as the
+        harvester, so there's no append/rewrite race.
+        """
+        try:
+            if not CANDLE_ARCHIVE_DIR.exists():
+                return
+            cutoff = datetime.now() - timedelta(days=retention_days)
+            total_pruned = 0
+            for path in CANDLE_ARCHIVE_DIR.glob("*.jsonl"):
+                try:
+                    kept, pruned = [], 0
+                    with open(path) as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                ts = datetime.fromisoformat(json.loads(line)["timestamp"])
+                            except (json.JSONDecodeError, KeyError, ValueError):
+                                kept.append(line)  # keep unparseable lines, don't lose data
+                                continue
+                            if ts >= cutoff:
+                                kept.append(line)
+                            else:
+                                pruned += 1
+                    if pruned:
+                        tmp = path.with_suffix(".jsonl.tmp")
+                        with open(tmp, "w") as f:
+                            f.write("\n".join(kept) + ("\n" if kept else ""))
+                        tmp.replace(path)  # atomic
+                        total_pruned += pruned
+                except Exception as e:
+                    logger.warning(f"Could not prune archive {path.name}: {e}")
+            if total_pruned:
+                logger.info(
+                    f"Pruned {total_pruned} candles older than {retention_days}d from archive"
+                )
+        except Exception as e:
+            logger.warning(f"Archive prune failed: {e}")
 
     def load_candles_from_disk(self) -> dict:
         """

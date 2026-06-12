@@ -1978,6 +1978,7 @@ async def main_async():
         # changes — streaming-only, no API cost, no Telegram/log spam on no-change.
         schedule.every(30).minutes.do(run_daily_screen, periodic=True)
         schedule.every().day.at("21:00").do(send_daily_summary)
+        schedule.every().day.at("22:00").do(stream_service.prune_candle_archive)  # Bound the durable archive (HDD-safe retention, default 365d)
 
         # Run scheduler in background
         def run_schedule():
