@@ -473,12 +473,23 @@ def _auto_roll_contract(market_config: 'MarketConfig') -> None:
         logger.error(f"Auto-roll failed for {market_config.name}: {e}")
 
 
-def run_daily_screen() -> None:
-    """Run the market screener using streaming data. Called daily at 04:00 UTC."""
+def run_daily_screen(periodic: bool = False) -> None:
+    """Run the market screener using streaming data (zero API cost — streaming only).
+
+    Two cadences (2026-06-12, intra-cycle-surger fix):
+      - 6 session-aligned full screens (periodic=False) → full log dump + full
+        Telegram report, the usual briefings.
+      - a frequent re-screen (periodic=True, every 30 min) → catches a market
+        whose score crosses the top-N cutoff BETWEEN the 4-hourly screens (e.g.
+        NASDAQ surging 52→70 mid-morning, missed until the next scheduled screen).
+        Stays SILENT when the active set is unchanged (one log line, no Telegram —
+        HDD/noise-safe); only on an actual active-set change does it dump + send a
+        concise "active markets updated" alert.
+    """
     if not screener or not stream_service:
         return
 
-    logger.info("Running daily market screener...")
+    prev_active = set(screener.active_epics)
 
     # Collect spreads from streaming data
     spreads = {}
@@ -487,22 +498,47 @@ def run_daily_screen() -> None:
             spreads[epic] = market.offer - market.bid
 
     scores = screener.run_screen(stream_service, htf_trends, spreads)
+    new_active = set(screener.active_epics)
+    changed = new_active != prev_active
 
-    # Log results
+    # Quiet path: a periodic re-screen that changed nothing — one line, no Telegram.
+    if periodic and not changed:
+        logger.info(f"Periodic screen: no active-set change ({len(new_active)} active)")
+        return
+
+    # Log results (session screen, or a periodic screen that DID change the set)
     active = [s for s in scores if s.is_active]
     inactive = [s for s in scores if not s.is_active and s.score > 0]
-    logger.info(f"Screener results: {len(active)} active, {len(inactive)} inactive")
+    label = "Periodic re-screen — ACTIVE SET CHANGED" if periodic else "Screener results"
+    logger.info(f"{label}: {len(active)} active, {len(inactive)} inactive")
     for s in active:
         logger.info(f"  [ACTIVE] {s.name}: {s.score}/100 (ADX={s.adx}, ATR/Spread={s.atr_spread_ratio}x)")
     for s in inactive[:5]:
         logger.info(f"  [OFF] {s.name}: {s.score}/100 — {s.reason}")
 
-    # Notify via Telegram
-    if telegram_loop:
-        asyncio.run_coroutine_threadsafe(
-            telegram.send_notification(screener.get_scores_text(), parse_mode="HTML"),
-            telegram_loop,
-        )
+    if not telegram_loop:
+        return
+
+    if periodic:
+        # Concise change alert — only the deltas, not the full board.
+        added = sorted((s for s in scores if s.epic in new_active - prev_active),
+                       key=lambda s: -s.score)
+        removed = sorted((s for s in scores if s.epic in prev_active - new_active),
+                         key=lambda s: -s.score)
+        lines = ["🔄 <b>Active markets updated</b> (intra-cycle)"]
+        for s in added:
+            lines.append(f"➕ {s.name} ({s.score})")
+        for s in removed:
+            lines.append(f"➖ {s.name} ({s.score})")
+        lines.append(f"<i>{len(new_active)} active</i>")
+        msg = "\n".join(lines)
+    else:
+        msg = screener.get_scores_text()
+
+    asyncio.run_coroutine_threadsafe(
+        telegram.send_notification(msg, parse_mode="HTML"),
+        telegram_loop,
+    )
 
 
 def on_price_update(epic: str, market: MarketStream) -> None:
@@ -1929,13 +1965,17 @@ async def main_async():
         schedule.every(6).hours.do(refresh_session)
         schedule.every(24).hours.do(update_htf_trends, force=True)  # 1x/day — 19 markets × 30pts = 570pts/day, 3,990/week
         schedule.every(15).minutes.do(stream_service.save_candles_to_disk)  # Persist candles for restarts
-        # Screener at each major session open (zero API cost)
+        # Screener at each major session open — full briefings (zero API cost)
         schedule.every().day.at("23:00").do(run_daily_screen)  # Asia/forex open
         schedule.every().day.at("03:00").do(run_daily_screen)  # Pre-London
         schedule.every().day.at("07:00").do(run_daily_screen)  # London open
         schedule.every().day.at("11:00").do(run_daily_screen)  # Pre-US
         schedule.every().day.at("15:00").do(run_daily_screen)  # US open
         schedule.every().day.at("19:00").do(run_daily_screen)  # Late US/evening
+        # Frequent re-screen to catch intra-cycle surgers crossing the top-N cutoff
+        # between the 4-hourly briefings (2026-06-12). Silent unless the active set
+        # changes — streaming-only, no API cost, no Telegram/log spam on no-change.
+        schedule.every(30).minutes.do(run_daily_screen, periodic=True)
         schedule.every().day.at("21:00").do(send_daily_summary)
 
         # Run scheduler in background
