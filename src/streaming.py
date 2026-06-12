@@ -20,6 +20,11 @@ import pandas as pd
 # Disk persistence for candle data
 CANDLE_CACHE_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
 CANDLE_CACHE_FILE = CANDLE_CACHE_DIR / "streamed_candles.json"
+# Durable, append-only candle history harvested from the free stream (zero API
+# cost). Unlike the 100-candle rolling cache above, this NEVER drops candles —
+# it accumulates a permanent OHLC history per EPIC so IG-only instruments with
+# no Yahoo equivalent (e.g. AI Index) become backtestable on the real contract.
+CANDLE_ARCHIVE_DIR = CANDLE_CACHE_DIR / "candle_archive"
 
 try:
     from lightstreamer.client import (
@@ -319,6 +324,12 @@ class IGStreamService:
         self.connection_status = "DISCONNECTED"
         self._lock = threading.Lock()
 
+        # Append-only candle-archive cursor: last-archived timestamp per epic, so
+        # archive_candles_to_disk() appends only NEW closed candles before the
+        # rolling deque (maxlen=100) drops them. Seeded once from disk on first run.
+        self._archive_cursor: dict[str, datetime] = {}
+        self._archive_cursor_loaded = False
+
     def connect(self) -> bool:
         """Connect to Lightstreamer server."""
         try:
@@ -531,6 +542,72 @@ class IGStreamService:
 
         except Exception as e:
             logger.warning(f"Could not save candles to disk: {e}")
+
+    def _load_archive_cursor(self) -> None:
+        """One-time: seed the per-epic archive cursor from the tail of each
+        archive file so a restart doesn't re-append candles already on disk."""
+        self._archive_cursor_loaded = True
+        if not CANDLE_ARCHIVE_DIR.exists():
+            return
+        for path in CANDLE_ARCHIVE_DIR.glob("*.jsonl"):
+            try:
+                last = None
+                with open(path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            last = line
+                if last:
+                    ts = json.loads(last).get("timestamp")
+                    if ts:
+                        self._archive_cursor[path.stem] = datetime.fromisoformat(ts)
+            except Exception as e:
+                logger.warning(f"Could not read archive tail {path.name}: {e}")
+
+    def archive_candles_to_disk(self) -> None:
+        """Append newly-closed streamed candles to a durable per-epic JSONL archive.
+
+        Zero API cost (streaming data only). The in-memory buffer is a 100-candle
+        deque (~8h at 5m) that silently drops older candles; this harvests them
+        into permanent history so every EPIC — especially IG-only ones with no
+        Yahoo equivalent (AI Index) — becomes backtestable on the REAL instrument
+        with no Yahoo-proxy error and no historical-allowance usage. Append-only,
+        deduped by an in-memory timestamp cursor (no full-file reads after startup).
+        Growth is ~10MB/month across all markets — trim/retention is a later tweak.
+        """
+        try:
+            if not self._archive_cursor_loaded:
+                self._load_archive_cursor()
+            CANDLE_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+            total_new = 0
+            for epic, market in self.markets.items():
+                if not market.candles:
+                    continue
+                cursor = self._archive_cursor.get(epic)
+                new = [
+                    c for c in market.candles
+                    if isinstance(c.timestamp, datetime)
+                    and (cursor is None or c.timestamp > cursor)
+                ]
+                if not new:
+                    continue
+                path = CANDLE_ARCHIVE_DIR / f"{epic}.jsonl"
+                with open(path, "a") as f:
+                    for c in new:
+                        f.write(json.dumps({
+                            "timestamp": c.timestamp.isoformat(),
+                            "open": c.open,
+                            "high": c.high,
+                            "low": c.low,
+                            "close": c.close,
+                            "volume": c.volume,
+                        }) + "\n")
+                self._archive_cursor[epic] = new[-1].timestamp
+                total_new += len(new)
+            if total_new:
+                logger.info(f"Archived {total_new} new candles to durable history")
+        except Exception as e:
+            logger.warning(f"Could not archive candles: {e}")
 
     def load_candles_from_disk(self) -> dict:
         """

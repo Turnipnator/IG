@@ -1965,6 +1965,7 @@ async def main_async():
         schedule.every(6).hours.do(refresh_session)
         schedule.every(24).hours.do(update_htf_trends, force=True)  # 1x/day — 19 markets × 30pts = 570pts/day, 3,990/week
         schedule.every(15).minutes.do(stream_service.save_candles_to_disk)  # Persist candles for restarts
+        schedule.every(15).minutes.do(stream_service.archive_candles_to_disk)  # Durable history harvest (free, IG-native backtest source incl. AI Index)
         # Screener at each major session open — full briefings (zero API cost)
         schedule.every().day.at("23:00").do(run_daily_screen)  # Asia/forex open
         schedule.every().day.at("03:00").do(run_daily_screen)  # Pre-London
