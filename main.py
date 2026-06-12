@@ -176,7 +176,16 @@ def initialize() -> bool:
     rate_limiter = RateLimiter(requests_per_minute=25)
     calendar = EconomicCalendar(buffer_minutes=30)
     journal = TradeJournal()
-    screener = MarketScreener(max_active=8)  # Concentrate on top 8 — fewer markets = better P&L
+    # Active-markets cap 8→11 (2026-06-12 veto-vs-outcome analysis,
+    # scripts/screener_veto_outcomes.py). The score>=40 quality threshold earns
+    # its keep — "Score too low" vetoes (band 0-34) were the only net-negative
+    # band (−0.99R, correctly blocked losers). The 8-slot cap was the costly
+    # part — "Below top 8" vetoes (score 45+) were net WINNERS (+3.27R) blocked
+    # only for lack of a slot on a stale ≤4h-old rank. Raising to 11 admits those
+    # while threshold=40 still kills the losers; real concurrency/diversification
+    # now binds on MAX_POSITIONS=8 (actual capacity, not stale rank). Paper-trial:
+    # re-pull the veto analysis in ~2wk. Caveat: Yahoo-futures proxy, thin sample.
+    screener = MarketScreener(max_active=11)
 
     # Login to IG
     if not client.login():
