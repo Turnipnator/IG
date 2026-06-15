@@ -1865,6 +1865,32 @@ def signal_handler(signum, frame):
     running = False
 
 
+# --- Scheduled candle-persistence wrappers -------------------------------
+# These MUST call through the *current* global stream_service. The global is
+# reassigned to a brand-new IGStreamService on every session refresh
+# (refresh_session_and_reconnect -> initialize_streaming, ~every 6h when IG
+# tokens expire). A bound method captured at schedule-registration time
+# (schedule.do(stream_service.save_candles_to_disk)) keeps pointing at the OLD,
+# now-disconnected instance whose candle deque is frozen at the moment of the
+# refresh — so save/archive silently persist stale data forever while live
+# trading uses the fresh instance. Referencing the global by name here resolves
+# it at call time, so the jobs always act on the live stream. (Bug: 2026-06-15 —
+# archive froze at Fri 17:15 after a Fri-evening refresh orphaned the jobs.)
+def _scheduled_save_candles():
+    if stream_service:
+        stream_service.save_candles_to_disk()
+
+
+def _scheduled_archive_candles():
+    if stream_service:
+        stream_service.archive_candles_to_disk()
+
+
+def _scheduled_prune_archive():
+    if stream_service:
+        stream_service.prune_candle_archive()
+
+
 async def main_async():
     """Async main entry point."""
     global running, telegram_loop
@@ -1964,8 +1990,8 @@ async def main_async():
 
         schedule.every(6).hours.do(refresh_session)
         schedule.every(24).hours.do(update_htf_trends, force=True)  # 1x/day — 19 markets × 30pts = 570pts/day, 3,990/week
-        schedule.every(15).minutes.do(stream_service.save_candles_to_disk)  # Persist candles for restarts
-        schedule.every(15).minutes.do(stream_service.archive_candles_to_disk)  # Durable history harvest (free, IG-native backtest source incl. AI Index)
+        schedule.every(15).minutes.do(_scheduled_save_candles)  # Persist candles for restarts (calls CURRENT stream_service — see wrapper note)
+        schedule.every(15).minutes.do(_scheduled_archive_candles)  # Durable history harvest (free, IG-native backtest source incl. AI Index)
         # Screener at each major session open — full briefings (zero API cost)
         schedule.every().day.at("23:00").do(run_daily_screen)  # Asia/forex open
         schedule.every().day.at("03:00").do(run_daily_screen)  # Pre-London
@@ -1978,7 +2004,7 @@ async def main_async():
         # changes — streaming-only, no API cost, no Telegram/log spam on no-change.
         schedule.every(30).minutes.do(run_daily_screen, periodic=True)
         schedule.every().day.at("21:00").do(send_daily_summary)
-        schedule.every().day.at("22:00").do(stream_service.prune_candle_archive)  # Bound the durable archive (HDD-safe retention, default 365d)
+        schedule.every().day.at("22:00").do(_scheduled_prune_archive)  # Bound the durable archive (HDD-safe retention, default 365d)
 
         # Run scheduler in background
         def run_schedule():

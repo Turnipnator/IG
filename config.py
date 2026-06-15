@@ -473,6 +473,13 @@ STRATEGY_PROFILES = {
         pullback_pct=0.2,
         breakeven_trigger_pct=0.7,  # Raised from 0.5 — indices tight stops triggered BE on noise
         atr_trail_mult=1.5,
+        # MTF pullback-entry (2026-06-15) — same Gold-derived fix as FTSE after the
+        # 2026-06-15 Monday whipsaw. backtest_indices_pullback.py 5m/59d: NASDAQ
+        # WR 73→75%, PF 1.57→3.61, P&L +0.47→+1.32% at window 6 / frac 0.5.
+        # Paper-trial — review ~2026-06-26. (Wall St / shared `indices` NOT given
+        # this — the backtest showed no benefit there, it's our best market.)
+        pullback_entry_atr_frac=0.5,
+        pullback_entry_window=6,
     ),
 
     # FTSE: stop 2.0x / R:R 2.0 since 2026-06-04 (profile name now a misnomer —
@@ -495,6 +502,15 @@ STRATEGY_PROFILES = {
         pullback_pct=0.2,
         breakeven_trigger_pct=0.7,  # Raised from 0.5 — indices tight stops triggered BE on noise
         atr_trail_mult=1.5,
+        # MTF pullback-entry (2026-06-15) — ports the Gold fix to FTSE after the
+        # 2026-06-15 Monday whipsaw (5 with-trend pullback entries fired at market
+        # on a lagging EMA stack into a reversal, all stopped). Instead of entering
+        # at market on the signal candle, ARM and wait ≤6 candles for a 0.5×ATR
+        # retrace toward the EMA, then enter at the better level (or DROP runaways).
+        # backtest_indices_pullback.py 5m/59d: FTSE WR 47→73%, PF 2.67→6.61 at flat
+        # P&L (fewer, higher-quality trades). Paper-trial — review ~2026-06-26.
+        pullback_entry_atr_frac=0.5,
+        pullback_entry_window=6,
     ),
 
     # =================================================================
