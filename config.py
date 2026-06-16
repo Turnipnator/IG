@@ -684,6 +684,24 @@ MARKETS = [
         default_size=1.0,
         min_confidence=0.55,
         strategy="indices",
+        # ADX-ceiling OBSERVATIONAL (log + journal only, trade proceeds) — AI Index
+        # ONLY (a MarketConfig field, so it can't touch Wall St/Japan/HK who share
+        # the `indices` strategy). 2026-06-16: a profile-level ceiling HURT the three
+        # Yahoo-proxy `indices` markets (their high-ADX band is net-winning —
+        # scripts/backtest_indices_adx_ceiling.py) but AI Index is the exception.
+        # Sweet-spot search (scripts/backtest_aiidx_ceiling.py, archive 13d + 4 real
+        # journal trades, 10 total): the >45 ADX band is the worst (1W/3L, the lone
+        # "win" a +0.06% scratch) while the big real winner (+£24.43) sits at ADX
+        # 41.2, safely below 45. So 45 isolates the bad band without clipping the
+        # winner. HONEST CAVEAT: thin sample, and in the archive sim ADX barely
+        # separates winners (43.3) from losers (42.8) and PF never clears 0.09 at any
+        # ceiling — this REDUCES BLEED, it does NOT create edge. AI Index has no
+        # validated edge yet; the real call (cap vs disable) is the 2026-06-26 review
+        # once would-block data + ~2x the archive accumulate. Both directions (its
+        # high-ADX losers are BUY 47.1/46.9 AND SELL 52.2), unlike NASDAQ's SELL-only.
+        adx_ceiling=45.0,
+        adx_ceiling_enforce=False,
+        adx_ceiling_direction="",
         trading_start=4,
         trading_end=22,        # Extended from 20 (2026-05-07): 5m backtest showed
                                # +£35/mo theoretical edge but live had only 1 trade
