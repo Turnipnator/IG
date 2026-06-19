@@ -709,6 +709,19 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         if not market_config:
             return
 
+        # Forex gate. The momentum forex profiles are RETIRED (net-losing — 40% WR,
+        # ~-£94 over the current era; see project_two_week_review). Forex now trades
+        # ONLY via the breakout strategy, behind the runtime /forex toggle
+        # (telegram.forex_mode: off|shadow|breakout). Default "off" = no forex
+        # trading. Markets stay subscribed so candles keep archiving and the toggle
+        # works live. The breakout analyzer + shadow/breakout routing land next; for
+        # now forex never opens a position regardless of mode.
+        if market_config.sector == "Forex":
+            fx_mode = getattr(telegram, "forex_mode", "off")
+            if fx_mode != "off":
+                logger.debug(f"[FOREX] {market.name}: mode={fx_mode} — breakout analyzer not yet active")
+            return
+
         # Skip if market not tradeable
         if market.market_state != "TRADEABLE":
             logger.debug(f"{market.name} not tradeable: {market.market_state}")

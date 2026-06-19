@@ -31,6 +31,12 @@ logger = logging.getLogger(__name__)
 
 STATS_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
 STATS_FILE = STATS_DIR / "daily_stats.json"
+# Forex trading mode, toggled live via /forex (off|shadow|breakout). Persisted so a
+# deliberate "breakout window" survives a session refresh; defaults to the SAFE
+# "off" if the file is missing/corrupt. The momentum forex profiles are retired
+# (net-losing) — forex trades ONLY via the breakout strategy, and only when toggled.
+FOREX_MODE_FILE = STATS_DIR / "forex_mode.json"
+FOREX_MODES = ("off", "shadow", "breakout")
 
 # The daily stats reset at the 21:00 UTC trading-session boundary
 # (send_daily_summary -> reset_daily_stats, scheduled at 21:00). Persistence
@@ -94,6 +100,10 @@ class TelegramBot:
         self.ig_client: Optional['IGClient'] = None
         self.trading_enabled = True
         self.is_running = False
+        # Forex runtime mode (off|shadow|breakout). Loaded from disk below; default
+        # safe-off. See FOREX_MODE_FILE. Read by main.py's forex gate.
+        self.forex_mode = "off"
+        self.load_forex_mode()
 
         # Statistics
         self.start_time = datetime.now()
@@ -158,6 +168,30 @@ class TelegramBot:
         except Exception as e:
             logger.warning(f"Failed to load daily stats: {e}")
 
+    def save_forex_mode(self) -> None:
+        """Persist the forex mode so a 'breakout window' survives a session refresh."""
+        try:
+            STATS_DIR.mkdir(parents=True, exist_ok=True)
+            FOREX_MODE_FILE.write_text(json.dumps({
+                "forex_mode": self.forex_mode,
+                "saved_at": datetime.now().isoformat(),
+            }))
+        except Exception as e:
+            logger.warning(f"Failed to save forex mode: {e}")
+
+    def load_forex_mode(self) -> None:
+        """Restore the forex mode from disk; fall back to safe 'off' on any problem."""
+        try:
+            if not FOREX_MODE_FILE.exists():
+                return
+            mode = json.loads(FOREX_MODE_FILE.read_text()).get("forex_mode", "off")
+            self.forex_mode = mode if mode in FOREX_MODES else "off"
+            if self.forex_mode != "off":
+                logger.info(f"Restored forex mode: {self.forex_mode}")
+        except Exception as e:
+            logger.warning(f"Failed to load forex mode (defaulting to off): {e}")
+            self.forex_mode = "off"
+
     def is_authorized(self, user_id: int) -> bool:
         """Check if user is authorized."""
         return user_id in self.authorized_users
@@ -209,6 +243,7 @@ class TelegramBot:
             "*🎮 Control:*\n"
             "/stop - Pause trading\n"
             "/resume - Resume trading\n"
+            "/forex - Forex mode (off|shadow|breakout)\n"
             "/rebuild - Pull latest code & restart\n"
             "/emergency - ⚠️ Close ALL positions\n\n"
             "*🔔 Notifications:*\n"
@@ -610,6 +645,58 @@ class TelegramBot:
         else:
             await update.message.reply_text("ℹ️ Bot is already running")
 
+    async def forex_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /forex - toggle the forex trading mode (off|shadow|breakout).
+
+        Forex momentum is retired (net-losing); forex trades ONLY via the breakout
+        strategy, and only when explicitly toggled on for a window you choose.
+          off      - no forex trading (default, safe)
+          shadow   - breakout strategy runs OBSERVATIONAL (logs/journals signals,
+                     no real orders) — validate on live prices before going live
+          breakout - breakout strategy trades LIVE
+        """
+        if not self.is_authorized(update.effective_user.id):
+            return
+        self.commands_executed += 1
+
+        arg = (context.args[0].lower() if context.args else "").strip()
+        if not arg:
+            await update.message.reply_text(
+                f"🌐 *Forex mode:* `{self.forex_mode}`\n\n"
+                "Usage: `/forex off | shadow | breakout`\n"
+                "• *off* — no forex trading (default)\n"
+                "• *shadow* — breakout runs observational (no real orders)\n"
+                "• *breakout* — breakout trades live\n\n"
+                "_Momentum forex is retired; forex only trades via breakout._",
+                parse_mode='Markdown'
+            )
+            return
+
+        if arg not in FOREX_MODES:
+            await update.message.reply_text(
+                f"❌ Unknown mode `{arg}`. Use: off | shadow | breakout",
+                parse_mode='Markdown'
+            )
+            return
+
+        if arg == self.forex_mode:
+            await update.message.reply_text(f"ℹ️ Forex already `{arg}`", parse_mode='Markdown')
+            return
+
+        prev, self.forex_mode = self.forex_mode, arg
+        self.save_forex_mode()
+        logger.info(f"Forex mode changed via Telegram: {prev} -> {arg}")
+        emoji = {"off": "⚪", "shadow": "🟡", "breakout": "🟢"}[arg]
+        note = {
+            "off": "No forex trading.",
+            "shadow": "Breakout runs *observational* — logs signals, places NO real orders.",
+            "breakout": "⚠️ Breakout trading *LIVE* on forex.",
+        }[arg]
+        await update.message.reply_text(
+            f"{emoji} *Forex mode → `{arg}`* (was `{prev}`)\n{note}",
+            parse_mode='Markdown'
+        )
+
     async def emergency_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /emergency command - close all and stop."""
         if not self.is_authorized(update.effective_user.id):
@@ -1002,6 +1089,7 @@ class TelegramBot:
             self.app.add_handler(CommandHandler("stop", self.stop_command))
             self.app.add_handler(CommandHandler("pause", self.stop_command))  # Alias
             self.app.add_handler(CommandHandler("resume", self.resume_command))
+            self.app.add_handler(CommandHandler("forex", self.forex_command))
             self.app.add_handler(CommandHandler("emergency", self.emergency_command))
             self.app.add_handler(CommandHandler("rebuild", self.rebuild_command))
 
