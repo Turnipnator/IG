@@ -562,6 +562,11 @@ def on_price_update(epic: str, market: MarketStream) -> None:
         if not market_config:
             continue
 
+        # Forex positions are BREAKOUT trades — managed by the Donchian-trail in
+        # check_positions_from_stream (per candle), not BE/ATR per tick. Skip here.
+        if market_config.sector == "Forex":
+            continue
+
         strategy_cfg = get_strategy_for_market(market_config)
 
         if position.open_level is None or position.stop_level is None:
@@ -703,11 +708,120 @@ def on_candle_complete(epic: str, market: MarketStream) -> None:
     ).start()
 
 
+def _execute_breakout_entry(epic: str, market: MarketStream, market_config, signal, df) -> None:
+    """Place a LIVE breakout order (forex_mode == 'breakout'). ISOLATED from the
+    momentum pipeline with its own essential gates (one-per-epic, loss cooldown,
+    trading hours, IG min-stop clamp, spread, position sizing) so a bug here cannot
+    touch the momentum book. Exit is the Donchian-trail (_update_breakout_trail) plus
+    the broker stop; a stop/limit fill is cleaned up by external-close detection."""
+    # One breakout position per epic.
+    if any(p.epic == epic for p in known_positions.values()):
+        return
+    # Loss cooldown (shared map) — don't immediately re-enter after a stop-out.
+    if epic in loss_cooldown_until and datetime.now() < loss_cooldown_until[epic]:
+        return
+    # Post-restart cooldown — let streaming candles re-accumulate before acting.
+    if (datetime.now() - bot_start_time).total_seconds() / 60 < STARTUP_COOLDOWN_MINUTES:
+        return
+    # Trading hours (same logic as the momentum gate).
+    h = datetime.now().hour
+    ts, te = market_config.trading_start, market_config.trading_end
+    outside = (h < ts or h >= te) if ts < te else (te <= h < ts)
+    if outside:
+        logger.info(f"[BREAKOUT] {market_config.name}: outside hours ({h:02d} UTC) — skip")
+        return
+    # Market tradeable + clamp stop/limit to IG's live minimum.
+    info = client.get_market_info(epic)
+    if info:
+        if info.market_status != "TRADEABLE":
+            logger.info(f"[BREAKOUT] {market_config.name}: market_status={info.market_status} — skip")
+            return
+        if info.min_stop_distance > 0:
+            ig_min = info.min_stop_distance + 0.5
+            signal.stop_distance = max(signal.stop_distance, ig_min)
+            # No limit clamp — breakout runs no take-profit (limit stays 0; the
+            # Donchian-trail is the only exit, so winners can run).
+    # Spread safety — don't enter when the stop is within 1.5x the spread.
+    if market.bid and market.offer:
+        spread = market.offer - market.bid
+        if spread > 0 and signal.stop_distance < spread * 1.5:
+            logger.warning(f"[BREAKOUT] {market_config.name}: stop {signal.stop_distance:.1f} < 1.5x spread ({spread:.1f}) — skip")
+            return
+    # Position size (absolute-£ risk cap applies inside calculate_position_size).
+    ps = risk_manager.calculate_position_size(client.get_balance(), signal.stop_distance, market_config)
+    if not ps.approved:
+        logger.warning(f"[BREAKOUT] {market_config.name}: size not approved ({ps.reason}) — skip")
+        return
+    logger.info(
+        f"🟢 Breakout OPEN {signal.signal.value} {market_config.name}: size={ps.size} "
+        f"stop={signal.stop_distance} limit={signal.limit_distance} — {signal.reason}"
+    )
+    result = client.open_position(
+        epic=epic, direction=signal.signal.value, size=ps.size,
+        stop_distance=signal.stop_distance, limit_distance=signal.limit_distance,
+        expiry=market_config.expiry,
+    )
+    if not result:
+        err = client.last_error or "unknown"
+        logger.warning(f"[BREAKOUT] {market_config.name}: open failed ({err})")
+        if telegram_loop:
+            asyncio.run_coroutine_threadsafe(
+                telegram.notify_error(f"Breakout open failed on {market_config.name}: {err}"), telegram_loop)
+        return
+    deal_id = result.get("dealId", "")
+    if not deal_id:
+        return
+    known_positions[deal_id] = Position(
+        deal_id=deal_id, epic=epic, direction=signal.signal.value, size=ps.size,
+        open_level=result.get("level", signal.entry_price),
+        stop_level=result.get("stopLevel"), limit_level=result.get("limitLevel"),
+        profit_loss=0.0, created_date=datetime.now().isoformat(),
+    )
+    journal.log_entry(
+        deal_id=deal_id, epic=epic, market_name=market_config.name,
+        direction=signal.signal.value, size=ps.size,
+        entry_price=result.get("level", signal.entry_price),
+        stop_distance=signal.stop_distance, limit_distance=signal.limit_distance,
+        confidence=signal.confidence, reason=signal.reason, strategy="breakout",
+        atr=signal.atr, htf_trend=htf_trends.get(epic, "NEUTRAL"),
+    )
+    if telegram_loop:
+        asyncio.run_coroutine_threadsafe(
+            telegram.notify_trade_opened(
+                market_config.name, signal.signal.value, ps.size,
+                result.get("level", signal.entry_price),
+                signal.stop_distance, signal.limit_distance,
+            ), telegram_loop)
+
+
+def _update_breakout_trail(position, df) -> None:
+    """Donchian-trail exit for an open breakout position: ratchet the broker stop to
+    the prior M-bar opposite channel (only ever TIGHTEN, never loosen below the entry
+    stop). The broker enforces it; a break of the channel closes the trade and
+    external-close detection handles cleanup. Replaces BE/ATR/MACD for forex."""
+    if position.stop_level is None:
+        return
+    level = breakout.exit_channel(df, position.epic, position.direction)
+    if level is None:
+        return
+    cur = trailing_stop_levels.get(position.deal_id, position.stop_level)
+    new_stop = round(level, 1)
+    if position.direction == "BUY":
+        if new_stop <= cur:   # only tighten upward
+            return
+    else:
+        if new_stop >= cur:   # only tighten downward
+            return
+    if client.update_position_stop(position.deal_id, new_stop, position.limit_level):
+        trailing_stop_levels[position.deal_id] = new_stop
+        logger.info(f"📉 Breakout trail [{position.epic}]: stop {cur:.1f} -> {new_stop:.1f} (Donchian exit channel)")
+
+
 def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mode: str) -> None:
-    """Forex breakout analyzer (Stage 2a — SHADOW). Computes the Donchian breakout
-    signal on live candles and LOGS + journals what it WOULD do. Places NO orders;
-    live execution + the Donchian-trail exit are Stage 2b. Runs when forex_mode is
-    'shadow' or 'breakout' (both observe-only until 2b)."""
+    """Forex breakout entry path. 'shadow' = observe-only (log + journal, no order);
+    'breakout' = LIVE (places the order via _execute_breakout_entry). Momentum
+    strategy.analyze never runs for forex; the exit is the Donchian-trail (managed in
+    check_positions_from_stream) plus the broker stop."""
     try:
         if market.market_state != "TRADEABLE":
             return
@@ -719,18 +833,23 @@ def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mo
         signal = breakout.analyze_breakout(df, market_config, current_price, htf_trend)
         if signal.signal == Signal.HOLD:
             return
-        logger.info(
-            f"🔬 Breakout [{market.name}] ({fx_mode}, shadow): would {signal.signal.value} "
-            f"@ {current_price:.1f} — {signal.reason}"
-        )
-        try:
-            journal.log_rejected_signal(
-                epic=epic, market_name=market.name, direction=signal.signal.value,
-                confidence=signal.confidence, adx=signal.atr, rsi=0.0,
-                reject_reason=f"Breakout-shadow: {signal.reason}",
+        if fx_mode != "breakout":
+            # SHADOW — observe-only.
+            logger.info(
+                f"🔬 Breakout [{market.name}] (shadow): would {signal.signal.value} "
+                f"@ {current_price:.1f} — {signal.reason}"
             )
-        except Exception:
-            pass
+            try:
+                journal.log_rejected_signal(
+                    epic=epic, market_name=market.name, direction=signal.signal.value,
+                    confidence=signal.confidence, adx=signal.atr, rsi=0.0,
+                    reject_reason=f"Breakout-shadow: {signal.reason}",
+                )
+            except Exception:
+                pass
+            return
+        # LIVE breakout.
+        _execute_breakout_entry(epic, market, market_config, signal, df)
     except Exception as e:
         logger.warning(f"Forex breakout analysis failed for {market.name}: {e}")
 
@@ -1436,6 +1555,13 @@ def check_positions_from_stream() -> None:
 
         # Get market config for strategy-specific exit rules
         market_config = next((m for m in MARKETS if m.epic == position.epic), None)
+
+        # Forex = breakout position → Donchian-trail exit; skip the momentum
+        # MACD/ranging close logic entirely. The broker stop (ratcheted to the
+        # Donchian-M channel) does the exit; external-close detection cleans up.
+        if market_config and market_config.sector == "Forex":
+            _update_breakout_trail(position, df)
+            continue
 
         # Get current HTF trend for dynamic exit decisions
         current_htf_trend = htf_trends.get(position.epic, "NEUTRAL")

@@ -33,7 +33,8 @@ class BreakoutConfig:
     n: int                      # entry channel lookback
     stop_atr_mult: float = 2.0  # k×ATR initial stop (Turtle "N")
     htf_filter: bool = True     # only break WITH the higher-timeframe trend
-    safety_rr: float = 3.0      # far safety TP; real exit is the Donchian-M trail
+    # NB: breakout runs NO take-profit — the Donchian-M trail is the only exit, so
+    # fat-tail winners (the whole point) can run. limit_distance is emitted as 0.
 
     @property
     def m(self) -> int:
@@ -90,7 +91,7 @@ def analyze_breakout(df, market: MarketConfig, current_price: float, htf_trend: 
     high, low = float(last["high"]), float(last["low"])
 
     stop_distance = max(atr * cfg.stop_atr_mult, market.min_stop_distance)
-    limit_distance = stop_distance * cfg.safety_rr
+    limit_distance = 0.0  # no take-profit — the Donchian-M trail is the only exit
 
     if high >= upper:
         if cfg.htf_filter and htf_trend != "BULLISH":
