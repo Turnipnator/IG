@@ -135,6 +135,11 @@ breakeven_applied: set[str] = set()  # deal_ids with BE stop applied
 # Track ATR trailing stop levels (after break-even, trail ratchets stop further)
 trailing_stop_levels: dict[str, float] = {}  # deal_id -> current trail stop level
 
+# Deal IDs opened by the BREAKOUT strategy. Distinguishes breakout positions (managed
+# by the Donchian-trail) from momentum forex positions (BE/ATR/MACD), since /forex can
+# run either — so exit management can't gate on sector alone.
+breakout_deals: set[str] = set()
+
 # Post-restart cooldown: skip opening new positions for 15 mins after startup
 # to let indicators stabilise with fresh streaming data
 STARTUP_COOLDOWN_MINUTES = 15
@@ -562,9 +567,10 @@ def on_price_update(epic: str, market: MarketStream) -> None:
         if not market_config:
             continue
 
-        # Forex positions are BREAKOUT trades — managed by the Donchian-trail in
+        # Breakout positions are managed by the Donchian-trail in
         # check_positions_from_stream (per candle), not BE/ATR per tick. Skip here.
-        if market_config.sector == "Forex":
+        # (Momentum forex positions are NOT in breakout_deals and DO get BE/ATR.)
+        if deal_id in breakout_deals:
             continue
 
         strategy_cfg = get_strategy_for_market(market_config)
@@ -771,6 +777,7 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
     deal_id = result.get("dealId", "")
     if not deal_id:
         return
+    breakout_deals.add(deal_id)
     known_positions[deal_id] = Position(
         deal_id=deal_id, epic=epic, direction=signal.signal.value, size=ps.size,
         open_level=result.get("level", signal.entry_price),
@@ -861,17 +868,21 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         if not market_config:
             return
 
-        # Forex gate. The momentum forex profiles are RETIRED (net-losing — 40% WR,
-        # ~-£94 over the current era; see project_two_week_review). Forex now trades
-        # ONLY via the breakout strategy, behind the runtime /forex toggle
-        # (telegram.forex_mode: off|shadow|breakout). Default "off" = no forex
-        # trading. Markets stay subscribed so candles keep archiving and the toggle
-        # works live. Momentum strategy.analyze NEVER runs for forex.
+        # Forex gate, behind the runtime /forex toggle (telegram.forex_mode):
+        #   off      → no forex trading (default).
+        #   momentum → the original momentum profiles (retired, net-losing) — fall
+        #              through to the normal pipeline below, unchanged.
+        #   shadow   → breakout observed only (log + journal, no orders).
+        #   breakout → breakout LIVE.
+        # Markets stay subscribed regardless so candles keep archiving.
         if market_config.sector == "Forex":
             fx_mode = getattr(telegram, "forex_mode", "off")
-            if fx_mode != "off":
+            if fx_mode == "off":
+                return
+            if fx_mode in ("shadow", "breakout"):
                 analyze_forex_breakout(epic, market, market_config, fx_mode)
-            return
+                return
+            # fx_mode == "momentum": fall through to the original momentum pipeline.
 
         # Skip if market not tradeable
         if market.market_state != "TRADEABLE":
@@ -1465,6 +1476,7 @@ def check_positions_from_stream() -> None:
                 )
                 breakeven_applied.discard(deal_id)
                 trailing_stop_levels.pop(deal_id, None)
+                breakout_deals.discard(deal_id)
                 del known_positions[deal_id]
                 continue
 
@@ -1478,6 +1490,7 @@ def check_positions_from_stream() -> None:
             # Clean up break-even and trailing stop tracking
             breakeven_applied.discard(deal_id)
             trailing_stop_levels.pop(deal_id, None)
+            breakout_deals.discard(deal_id)
 
             # Record close time for cooldown
             last_close_time[known_pos.epic] = datetime.now()
@@ -1556,10 +1569,11 @@ def check_positions_from_stream() -> None:
         # Get market config for strategy-specific exit rules
         market_config = next((m for m in MARKETS if m.epic == position.epic), None)
 
-        # Forex = breakout position → Donchian-trail exit; skip the momentum
-        # MACD/ranging close logic entirely. The broker stop (ratcheted to the
-        # Donchian-M channel) does the exit; external-close detection cleans up.
-        if market_config and market_config.sector == "Forex":
+        # Breakout position → Donchian-trail exit; skip the momentum MACD/ranging
+        # close logic entirely. The broker stop (ratcheted to the Donchian-M channel)
+        # does the exit; external-close detection cleans up. (Momentum forex positions
+        # are NOT in breakout_deals and fall through to should_close below.)
+        if position.deal_id in breakout_deals:
             _update_breakout_trail(position, df)
             continue
 
@@ -1590,6 +1604,7 @@ def check_positions_from_stream() -> None:
                 # Clean up break-even and trailing stop tracking
                 breakeven_applied.discard(position.deal_id)
                 trailing_stop_levels.pop(position.deal_id, None)
+                breakout_deals.discard(position.deal_id)
 
                 # Record close time for cooldown
                 last_close_time[position.epic] = datetime.now()

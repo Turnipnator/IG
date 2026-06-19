@@ -36,7 +36,9 @@ STATS_FILE = STATS_DIR / "daily_stats.json"
 # "off" if the file is missing/corrupt. The momentum forex profiles are retired
 # (net-losing) — forex trades ONLY via the breakout strategy, and only when toggled.
 FOREX_MODE_FILE = STATS_DIR / "forex_mode.json"
-FOREX_MODES = ("off", "shadow", "breakout")
+# off = no forex trading; momentum = the original (retired, net-losing) momentum
+# profiles; shadow = breakout observed only; breakout = breakout live.
+FOREX_MODES = ("off", "momentum", "shadow", "breakout")
 
 # The daily stats reset at the 21:00 UTC trading-session boundary
 # (send_daily_summary -> reset_daily_stats, scheduled at 21:00). Persistence
@@ -663,11 +665,11 @@ class TelegramBot:
         if not arg:
             await update.message.reply_text(
                 f"🌐 *Forex mode:* `{self.forex_mode}`\n\n"
-                "Usage: `/forex off | shadow | breakout`\n"
+                "Usage: `/forex off | momentum | shadow | breakout`\n"
                 "• *off* — no forex trading (default)\n"
+                "• *momentum* — original momentum strategy (retired, net-losing)\n"
                 "• *shadow* — breakout runs observational (no real orders)\n"
-                "• *breakout* — breakout trades live\n\n"
-                "_Momentum forex is retired; forex only trades via breakout._",
+                "• *breakout* — breakout trades live",
                 parse_mode='Markdown'
             )
             return
@@ -686,9 +688,10 @@ class TelegramBot:
         prev, self.forex_mode = self.forex_mode, arg
         self.save_forex_mode()
         logger.info(f"Forex mode changed via Telegram: {prev} -> {arg}")
-        emoji = {"off": "⚪", "shadow": "🟡", "breakout": "🟢"}[arg]
+        emoji = {"off": "⚪", "momentum": "🔵", "shadow": "🟡", "breakout": "🟢"}[arg]
         note = {
             "off": "No forex trading.",
+            "momentum": "⚠️ Original *momentum* strategy LIVE on forex (retired — net-losing).",
             "shadow": "Breakout runs *observational* — logs signals, places NO real orders.",
             "breakout": "⚠️ Breakout trading *LIVE* on forex.",
         }[arg]
