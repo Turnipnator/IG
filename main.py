@@ -34,6 +34,7 @@ from config import (
 )
 from src.client import IGClient, Position
 from src.strategy import TradingStrategy, Signal, should_close_position
+from src import breakout
 from src.risk_manager import RiskManager
 from src.telegram_bot import TelegramBot, _session_date
 from src.streaming import IGStreamService, MarketStream, LIGHTSTREAMER_AVAILABLE
@@ -702,6 +703,38 @@ def on_candle_complete(epic: str, market: MarketStream) -> None:
     ).start()
 
 
+def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mode: str) -> None:
+    """Forex breakout analyzer (Stage 2a — SHADOW). Computes the Donchian breakout
+    signal on live candles and LOGS + journals what it WOULD do. Places NO orders;
+    live execution + the Donchian-trail exit are Stage 2b. Runs when forex_mode is
+    'shadow' or 'breakout' (both observe-only until 2b)."""
+    try:
+        if market.market_state != "TRADEABLE":
+            return
+        df = market.to_dataframe()
+        if df is None or len(df) < 50:
+            return
+        current_price = market.mid_price
+        htf_trend = htf_trends.get(epic, "NEUTRAL")
+        signal = breakout.analyze_breakout(df, market_config, current_price, htf_trend)
+        if signal.signal == Signal.HOLD:
+            return
+        logger.info(
+            f"🔬 Breakout [{market.name}] ({fx_mode}, shadow): would {signal.signal.value} "
+            f"@ {current_price:.1f} — {signal.reason}"
+        )
+        try:
+            journal.log_rejected_signal(
+                epic=epic, market_name=market.name, direction=signal.signal.value,
+                confidence=signal.confidence, adx=signal.atr, rsi=0.0,
+                reject_reason=f"Breakout-shadow: {signal.reason}",
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning(f"Forex breakout analysis failed for {market.name}: {e}")
+
+
 def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
     """Analyze a market using streaming data."""
     try:
@@ -714,12 +747,11 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         # ONLY via the breakout strategy, behind the runtime /forex toggle
         # (telegram.forex_mode: off|shadow|breakout). Default "off" = no forex
         # trading. Markets stay subscribed so candles keep archiving and the toggle
-        # works live. The breakout analyzer + shadow/breakout routing land next; for
-        # now forex never opens a position regardless of mode.
+        # works live. Momentum strategy.analyze NEVER runs for forex.
         if market_config.sector == "Forex":
             fx_mode = getattr(telegram, "forex_mode", "off")
             if fx_mode != "off":
-                logger.debug(f"[FOREX] {market.name}: mode={fx_mode} — breakout analyzer not yet active")
+                analyze_forex_breakout(epic, market, market_config, fx_mode)
             return
 
         # Skip if market not tradeable
