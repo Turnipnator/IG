@@ -31,10 +31,11 @@ logger = logging.getLogger(__name__)
 
 STATS_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
 STATS_FILE = STATS_DIR / "daily_stats.json"
-# Forex trading mode, toggled live via /forex (off|shadow|breakout). Persisted so a
-# deliberate "breakout window" survives a session refresh; defaults to the SAFE
-# "off" if the file is missing/corrupt. The momentum forex profiles are retired
-# (net-losing) — forex trades ONLY via the breakout strategy, and only when toggled.
+# Forex trading mode, toggled live via /forex (off|momentum|shadow|breakout).
+# Persisted so a deliberate "breakout window" survives a session refresh; defaults
+# to the SAFE "off" if the file is missing/corrupt. The momentum forex profiles are
+# retired-by-default (net-losing) but remain re-enablable on demand via /forex
+# momentum; the validated path is the breakout strategy, and only when toggled.
 FOREX_MODE_FILE = STATS_DIR / "forex_mode.json"
 # off = no forex trading; momentum = the original (retired, net-losing) momentum
 # profiles; shadow = breakout observed only; breakout = breakout live.
@@ -102,7 +103,7 @@ class TelegramBot:
         self.ig_client: Optional['IGClient'] = None
         self.trading_enabled = True
         self.is_running = False
-        # Forex runtime mode (off|shadow|breakout). Loaded from disk below; default
+        # Forex runtime mode (off|momentum|shadow|breakout). Loaded from disk below; default
         # safe-off. See FOREX_MODE_FILE. Read by main.py's forex gate.
         self.forex_mode = "off"
         self.load_forex_mode()
@@ -245,7 +246,7 @@ class TelegramBot:
             "*🎮 Control:*\n"
             "/stop - Pause trading\n"
             "/resume - Resume trading\n"
-            "/forex - Forex mode (off|shadow|breakout)\n"
+            "/forex - Forex mode (off|momentum|shadow|breakout)\n"
             "/rebuild - Pull latest code & restart\n"
             "/emergency - ⚠️ Close ALL positions\n\n"
             "*🔔 Notifications:*\n"
@@ -648,11 +649,12 @@ class TelegramBot:
             await update.message.reply_text("ℹ️ Bot is already running")
 
     async def forex_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /forex - toggle the forex trading mode (off|shadow|breakout).
+        """Handle /forex - toggle the forex trading mode (off|momentum|shadow|breakout).
 
-        Forex momentum is retired (net-losing); forex trades ONLY via the breakout
-        strategy, and only when explicitly toggled on for a window you choose.
+        Forex momentum is retired-by-default (net-losing) but re-enablable on demand;
+        the validated path is the breakout strategy, toggled on for a window you choose.
           off      - no forex trading (default, safe)
+          momentum - re-enable the (retired) EMA-momentum profiles on demand
           shadow   - breakout strategy runs OBSERVATIONAL (logs/journals signals,
                      no real orders) — validate on live prices before going live
           breakout - breakout strategy trades LIVE
