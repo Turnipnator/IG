@@ -47,7 +47,9 @@ class BreakoutConfig:
 BREAKOUT_CONFIGS: dict[str, BreakoutConfig] = {
     "CS.D.GBPUSD.TODAY.IP": BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # lead, cost+walk-forward validated
     "CS.D.EURUSD.TODAY.IP": BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # marginal
-    "CS.D.USDJPY.TODAY.IP": BreakoutConfig(n=40, stop_atr_mult=2.0, htf_filter=True),  # weak — shadow-watch only
+    # USD/JPY disabled 2026-06-22: walk-forward rejected (-5.13%/2yr, 1/4 quarters +);
+    # bled two -£24 full-stop losers (-£48) in one live session. Re-enable only if re-validated.
+    # "CS.D.USDJPY.TODAY.IP": BreakoutConfig(n=40, stop_atr_mult=2.0, htf_filter=True),  # weak — shadow-watch only
 }
 
 
