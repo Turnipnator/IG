@@ -965,18 +965,28 @@ MARKETS = [
         trading_start=7,       # London open — avoid illiquid pre-London spread widening
         trading_end=21,
     ),
-    MarketConfig(
-        epic="CS.D.USDJPY.TODAY.IP",
-        name="USD/JPY",
-        sector="Forex",
-        min_stop_distance=2.0,     # Spread is 1.0 — tight spread, good for trading
-        default_size=0.5,
-        candle_interval=15,
-        min_confidence=0.55,
-        strategy="usdjpy",     # Custom: RSI 80/20, tight stops, BE 90%. £+91 (60d), PF=1.79
-        trading_start=23,
-        trading_end=21,
-    ),
+    # Disabled 2026-06-25 — chronic loser in BOTH forex modes. All-time live
+    # n=11 net −£93.36. The breakout leg was disabled 06-22 (commit 473f3af,
+    # walk-forward rejected, two −£24 trades), but the MARKET stayed enabled so
+    # the screener kept ranking it ([ACTIVE] 45/100) — inert in breakout mode
+    # (no breakout config → HOLD) but wasting an active slot AND a landmine if
+    # forex flips back to momentum (the `usdjpy` momentum profile is also a net
+    # loser: #179 −£18, #164 −£24, #108 −£16 vs only +£2–5 wins). Also failed
+    # the forex-pullback test (review item 7: "USD/JPY pullback HURTS"). The
+    # config-documented "£+91 60d PF 1.79" never replicated live. usdjpy profile
+    # kept in STRATEGY_PROFILES for a future revival. 14→13 markets.
+    # MarketConfig(
+    #     epic="CS.D.USDJPY.TODAY.IP",
+    #     name="USD/JPY",
+    #     sector="Forex",
+    #     min_stop_distance=2.0,     # Spread is 1.0 — tight spread, good for trading
+    #     default_size=0.5,
+    #     candle_interval=15,
+    #     min_confidence=0.55,
+    #     strategy="usdjpy",     # Custom: RSI 80/20, tight stops, BE 90%. £+91 (60d), PF=1.79
+    #     trading_start=23,
+    #     trading_end=21,
+    # ),
 
     # --- RATES / BONDS (Big Winners Strategy) ---
     # US 2-Year T-Note disabled 2026-06-11 (cull review) — NO EDGE: 44t/59d
