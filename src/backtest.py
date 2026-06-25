@@ -512,6 +512,7 @@ class Backtester:
         min_confidence: Optional[float] = None,
         account_size: float = 10000,
         risk_per_trade: float = 0.01,
+        min_hold_candles: int = 1,
     ) -> BacktestResult:
         """
         Run backtest for a market.
@@ -550,6 +551,7 @@ class Backtester:
 
         # Track state
         position: Optional[Trade] = None
+        entry_index: Optional[int] = None
         equity = account_size
         peak_equity = account_size
         max_drawdown = 0.0
@@ -589,8 +591,16 @@ class Backtester:
                     exit_reason = "Take profit"
                     exit_price = position.limit_price
 
+                # Minimum-hold gate: the two momentum exits (MACD-3 / ranging-3)
+                # may NOT fire until the position has been held min_hold_candles
+                # closed candles. Mirrors the live guard that prevents an
+                # open-then-instant-close when a candle commits on the entry
+                # boundary. Stop/limit (and TP) above are always live for safety.
+                hold_elapsed = (i - entry_index) if entry_index is not None else 999
+                momentum_hold_ok = hold_elapsed >= min_hold_candles
+
                 # Check MACD exit (unless disabled for this market)
-                if market not in DISABLE_MACD_EXIT:
+                if not exit_reason and momentum_hold_ok and market not in DISABLE_MACD_EXIT:
                     macd_hist = row["macd_hist"]
                     if position.direction == "BUY" and macd_hist < 0:
                         # Check 3 consecutive negative
@@ -609,7 +619,7 @@ class Backtester:
                 # Ranging exit (non-MACD strategies). Mirrors live logic in
                 # src/strategy.py:should_close_position when use_macd_exit=False.
                 consecutive = self.params.get("ranging_exit_consecutive", 0)
-                if not exit_reason and consecutive > 0 and market in DISABLE_MACD_EXIT:
+                if not exit_reason and momentum_hold_ok and consecutive > 0 and market in DISABLE_MACD_EXIT:
                     drop = self.params.get("ranging_exit_drop", 10)
                     require_declining = self.params.get(
                         "ranging_exit_require_declining", False
@@ -659,6 +669,7 @@ class Backtester:
 
                     last_close_time = current_time
                     position = None
+                    entry_index = None
 
                     # Track drawdown
                     if equity > peak_equity:
@@ -777,6 +788,7 @@ class Backtester:
                     htf_trend=htf_trend,
                     confidence=confidence,
                 )
+                entry_index = i
 
         # Close any open position at end
         if position:

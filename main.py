@@ -141,6 +141,16 @@ trailing_stop_levels: dict[str, float] = {}  # deal_id -> current trail stop lev
 # run either — so exit management can't gate on sector alone.
 breakout_deals: set[str] = set()
 
+# Momentum-exit minimum-hold guard: deal_id -> timestamp of the newest CLOSED
+# candle at entry. The MACD-3 / ranging-3 momentum exits are suppressed for a
+# position until a NEWER candle has closed (>=1 fresh candle held). This kills
+# the open-then-instant-close race where a candle commits on the entry boundary
+# and the exit fires seconds after entry (FTSE #205, 2026-06-25: opened 14:25:01,
+# MACD-3 closed it 14:25:18). In-memory only by design: after a restart the
+# position is already old (fresh candles have since closed) so the guard is
+# correctly inactive. Stop/limit (broker) + RSI-extreme exits stay always-on.
+momentum_hold: dict[str, object] = {}
+
 
 def _save_breakout_deals() -> None:
     """Persist the breakout-deal tag set to disk. Without this the in-memory set
@@ -1434,6 +1444,16 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                     created_date=datetime.now().isoformat(),
                 )
 
+                # Tag the entry candle for the momentum-exit minimum-hold guard
+                # so the MACD-3 / ranging-3 exit can't fire until a fresh candle
+                # closes. Breakout positions use the Donchian trail (not this
+                # path), so they're unaffected.
+                try:
+                    if df is not None and not df.empty:
+                        momentum_hold[deal_id] = df.iloc[-1]["date"]
+                except Exception as e:
+                    logger.warning(f"momentum_hold tag skipped for {deal_id}: {e}")
+
                 # Journal entry with indicator snapshot. Read indicators from
                 # the signal, not from df — main.py's df has no indicator
                 # columns (they're computed inside strategy.analyze() on a
@@ -1520,6 +1540,7 @@ def check_positions_from_stream() -> None:
                 )
                 breakeven_applied.discard(deal_id)
                 trailing_stop_levels.pop(deal_id, None)
+                momentum_hold.pop(deal_id, None)
                 if deal_id in breakout_deals:
                     breakout_deals.discard(deal_id)
                     _save_breakout_deals()
@@ -1536,6 +1557,7 @@ def check_positions_from_stream() -> None:
             # Clean up break-even and trailing stop tracking
             breakeven_applied.discard(deal_id)
             trailing_stop_levels.pop(deal_id, None)
+            momentum_hold.pop(deal_id, None)
             if deal_id in breakout_deals:
                 breakout_deals.discard(deal_id)
                 _save_breakout_deals()
@@ -1628,9 +1650,25 @@ def check_positions_from_stream() -> None:
         # Get current HTF trend for dynamic exit decisions
         current_htf_trend = htf_trends.get(position.epic, "NEUTRAL")
 
+        # Minimum-hold guard: suppress the MACD-3 / ranging-3 momentum exit until
+        # a candle NEWER than the entry candle has closed. Prevents the open-then-
+        # instant-close race (FTSE #205). Released (and the tag dropped) the moment
+        # a fresh candle appears, so a position is gated for at most one candle.
+        suppress_momentum_exit = False
+        entry_ts = momentum_hold.get(position.deal_id)
+        if entry_ts is not None:
+            try:
+                if df.iloc[-1]["date"] <= entry_ts:
+                    suppress_momentum_exit = True
+                else:
+                    momentum_hold.pop(position.deal_id, None)
+            except Exception:
+                momentum_hold.pop(position.deal_id, None)
+
         should_close, reason = should_close_position(
             df, position.direction, STRATEGY_PARAMS, market=market_config,
-            htf_trend=current_htf_trend
+            htf_trend=current_htf_trend,
+            suppress_momentum_exit=suppress_momentum_exit,
         )
 
         if should_close:
@@ -1652,6 +1690,7 @@ def check_positions_from_stream() -> None:
                 # Clean up break-even and trailing stop tracking
                 breakeven_applied.discard(position.deal_id)
                 trailing_stop_levels.pop(position.deal_id, None)
+                momentum_hold.pop(position.deal_id, None)
                 if position.deal_id in breakout_deals:
                     breakout_deals.discard(position.deal_id)
                     _save_breakout_deals()

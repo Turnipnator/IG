@@ -617,6 +617,7 @@ def should_close_position(
     params: Optional[dict] = None,
     market: Optional[MarketConfig] = None,
     htf_trend: str = "NEUTRAL",
+    suppress_momentum_exit: bool = False,
 ) -> tuple[bool, str]:
     """
     Check if an existing position should be closed.
@@ -672,8 +673,11 @@ def should_close_position(
     if direction == "SELL" and rsi < rsi_oversold:
         return True, f"RSI oversold ({rsi:.1f})"
 
-    # MACD exit only if strategy uses it (indices)
-    if use_macd_exit:
+    # MACD exit only if strategy uses it (indices). Suppressed during the
+    # minimum-hold window (suppress_momentum_exit) so a candle committing on the
+    # entry boundary can't fire an open-then-instant-close (FTSE #205). Stop/limit
+    # (broker) and RSI-extreme (above) stay active throughout the hold.
+    if use_macd_exit and not suppress_momentum_exit:
         last_3_macd = [df.iloc[-i]["macd_hist"] for i in range(1, 4)]
 
         if direction == "BUY":
@@ -692,7 +696,9 @@ def should_close_position(
         # the MACD-exit pattern and improved WR on Gold (44->47%) and USD/JPY
         # (23->39%) in 60d backtest with neutral aggregate P&L.
         adx_exit_threshold = adx_threshold - 10  # e.g., 35 -> 25
-        if len(df) >= 3:
+        # Ranging-3 exit also gated by the minimum-hold window (HTF reversal below
+        # is NOT — a higher-timeframe flip can't race a single entry candle).
+        if not suppress_momentum_exit and len(df) >= 3:
             recent_adx = [df.iloc[-i]["adx"] for i in range(1, 4)]
             if all(a < adx_exit_threshold for a in recent_adx):
                 return True, f"Market turned ranging (ADX {adx:.1f} < {adx_exit_threshold} for 3 candles)"
