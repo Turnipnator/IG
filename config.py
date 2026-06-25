@@ -757,27 +757,35 @@ MARKETS = [
     #     strategy="indices",
     # ),
     # --- COMMODITIES (Big Winners Strategy) ---
-    MarketConfig(
-        epic="EN.D.CL.Month1.IP",
-        name="Crude Oil",
-        sector="Commodities",
-        min_stop_distance=12.0,
-        default_size=0.1,
-        expiry="JUN-26",
-        candle_interval=15,
-        min_confidence=0.55,
-        strategy="crude",      # Custom: RSI 80/20, tight stops. Stops BE-exit problem.
-        trading_start=23,      # Nearly 24h market — avoid IG reset window (21-23 UTC)
-        trading_end=21,
-        # ADX-ceiling OBSERVATIONAL (log-only, trade proceeds). All-EPIC sweep
-        # (scripts/backtest_adx_ceiling_all.py, 2026-06-09, CL=F 15m/59d 49t):
-        # capping ADX>50 → PF 1.82→2.31, P&L +8.10→+9.42% (−9t). NB Yahoo
-        # continuous futures ≠ IG contract exactly, so gather live would-blocks
-        # before enforcing. Set adx_ceiling_enforce=True once confirmed.
-        adx_ceiling=50.0,
-        adx_ceiling_enforce=False,
-        adx_ceiling_direction="SELL",  # short-side: SELL helps +1.62, BUY hurts (dir-split 2026-06-09)
-    ),
+    # Disabled 2026-06-25 — no edge that survives IG's spread. Live: all-time
+    # n=12 PF 0.38 (−£49.55), since 06-20 n=5 PF 0.05 (−£62.59); the
+    # "MACD histogram positive 3 candles" exit alone = −£45.6. Backtest
+    # (scripts/backtest_crude_exit.py, CL=F 5m/58d, entry FIXED = live crude,
+    # only exit swapped): frictionless every exit is marginal (macd3 PF 1.11,
+    # best macd5 PF 1.24) but the per-trade edge is only ~0.03–0.07R on a
+    # ~25pt ATR. Spread sweep (IG Crude DFB ~2.8–6pt): macd3 PF 1.11→0.54@5pt,
+    # macd5 1.24→0.67@5pt — the live PF 0.38 sits in the 5–7pt-spread band, so
+    # costs alone reproduce the bleed. A less-twitchy exit (macd5) helps but is
+    # cosmetic — still PF<0.7 after spread. Cocoa/Germany-40 pattern: thin
+    # Yahoo-cash edge eaten by live costs. Profile kept in STRATEGY_PROFILES
+    # for re-enable; re-validate on the IG-native candle archive later.
+    # See research_notes.md 2026-06-25.
+    # MarketConfig(
+    #     epic="EN.D.CL.Month1.IP",
+    #     name="Crude Oil",
+    #     sector="Commodities",
+    #     min_stop_distance=12.0,
+    #     default_size=0.1,
+    #     expiry="JUN-26",
+    #     candle_interval=15,
+    #     min_confidence=0.55,
+    #     strategy="crude",      # Custom: RSI 80/20, tight stops. Stops BE-exit problem.
+    #     trading_start=23,      # Nearly 24h market — avoid IG reset window (21-23 UTC)
+    #     trading_end=21,
+    #     adx_ceiling=50.0,
+    #     adx_ceiling_enforce=False,
+    #     adx_ceiling_direction="SELL",
+    # ),
     # Disabled 2026-05-21 — edge has decayed. Added 2026-05-01, never traded live
     # (rarely fires + screened out). The 720d backtest's +5.06% was all earned
     # mid-2024→mid-2025; the trailing 365d is -5.29% (every ADX negative) and the
