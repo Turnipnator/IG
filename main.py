@@ -21,6 +21,7 @@ _DATA_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
 LAST_STARTUP_FILE = _DATA_DIR / "last_startup.txt"
 LAST_HTF_REFRESH_FILE = _DATA_DIR / "last_htf_refresh.txt"
 HTF_TRENDS_FILE = _DATA_DIR / "htf_trends.json"
+BREAKOUT_DEALS_FILE = _DATA_DIR / "breakout_deals.json"
 QUIET_RESTART_WINDOW = timedelta(hours=2)
 HTF_REFRESH_COOLDOWN = timedelta(hours=6)  # On startup, skip HTF fetch if one ran within this window
 
@@ -140,6 +141,38 @@ trailing_stop_levels: dict[str, float] = {}  # deal_id -> current trail stop lev
 # run either — so exit management can't gate on sector alone.
 breakout_deals: set[str] = set()
 
+
+def _save_breakout_deals() -> None:
+    """Persist the breakout-deal tag set to disk. Without this the in-memory set
+    is empty after a restart, so a re-adopted breakout position falls through to
+    the momentum exit (ranging/MACD/HTF) instead of its Donchian trail and can be
+    closed prematurely — the 2026-06-25 GBP/USD incident (review item 11).
+    data/ is gitignored so this survives the rebuild-watcher's hard reset."""
+    try:
+        BREAKOUT_DEALS_FILE.write_text(json.dumps(sorted(breakout_deals)))
+    except Exception as e:
+        logger.warning(f"Failed to persist breakout_deals: {e}")
+
+
+def _load_breakout_deals(open_deal_ids: set[str]) -> None:
+    """Restore breakout-deal tags on startup, keeping only deals still open at the
+    broker. Must run before the first monitor cycle so re-adopted breakout
+    positions keep Donchian-trail routing. Prunes (and rewrites) stale IDs."""
+    try:
+        if not BREAKOUT_DEALS_FILE.exists():
+            return
+        saved = set(json.loads(BREAKOUT_DEALS_FILE.read_text()))
+        live = saved & open_deal_ids
+        breakout_deals.update(live)
+        if live:
+            logger.info(f"Restored {len(live)} breakout-deal tag(s) from disk (Donchian-trail routing preserved)")
+        stale = saved - live
+        if stale:
+            logger.info(f"Pruned {len(stale)} stale breakout-deal tag(s) (no longer open at broker)")
+            _save_breakout_deals()
+    except Exception as e:
+        logger.warning(f"Failed to load breakout_deals: {e}")
+
 # Post-restart cooldown: skip opening new positions for 15 mins after startup
 # to let indicators stabilise with fresh streaming data
 STARTUP_COOLDOWN_MINUTES = 15
@@ -211,6 +244,16 @@ def initialize() -> bool:
         logger.info(f"Account balance: £{balance:,.2f}")
     else:
         logger.warning("Could not retrieve account balance")
+
+    # Restore breakout exit-routing tags BEFORE the first monitor cycle so a
+    # re-adopted breakout position keeps its Donchian trail instead of falling
+    # through to the momentum exit (review item 11). Cross-check against live
+    # positions to prune deals that closed while we were down.
+    try:
+        open_ids = {p.deal_id for p in (client.get_positions() or []) if p.deal_id}
+        _load_breakout_deals(open_ids)
+    except Exception as e:
+        logger.warning(f"breakout_deals restore skipped: {e}")
 
     return True
 
@@ -778,6 +821,7 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
     if not deal_id:
         return
     breakout_deals.add(deal_id)
+    _save_breakout_deals()
     known_positions[deal_id] = Position(
         deal_id=deal_id, epic=epic, direction=signal.signal.value, size=ps.size,
         open_level=result.get("level", signal.entry_price),
@@ -1476,7 +1520,9 @@ def check_positions_from_stream() -> None:
                 )
                 breakeven_applied.discard(deal_id)
                 trailing_stop_levels.pop(deal_id, None)
-                breakout_deals.discard(deal_id)
+                if deal_id in breakout_deals:
+                    breakout_deals.discard(deal_id)
+                    _save_breakout_deals()
                 del known_positions[deal_id]
                 continue
 
@@ -1490,7 +1536,9 @@ def check_positions_from_stream() -> None:
             # Clean up break-even and trailing stop tracking
             breakeven_applied.discard(deal_id)
             trailing_stop_levels.pop(deal_id, None)
-            breakout_deals.discard(deal_id)
+            if deal_id in breakout_deals:
+                breakout_deals.discard(deal_id)
+                _save_breakout_deals()
 
             # Record close time for cooldown
             last_close_time[known_pos.epic] = datetime.now()
@@ -1604,7 +1652,9 @@ def check_positions_from_stream() -> None:
                 # Clean up break-even and trailing stop tracking
                 breakeven_applied.discard(position.deal_id)
                 trailing_stop_levels.pop(position.deal_id, None)
-                breakout_deals.discard(position.deal_id)
+                if position.deal_id in breakout_deals:
+                    breakout_deals.discard(position.deal_id)
+                    _save_breakout_deals()
 
                 # Record close time for cooldown
                 last_close_time[position.epic] = datetime.now()
