@@ -154,6 +154,17 @@ class MarketConfig:
     # 10-Year T-Note ("BUY") 2026-06-11: cull review showed long PF 1.26 vs short
     # PF 0.63 (700d Yahoo), so the short side is dead weight.
     allowed_direction: str = ""
+    # Per-market re-entry cooldown (in CANDLES) after ANY close, overriding the
+    # global default (main.py REENTRY_COOLDOWN_CANDLES=6). cooldown_mins =
+    # reentry_cooldown_candles × candle_interval, so on a 5m market 12 candles =
+    # 60min. None = use the global default. The extra 1h loss cooldown is separate
+    # and unchanged. Set on Wall Street (12 = 60min) as a paper-trial: the re-entry
+    # cooldown sweep (scripts/backtest_reentry_cooldown_epics.py, 2026-06-25)
+    # showed 30→60min on Wall St 5m lifts PF 1.45→1.70 (and 1h 360→480m PF
+    # 1.03→1.13) by pruning the chase-y quick re-entry that #207 typifies, P&L
+    # kept; the effect is Wall-St-SPECIFIC (NASDAQ/FTSE/S&P inert or hurt) so this
+    # is NOT raised globally. Small-sample (1 trade on n=14) → trial + review.
+    reentry_cooldown_candles: int | None = None
 
 
 # Load configurations from environment
@@ -653,6 +664,12 @@ MARKETS = [
         min_confidence=0.55,
         strategy="indices",
         correlation_group="equity_index",  # cluster filter (2026-06-11)
+        # Paper-trial 2026-06-25: 60min re-entry cooldown (12×5m, was global 30min).
+        # Re-entry sweep showed Wall St (only) gains from waiting longer after a
+        # close — PF 1.45→1.70 on 5m by pruning the chase-y quick re-entry that
+        # #207 typifies (16:00 long, 55min past the #206 win, stopped). NOT global
+        # (NASDAQ/FTSE/S&P inert-or-hurt). Small sample → confirm at 06-26 review.
+        reentry_cooldown_candles=12,
     ),
     MarketConfig(
         epic="IX.D.FTSE.DAILY.IP",

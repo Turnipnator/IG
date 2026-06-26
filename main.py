@@ -129,6 +129,9 @@ market_regimes: dict[str, MarketRegime] = {}  # epic -> MarketRegime
 # Track loss cooldowns separately (1hr after loss vs 15min after any close)
 loss_cooldown_until: dict[str, datetime] = {}  # epic -> datetime when cooldown ends
 LOSS_COOLDOWN_MINUTES = 60
+# Default general re-entry cooldown (in candles) after ANY close. Per-market
+# override via MarketConfig.reentry_cooldown_candles (e.g. Wall St trials 12).
+REENTRY_COOLDOWN_CANDLES = 6
 
 # Track positions that have had their stop moved to break-even
 breakeven_applied: set[str] = set()  # deal_ids with BE stop applied
@@ -1246,8 +1249,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 del loss_cooldown_until[epic]
 
         # Check general cooldown - don't re-enter same market too quickly after closing
-        # Increased from 3 to 6 candles to prevent chasing exhausted moves
-        cooldown_candles = 6
+        # Increased from 3 to 6 candles to prevent chasing exhausted moves. A market
+        # may override the candle count via reentry_cooldown_candles (Wall St trials
+        # 12 = 60min on 5m; backtest_reentry_cooldown_epics.py 2026-06-25).
+        cooldown_candles = market_config.reentry_cooldown_candles or REENTRY_COOLDOWN_CANDLES
         cooldown_mins = market_config.candle_interval * cooldown_candles
 
         # Apply regime cooldown multiplier (longer cooldowns in uncertain regimes)
