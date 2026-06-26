@@ -99,6 +99,21 @@ known_positions: dict[str, Position] = {}  # deal_id -> Position
 recently_closed_deals: dict[str, datetime] = {}  # deal_id -> close detection time
 RECENTLY_CLOSED_TTL_MINUTES = 240
 
+# Consecutive-missing-poll debounce for close detection. IG's /positions API can
+# transiently omit a still-open deal (a partial/flickering response, or [] on an
+# auth blip / non-200) — and a SINGLE such poll used to fire a false close: book
+# provisional P&L, stop managing the position, and orphan it (2026-06-24 GBP/USD
+# breakout dropped from one 08:05 poll, left with only its static stop and no
+# Donchian-trail until closed by hand). Require CLOSE_CONFIRM_POLLS consecutive
+# absences (polls are 60s apart) before declaring a close; reset the instant the
+# deal reappears. This trades ~60s of extra latency on a genuine close (the broker
+# stop has already closed it at IG — we're only late to journal) for immunity to
+# one-poll flickers. reconcile_provisional_trades() is the backstop: if a close
+# still slips through (a multi-poll error), it re-adopts any provisional whose
+# deal is still open at IG.
+missing_poll_counts: dict[str, int] = {}  # deal_id -> consecutive polls absent
+CLOSE_CONFIRM_POLLS = 2
+
 # Streaming watchdog state. The Lightstreamer client doesn't auto-reconnect
 # and doesn't surface silent "connected but no ticks" failures, so the
 # watchdog tripped on 2026-05-07 when streaming died at 04:20 and the bot
@@ -1549,8 +1564,26 @@ def check_positions_from_stream() -> None:
                 if deal_id in breakout_deals:
                     breakout_deals.discard(deal_id)
                     _save_breakout_deals()
+                missing_poll_counts.pop(deal_id, None)
                 del known_positions[deal_id]
                 continue
+
+            # Debounce: require CLOSE_CONFIRM_POLLS consecutive polls with the deal
+            # absent before declaring a close. A single missing poll is usually an
+            # IG /positions flicker (partial response, or [] on an auth/non-200
+            # blip); firing on it orphaned a still-open position (2026-06-24). Keep
+            # managing the position until the absence is confirmed.
+            missing_poll_counts[deal_id] = missing_poll_counts.get(deal_id, 0) + 1
+            if missing_poll_counts[deal_id] < CLOSE_CONFIRM_POLLS:
+                logger.warning(
+                    f"Deal {deal_id} absent from positions poll "
+                    f"({missing_poll_counts[deal_id]}/{CLOSE_CONFIRM_POLLS}) — "
+                    f"deferring close one cycle (still managing)"
+                )
+                continue
+
+            # Absence confirmed across CLOSE_CONFIRM_POLLS polls — a real close.
+            missing_poll_counts.pop(deal_id, None)
 
             # Position disappeared - closed by IG (stop or limit hit)
             market_config = next((m for m in MARKETS if m.epic == known_pos.epic), None)
@@ -1625,6 +1658,8 @@ def check_positions_from_stream() -> None:
     # fired a close for — IG sometimes briefly re-shows closed positions and
     # we don't want to start tracking them again only to fire another close.
     for position in positions:
+        # Deal is present this poll → clear any pending missing-poll debounce.
+        missing_poll_counts.pop(position.deal_id, None)
         if position.deal_id in recently_closed_deals:
             continue
         known_positions[position.deal_id] = position
@@ -1744,6 +1779,62 @@ def check_positions_from_stream() -> None:
                     )
 
 
+def _readopt_position(row: dict, live_pos) -> None:
+    """Re-adopt a position falsely flagged closed but in fact still open at IG.
+
+    Reverses a provisional close caused by a transient /positions flicker: restore
+    active management (known_positions + breakout-exit routing), back out the
+    booked daily P&L (session-gated, lockstep across risk_manager + telegram),
+    reopen the journal row, and alert. Called from reconcile_provisional_trades
+    once the deal is confirmed present in a fresh get_positions() snapshot.
+    """
+    deal_id = row["deal_id"]
+    market_name = row["market_name"]
+    booked_pnl = row["pnl"] or 0.0
+
+    # Resume management and drop the stale close-tracking state.
+    known_positions[deal_id] = live_pos
+    recently_closed_deals.pop(deal_id, None)
+    missing_poll_counts.pop(deal_id, None)
+    # Restore breakout-exit routing if this epic runs breakouts in the current
+    # forex mode — else the re-adopted position would fall through to the momentum
+    # exit instead of its Donchian trail (item 11).
+    if breakout.has_breakout_config(live_pos.epic) and \
+            getattr(telegram, "forex_mode", "off") == "breakout":
+        breakout_deals.add(deal_id)
+        _save_breakout_deals()
+
+    # Back out the provisional P&L booked at the false close — but only if it
+    # belongs to the current 21:00 session (a prior-session reversal must not move
+    # today's live total; mirrors reconcile's same_session gate). Keep the two
+    # daily counters in lockstep: risk_manager here, telegram in the coroutine.
+    same_session = True
+    exit_ref = row.get("exit_time") or row.get("entry_time")
+    if exit_ref:
+        try:
+            same_session = (
+                _session_date(datetime.fromisoformat(exit_ref)) == _session_date()
+            )
+        except (TypeError, ValueError):
+            same_session = True
+    if same_session and abs(booked_pnl) > 0.01:
+        risk_manager.update_daily_pnl(-booked_pnl)
+
+    journal.reopen_position(deal_id)
+
+    logger.warning(
+        f"Re-adopted {market_name} ({deal_id}) — false close reverted, position "
+        f"still open at IG; reversed provisional £{booked_pnl:.2f}"
+    )
+    if telegram_loop:
+        asyncio.run_coroutine_threadsafe(
+            telegram.notify_position_readopted(
+                market_name, booked_pnl, adjust_counter=same_session
+            ),
+            telegram_loop,
+        )
+
+
 def reconcile_provisional_trades(closing_books: bool = False) -> None:
     """Match PROVISIONAL journal rows against IG transaction history.
 
@@ -1776,6 +1867,8 @@ def reconcile_provisional_trades(closing_books: bool = False) -> None:
     stale_cutoff = datetime.now() - timedelta(hours=3)
     matched = 0
     aged_out = 0
+    readopted = 0
+    live_positions: Optional[dict] = None  # lazy get_positions() snapshot
     for row in rows:
         txn = client.find_close_transaction(
             row["entry_price"], row["direction"], transactions=txns
@@ -1824,19 +1917,38 @@ def reconcile_provisional_trades(closing_books: bool = False) -> None:
                     telegram_loop,
                 )
         else:
+            # No matching IG transaction. Before letting this age out to
+            # UNMATCHED, check whether the deal is in fact STILL OPEN at IG — if
+            # so the "close" was a positions-API flicker and the position is
+            # orphaned (unmanaged, on its static stop only). Re-adopt it for
+            # management instead (2026-06-24 bug). One get_positions() call (a free
+            # snapshot, not a historical fetch), made only when a no-txn
+            # provisional needs adjudicating, and cached for the rest of the run.
+            deal_id = row["deal_id"]
+            if live_positions is None:
+                live_positions = {
+                    p.deal_id: p for p in (client.get_positions() or [])
+                }
+            if deal_id in live_positions:
+                _readopt_position(row, live_positions[deal_id])
+                readopted += 1
+                continue
             try:
                 entry_dt = datetime.fromisoformat(row["entry_time"])
             except (TypeError, ValueError):
                 continue
             if entry_dt < stale_cutoff:
-                journal.mark_unmatched(row["deal_id"])
+                journal.mark_unmatched(deal_id)
                 aged_out += 1
                 logger.warning(
-                    f"Marking {row['market_name']} ({row['deal_id']}) UNMATCHED — "
+                    f"Marking {row['market_name']} ({deal_id}) UNMATCHED — "
                     f"no IG transaction after 3h"
                 )
-    if matched or aged_out:
-        logger.info(f"Reconciliation: {matched} confirmed, {aged_out} aged out")
+    if matched or aged_out or readopted:
+        logger.info(
+            f"Reconciliation: {matched} confirmed, {aged_out} aged out, "
+            f"{readopted} re-adopted"
+        )
 
 
 def _log_suppressed_signal(

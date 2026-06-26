@@ -1004,6 +1004,35 @@ class TelegramBot:
             message += "\n\n_Prior session — today's total unchanged._"
         return await self.send_notification(message)
 
+    async def notify_position_readopted(
+        self,
+        market_name: str,
+        reversed_pnl: float,
+        adjust_counter: bool = True,
+    ) -> bool:
+        """Alert that a falsely-closed position was re-adopted (still live at IG).
+
+        Close-detection fired on a transient positions-API flicker; the deal was
+        actually still open, so the provisional close is being undone. reversed_pnl
+        is the provisional P&L booked at the false close — back it out of the live
+        daily counter (unless it belonged to a prior, already-reset session) so the
+        running total matches reality. Mirrors notify_trade_reconciled's lockstep
+        handling of self.daily_pnl.
+        """
+        if adjust_counter:
+            self.daily_pnl -= reversed_pnl
+            self.save_daily_stats()
+        message = (
+            f"♻️ *POSITION RE-ADOPTED*\n\n"
+            f"Market: {market_name}\n"
+            f"A close was detected on a positions-API flicker, but the deal is "
+            f"still open at IG — resuming management.\n"
+            f"Reversed provisional P&L: {format_pnl(reversed_pnl)}"
+        )
+        if not adjust_counter:
+            message += "\n\n_Prior session — today's total unchanged._"
+        return await self.send_notification(message)
+
     async def notify_signal(
         self,
         market_name: str,

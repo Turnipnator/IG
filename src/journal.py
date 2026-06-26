@@ -212,6 +212,28 @@ class TradeJournal:
         except Exception as e:
             logger.warning(f"Journal: mark_unmatched failed for {deal_id}: {e}")
 
+    def reopen_position(self, deal_id: str) -> None:
+        """Revert a provisional exit back to an OPEN trade.
+
+        Used when close-detection fired on a transient positions-API flicker but
+        the deal is in fact still live at IG (2026-06-24 orphaned-position bug) —
+        the bot re-adopts the position for management, so the journal exit it
+        logged must be undone (status back to OPEN, exit fields cleared) or the
+        history shows a phantom close for a trade that never closed.
+        """
+        try:
+            self.db.execute(
+                """UPDATE trades SET status = 'OPEN', exit_price = 0.0,
+                   exit_time = NULL, exit_reason = NULL, pnl = NULL,
+                   duration_mins = NULL
+                   WHERE deal_id = ? AND status IN ('PROVISIONAL', 'UNMATCHED')""",
+                (deal_id,),
+            )
+            self.db.commit()
+            logger.info(f"Journal: reopened {deal_id} (false close reverted)")
+        except Exception as e:
+            logger.warning(f"Journal: reopen_position failed for {deal_id}: {e}")
+
     def log_rejected_signal(
         self,
         epic: str,
