@@ -48,6 +48,7 @@ class RiskManager:
         stop_distance: float,
         market: MarketConfig,
         regime: Optional["MarketRegime"] = None,
+        ig_min_size: Optional[float] = None,
     ) -> PositionSize:
         """
         Calculate appropriate position size based on risk parameters.
@@ -108,16 +109,25 @@ class RiskManager:
 
         raw_size = raw_size * size_multiplier
 
-        # Round to appropriate precision
-        # Most markets allow 0.1 increments, some allow smaller
-        size = round(raw_size, 1)
+        # Minimum dealing size: prefer IG's LIVE minDealSize (threaded in from
+        # get_market_info) over the static config default_size. The config value
+        # was set 12-25x above IG's true minimum for most indices/FX (e.g. NASDAQ
+        # config 0.2 vs IG 0.01, Japan 0.5 vs 0.04), which silently floored valid
+        # risk-based sizes up past the £ risk cap and blocked otherwise-tradeable
+        # signals (2026-06-29 forensics). Falls back to default_size only when the
+        # live snapshot is unavailable. minDealSize also doubles as the size step
+        # for spread bets, so snap DOWN to a whole multiple of it — a non-multiple
+        # order is rejected by IG, and flooring (not rounding) stays under budget.
+        min_size = ig_min_size if (ig_min_size and ig_min_size > 0) else market.default_size
+        if min_size and min_size > 0:
+            size = round(int(raw_size / min_size) * min_size, 6)
+        else:
+            size = round(raw_size, 1)
 
-        # Ensure minimum size. The instrument's minimum dealing size can force
-        # the size ABOVE the risk-based figure — for large-stop markets (e.g.
-        # Copper/Gold, min size 1.0 × a big ATR stop) this silently risks well
-        # over the per-trade budget and is where the big single-trade losses
-        # concentrate (2026-06-04 journal forensics).
-        min_size = market.default_size
+        # Floor to the minimum dealing size if the risk-based figure is smaller.
+        # For large-min markets (Copper/Gold, true min 1.0 × a big ATR stop) this
+        # can still push the £ loss above budget — the absolute cap below catches
+        # that and skips rather than over-risking (2026-06-04 journal forensics).
         floored_up = size < min_size
         if floored_up:
             size = min_size

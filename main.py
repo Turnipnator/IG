@@ -825,7 +825,10 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
             logger.warning(f"[BREAKOUT] {market_config.name}: stop {signal.stop_distance:.1f} < 1.5x spread ({spread:.1f}) — skip")
             return
     # Position size (absolute-£ risk cap applies inside calculate_position_size).
-    ps = risk_manager.calculate_position_size(client.get_balance(), signal.stop_distance, market_config)
+    ps = risk_manager.calculate_position_size(
+        client.get_balance(), signal.stop_distance, market_config,
+        ig_min_size=info.min_deal_size if info else None,
+    )
     if not ps.approved:
         logger.warning(f"[BREAKOUT] {market_config.name}: size not approved ({ps.reason}) — skip")
         return
@@ -1332,6 +1335,7 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             trade_signal.stop_distance,
             market_config,
             regime=per_market_regime,
+            ig_min_size=live_market_info.min_deal_size if live_market_info else None,
         )
 
         if not position_size.approved:
