@@ -830,8 +830,13 @@ MARKETS = [
         sector="Commodities",
         min_stop_distance=2.0,  # Raised from 1.0 — cap was 20pts (20x), ATR*2.5 = 25-35, every trade capped
         default_size=1.0,      # IG minimum is 1.0 per point (was 0.1 - all trades rejected!)
-        min_confidence=0.60,   # Lowered 0.70→0.60 (2026-05-31): 0.70 produced zero trades
-                               # in 2.5 weeks; need samples to evaluate the current profile
+        min_confidence=0.55,   # Lowered 0.60→0.55 (2026-06-30): the 0.60 gate threw away
+                               # ~1/3-1/2 of pullback-survived signals. Backtest on the IG
+                               # archive (live instrument, 18d) + Yahoo GC=F (59d, 4x sample):
+                               # 60→55 ~doubles trades and raises total P&L in BOTH
+                               # (archive PF 1.13→1.94, Yahoo PF 1.22→1.36); 0.50 adds nothing
+                               # (nothing fires <55%). Pullback kept (PB+55 beats NOPB+55).
+                               # Prior: lowered 0.70→0.60 (2026-05-31, 0.70 = zero trades).
         strategy="gold",       # Custom: fast EMAs 3/8/21, RSI 85/15, 1.5x stops, R:R 3.0
         trading_start=23,
         trading_end=21,
