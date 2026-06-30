@@ -719,6 +719,17 @@ MARKETS = [
         adx_ceiling=45.0,
         adx_ceiling_enforce=False,
         adx_ceiling_direction="",
+        # 2026-06-30: long-only. Archive walk-forward via the LIVE analyze()
+        # (scripts ad-hoc, 1416 candles ~4wk, 15 signals) split by direction:
+        #   BUY:  +144 pts / 7 trades (PF strong)
+        #   SELL:  -72 pts / 8 trades (net negative)
+        # AI/tech basket has structural upward drift — shorts fight the tide,
+        # same shape as S&P long-only (590) and FTSE long-bias (683). Same run
+        # REFUTED enforcing the 45 ceiling (the >45 ADX band is the WINNING
+        # bucket: PF 1.39 vs 1.07 for <=45), so ceiling stays observational.
+        # Caveat: 8 SELL signals is a thin sample (two were the biggest single
+        # winners) — revisit at the next review with ~2x the archive.
+        allowed_direction="BUY",
         trading_start=4,
         trading_end=22,        # Extended from 20 (2026-05-07): 5m backtest showed
                                # +£35/mo theoretical edge but live had only 1 trade
