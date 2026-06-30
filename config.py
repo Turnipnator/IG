@@ -854,31 +854,39 @@ MARKETS = [
     #     trading_start=23,
     #     trading_end=21,
     # ),
-    MarketConfig(
-        # 1h candles after 5m showed modest edge only (60d PF 1.28, +1.08%).
-        # 365d 1h backtest: PF 2.16, +7.10%, 41 trades, WR 51%. Same pattern
-        # as Germany 40 — interval is the dominant factor on 1h.
-        epic="CS.D.COPPER.TODAY.IP",
-        name="Copper",
-        sector="Commodities",
-        min_stop_distance=12.0,    # Spread is 22.0 — need comfortable margin
-        default_size=1.0,          # IG minimum is 1.0 (0.1/0.2 rejected with MINIMUM_ORDER_SIZE_ERROR)
-        candle_interval=60,        # 1h candles (was 5m default)
-        htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
-        min_confidence=0.55,
-        strategy="copper",     # 2026-06-11: dedicated long-bias profile (ADX 25)
-        allowed_direction="BUY",  # cull review + sweep: Copper edge is long-side
-        trading_start=13,      # CME Copper: US session only. Asia hours are illiquid
-        trading_end=20,        # and the spread guard was rejecting overnight signals anyway
-        # ADX-ceiling OBSERVATIONAL (log-only, trade proceeds). All-EPIC sweep
-        # (scripts/backtest_adx_ceiling_all.py, 2026-06-09, HG=F 1h/700d 92t):
-        # high-ADX tail is a net loser — capping ~55-60 → PF 1.22→1.41,
-        # P&L +5.47→+9.33%. ΔP&L noisy across ceilings (exact value approximate).
-        # Yahoo continuous futures ≠ IG contract; gather live before enforcing.
-        adx_ceiling=55.0,
-        adx_ceiling_enforce=False,
-        adx_ceiling_direction="SELL",  # short-side STRONG: SELL +2.39, BUY HURTS -2.02 (dir-split 2026-06-09)
-    ),
+    # Copper — DISABLED 2026-06-30. Structurally un-tradeable under the £45 absolute
+    # risk cap: true IG minDealSize is 1.0, so max_loss = 1.0 × stop, and stop =
+    # ATR×1.8 (min_stop 12) NEVER falls to ≤45pt. Over the full 1h candle archive
+    # (318 bars, Jun 5-30) Copper's ATR ranged 25.7-95.2 → stop 46.2-171.4; 0.0% of
+    # bars fit the cap, so every signal silently cap-skipped. Fitting the cap would
+    # need stop_atr_mult ≤0.95 at median ATR — a whipsaw-tight stop that diverges
+    # from the backtested 1.8 profile. Re-enable only if copper ATR roughly halves
+    # or IG lowers minDealSize. Profile kept below for that day.
+    # MarketConfig(
+    #     # 1h candles after 5m showed modest edge only (60d PF 1.28, +1.08%).
+    #     # 365d 1h backtest: PF 2.16, +7.10%, 41 trades, WR 51%. Same pattern
+    #     # as Germany 40 — interval is the dominant factor on 1h.
+    #     epic="CS.D.COPPER.TODAY.IP",
+    #     name="Copper",
+    #     sector="Commodities",
+    #     min_stop_distance=12.0,    # Spread is 22.0 — need comfortable margin
+    #     default_size=1.0,          # IG minimum is 1.0 (0.1/0.2 rejected with MINIMUM_ORDER_SIZE_ERROR)
+    #     candle_interval=60,        # 1h candles (was 5m default)
+    #     htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
+    #     min_confidence=0.55,
+    #     strategy="copper",     # 2026-06-11: dedicated long-bias profile (ADX 25)
+    #     allowed_direction="BUY",  # cull review + sweep: Copper edge is long-side
+    #     trading_start=13,      # CME Copper: US session only. Asia hours are illiquid
+    #     trading_end=20,        # and the spread guard was rejecting overnight signals anyway
+    #     # ADX-ceiling OBSERVATIONAL (log-only, trade proceeds). All-EPIC sweep
+    #     # (scripts/backtest_adx_ceiling_all.py, 2026-06-09, HG=F 1h/700d 92t):
+    #     # high-ADX tail is a net loser — capping ~55-60 → PF 1.22→1.41,
+    #     # P&L +5.47→+9.33%. ΔP&L noisy across ceilings (exact value approximate).
+    #     # Yahoo continuous futures ≠ IG contract; gather live before enforcing.
+    #     adx_ceiling=55.0,
+    #     adx_ceiling_enforce=False,
+    #     adx_ceiling_direction="SELL",  # short-side STRONG: SELL +2.39, BUY HURTS -2.02 (dir-split 2026-06-09)
+    # ),
 
     # --- SOFT COMMODITIES ---
     # Soybeans — disabled. No backtest data (no Yahoo ticker), ATR/spread 1.7x (marginal),
