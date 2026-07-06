@@ -142,10 +142,11 @@ class MarketConfig:
     # first (main.py), it is a doubled position that historically whipsaws:
     # journal mining (2026-06-11) showed same-window same-direction equity-index
     # clusters at -£8.23 avg / PF 0.13 vs solo index entries +£2.62 / PF 1.81.
-    # OBSERVATIONAL by default (CLUSTER_FILTER_ENFORCE=False in main.py) — logs +
-    # journals the would-block, trade proceeds; query rejected_signals LIKE
-    # 'Cluster-filter%'. "" disables. Only the 6 backtested equity indices are
-    # grouped; AI Index is a candidate to add once data confirms.
+    # ENFORCED since 2026-07-06 (CLUSTER_FILTER_ENFORCE=True in main.py, 15m window
+    # kept after modelling refuted widening) — the 2nd+ correlated entry is logged +
+    # journalled AND skipped; query rejected_signals LIKE 'Cluster-filter%'. ""
+    # disables. Only the 6 backtested equity indices are grouped; AI Index is a
+    # candidate to add once data confirms.
     correlation_group: str = ""
     # Hard direction restriction. "" (default) = trade both sides; "BUY" = long
     # only (skip SELL signals), "SELL" = short only. For markets whose edge is

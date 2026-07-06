@@ -205,17 +205,22 @@ def _load_breakout_deals(open_deal_ids: set[str]) -> None:
 # to let indicators stabilise with fresh streaming data
 STARTUP_COOLDOWN_MINUTES = 15
 
-# Correlation-cluster filter — OBSERVATIONAL by default. Markets sharing a
+# Correlation-cluster filter — ENFORCED (2026-07-06). Markets sharing a
 # MarketConfig.correlation_group are one underlying bet; a 2nd group member
 # opening the SAME direction within CLUSTER_FILTER_WINDOW_MIN of the first is a
 # doubled position. Journal mining (2026-06-11) found same-window same-direction
-# equity-index clusters at -£8.23 avg / PF 0.13 vs solo +£2.62 / PF 1.81 (n=7,
-# thin — hence observational). With CLUSTER_FILTER_ENFORCE=False the would-block
-# is logged + journalled (rejected_signals LIKE 'Cluster-filter%') and the trade
-# proceeds; set True to actually skip the 2nd correlated entry. recent_group_entries
-# records the last entry time + direction per epic for the window check.
+# equity-index clusters at -£8.23 avg / PF 0.13 vs solo +£2.62 / PF 1.81 (thin,
+# n=7 — shipped observational). 2026-07-06 re-mine (since-grouping n=37) confirmed
+# the 15m blocked bucket held net-negative — 6t / -£34.69 / 17% WR vs solos +£96 /
+# 42% — so enforcement flipped on. Window MODELLED at 15/30/45/60m: 15m is the
+# most precise cut; widening DILUTES it (enforce@15m improves the book +£34.69 vs
+# +£17.62 @30m, as 30m drags in a +£45.20 winner) — so 15m kept, do NOT widen.
+# When enforced the 2nd+ correlated entry is logged + journalled (rejected_signals
+# LIKE 'Cluster-filter%') AND skipped; the first member is always let through.
+# recent_group_entries records the last entry time + direction per epic (recorded
+# only on a successful open, so a blocked entry never anchors the next one).
 CLUSTER_FILTER_WINDOW_MIN = 15
-CLUSTER_FILTER_ENFORCE = False
+CLUSTER_FILTER_ENFORCE = True
 recent_group_entries: dict[str, tuple[datetime, str]] = {}  # epic -> (entry_time, direction)
 
 # MTF pullback-entry state (StrategyConfig.pullback_entry_atr_frac/window). When a
