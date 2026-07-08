@@ -960,7 +960,13 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             if fx_mode == "off":
                 return
             if fx_mode in ("shadow", "breakout"):
-                analyze_forex_breakout(epic, market, market_config, fx_mode)
+                # Per-pair veto: a market flagged breakout_shadow_only never places
+                # live breakout orders even when the global toggle is 'breakout' — it
+                # stays observe-only. EUR/USD set 2026-07-08 (un-validated edge, live
+                # tail given back); GBP/USD unflagged so it trades live.
+                effective_mode = "shadow" if getattr(
+                    market_config, "breakout_shadow_only", False) else fx_mode
+                analyze_forex_breakout(epic, market, market_config, effective_mode)
                 return
             # fx_mode == "momentum": fall through to the original momentum pipeline.
 

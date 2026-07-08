@@ -166,6 +166,15 @@ class MarketConfig:
     # kept; the effect is Wall-St-SPECIFIC (NASDAQ/FTSE/S&P inert or hurt) so this
     # is NOT raised globally. Small-sample (1 trade on n=14) → trial + review.
     reentry_cooldown_candles: int | None = None
+    # Force the breakout strategy to SHADOW (observe-only: log + journal, no live
+    # order) for THIS market even when the global /forex toggle is 'breakout'. The
+    # global mode still governs every other forex pair — this is a per-pair veto on
+    # LIVE breakout entries only; it does NOT touch an already-open position's
+    # Donchian-trail exit. Set on EUR/USD 2026-07-08: the 725d head-to-head never
+    # validated EUR/USD breakout (−2.29%/67t) and the live "edge" was a single +£61
+    # tail (#192) since fully given back — 3 straight losers −£64.83 (#198/#215/#225),
+    # 0% WR. GBP/USD breakout stays LIVE (backtest PF 1.30, validated).
+    breakout_shadow_only: bool = False
 
 
 # Load configurations from environment
@@ -989,6 +998,8 @@ MARKETS = [
         strategy="forex",      # Tight 1.0x stops
         trading_start=23,
         trading_end=21,
+        breakout_shadow_only=True,  # 2026-07-08: EUR/USD breakout un-validated + live
+                                    # tail given back — observe-only. GBP/USD stays live.
     ),
     MarketConfig(
         # 1h candles: 365d backtest +1.52%, PF 1.94, 56% WR vs 5m +0.50% PF 2.01.
