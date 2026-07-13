@@ -107,6 +107,9 @@ class MarketConfig:
     htf_resolution: str = "HOUR"  # IG resolution for HTF trend (HOUR, HOUR_4, DAY etc). Use DAY for 1h-candle markets.
     min_confidence: float = 0.5  # Minimum confidence to enter (higher = more selective)
     strategy: str = "default"  # Strategy profile to use: "default" or "indices"
+    # UTC hours — gated via main.utc_hour(), NOT datetime.now(). The container runs
+    # TZ=Europe/London, so local time is BST in summer; until 2026-07-13 these were
+    # compared against local time and every window ran an hour early Mar-Oct.
     trading_start: int = 4   # UTC hour to start trading (inclusive)
     trading_end: int = 20    # UTC hour to stop trading (exclusive)
     # Leg-size (exhaustion) filter — blocks entries chasing a move that already

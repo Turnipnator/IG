@@ -13,7 +13,7 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -204,6 +204,18 @@ def _load_breakout_deals(open_deal_ids: set[str]) -> None:
 # Post-restart cooldown: skip opening new positions for 15 mins after startup
 # to let indicators stabilise with fresh streaming data
 STARTUP_COOLDOWN_MINUTES = 15
+
+
+def utc_hour() -> int:
+    """Current hour in UTC.
+
+    The container runs TZ=Europe/London, so datetime.now() returns BST (UTC+1)
+    from late March to late October. MarketConfig.trading_start/trading_end are
+    defined as UTC hours (each market's comment names its UTC cash session), so
+    the session gates must read UTC — reading local time silently ran every
+    market's window an hour early in summer and correctly in winter (2026-07-13).
+    """
+    return datetime.now(timezone.utc).hour
 
 # Correlation-cluster filter — ENFORCED (2026-07-06). Markets sharing a
 # MarketConfig.correlation_group are one underlying bet; a 2nd group member
@@ -805,8 +817,8 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
     # Post-restart cooldown — let streaming candles re-accumulate before acting.
     if (datetime.now() - bot_start_time).total_seconds() / 60 < STARTUP_COOLDOWN_MINUTES:
         return
-    # Trading hours (same logic as the momentum gate).
-    h = datetime.now().hour
+    # Trading hours (same logic as the momentum gate). UTC — see utc_hour().
+    h = utc_hour()
     ts, te = market_config.trading_start, market_config.trading_end
     outside = (h < ts or h >= te) if ts < te else (te <= h < ts)
     if outside:
@@ -1227,7 +1239,7 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
 
         # Time-of-day filter: only trade during active sessions
         # Per-market hours: indices 04-20 UTC, forex/commodities 23-21 UTC (nearly 24h)
-        current_hour = datetime.now().hour
+        current_hour = utc_hour()
         t_start = market_config.trading_start
         t_end = market_config.trading_end
         if t_start < t_end:
