@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, List, TYPE_CHECKING
 
@@ -42,20 +42,40 @@ FOREX_MODE_FILE = STATS_DIR / "forex_mode.json"
 FOREX_MODES = ("off", "momentum", "shadow", "breakout")
 
 # The daily stats reset at the 21:00 UTC trading-session boundary
-# (send_daily_summary -> reset_daily_stats, scheduled at 21:00). Persistence
+# (send_daily_summary -> reset_daily_stats, scheduled at 21:00 UTC). Persistence
 # must use the SAME boundary, not calendar midnight — otherwise a restart in the
 # 00:00-21:00 window wrongly discards a session that began before midnight.
+# This hour is UTC: the container runs TZ=Europe/London, so both this boundary
+# and the scheduler (main.py: .at("21:00", "UTC")) must pin UTC explicitly or the
+# session silently rolls at 20:00 UTC in summer (2026-07-13).
 SESSION_RESET_HOUR = 21
+
+
+def _to_utc(dt: datetime) -> datetime:
+    """Normalise a datetime to NAIVE UTC.
+
+    Naive timestamps across this codebase (journal entry_time/exit_time, and
+    datetime.now() generally) are container-LOCAL, and the container runs
+    TZ=Europe/London — so they are BST in summer. Session bucketing must happen
+    in UTC, or the 21:00 boundary drifts by an hour for half the year. A naive
+    input is interpreted as local (astimezone's documented behaviour) and
+    converted; an aware input is just converted.
+    """
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _session_date(now: Optional[datetime] = None) -> str:
     """Date label of the trading session current at `now`.
 
-    A session runs from one 21:00 UTC boundary to the next, so before 21:00 the
-    live session is the one that began the previous calendar day. Used as the
+    A session runs from one 21:00 UTC boundary to the next, so before 21:00 UTC
+    the live session is the one that began the previous calendar day. Used as the
     stats file's identity so persistence and the 21:00 reset agree.
+
+    `now` may be a naive LOCAL timestamp (callers pass journal exit_time/
+    entry_time straight from SQLite); it is normalised to UTC first so both the
+    default path and the explicit-timestamp path bucket on the same boundary.
     """
-    now = now or datetime.now()
+    now = _to_utc(now) if now is not None else datetime.now(timezone.utc).replace(tzinfo=None)
     if now.hour < SESSION_RESET_HOUR:
         now = now - timedelta(days=1)
     return now.strftime("%Y-%m-%d")

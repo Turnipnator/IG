@@ -2422,7 +2422,7 @@ async def main_async():
         # between the 4-hourly briefings (2026-06-12). Silent unless the active set
         # changes — streaming-only, no API cost, no Telegram/log spam on no-change.
         schedule.every(30).minutes.do(run_daily_screen, periodic=True)
-        schedule.every().day.at("21:00").do(send_daily_summary)
+        schedule.every().day.at("21:00", "UTC").do(send_daily_summary)
         schedule.every().day.at("22:00").do(_scheduled_prune_archive)  # Bound the durable archive (HDD-safe retention, default 365d)
 
         # Run scheduler in background
@@ -2489,7 +2489,7 @@ async def main_async():
 
         schedule.every(trading_config.check_interval).minutes.do(polling_cycle)
         schedule.every(6).hours.do(refresh_session)
-        schedule.every().day.at("21:00").do(send_daily_summary)
+        schedule.every().day.at("21:00", "UTC").do(send_daily_summary)
 
         # Run first cycle
         polling_cycle()
