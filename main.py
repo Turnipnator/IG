@@ -1002,6 +1002,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         # Analyze with multi-timeframe context
         trade_signal = strategy.analyze(df, market_config, current_price, htf_trend)
 
+        # Resolve any prior screener-benched snapshots for this market against the
+        # candles that have since arrived (E1 instrumentation; no-op when none open).
+        _resolve_benched(market_config, df)
+
         # Screener gate (instrumented). The strategy is now evaluated for ALL
         # markets — including screener-inactive ones — so we can measure what
         # the top-N cap is actually vetoing. Trading behaviour is unchanged:
@@ -1149,6 +1153,28 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             _log_suppressed_signal(
                 market_config, df, trade_signal, f"Screener-inactive ({detail})"
             )
+            # Snapshot for counterfactual outcome-tracking (E1 review instrumentation):
+            # would this benched signal have hit its limit or its stop? entry/stop/limit
+            # are exactly what the entry would have used. Dedup one row per (epic,
+            # direction) per 30-min window (a setup benched every candle = one
+            # opportunity). benched_at uses the candle clock so the resolver is tz-safe.
+            try:
+                if journal and not df.empty and "date" in df.columns:
+                    cand_ts = df.iloc[-1]["date"]
+                    since = (cand_ts - timedelta(minutes=30)).isoformat()
+                    sig_dir = trade_signal.signal.value
+                    if not journal.has_open_benched(epic, sig_dir, since):
+                        bench_type = "cap" if (sc and "Below top" in sc.reason) else "quality"
+                        journal.log_benched(
+                            epic, market.name, sig_dir,
+                            float(trade_signal.entry_price),
+                            float(trade_signal.stop_distance),
+                            float(trade_signal.limit_distance),
+                            int(sc.score) if sc else 0, bench_type,
+                            cand_ts.isoformat(),
+                        )
+            except Exception as e:
+                logger.debug(f"Benched snapshot failed for {epic}: {e}")
             return
 
         # Market regime filter: only applied to indices (S&P, NASDAQ)
@@ -2004,6 +2030,98 @@ def _log_suppressed_signal(
         )
     except Exception as e:
         logger.debug(f"Journal: failed to log suppressed signal: {e}")
+
+
+def _resolve_benched(market_config, df) -> None:
+    """Resolve OPEN screener-benched snapshots against subsequent candles: would the
+    counterfactual trade have hit its limit (WIN) or its stop (LOSS) first — or been
+    closed by the same MACD-3 / RSI / ranging exit the live engine uses?
+
+    Instrumentation only: reads candles already in memory (zero API), never places or
+    affects a trade. Faithful to the offline E1 sim (identical stop/limit + exit rules,
+    htf treated NEUTRAL). Cheap in the common case — get_open_benched returns [] (the
+    screener is near-inert) and indicators are only computed when a row is open. Feeds
+    the 2026-07 review's "does the screener earn its keep?" question with live data."""
+    try:
+        if not journal or df is None or df.empty or "date" not in df.columns:
+            return
+        epic = market_config.epic
+        open_rows = journal.get_open_benched(epic)
+        if not open_rows:
+            return
+        import pandas as pd
+        from src.indicators import add_all_indicators
+
+        strat = get_strategy_for_market(market_config)
+        ip = {
+            "ema_fast": strat.ema_fast, "ema_medium": strat.ema_medium,
+            "ema_slow": strat.ema_slow, "rsi_period": strat.rsi_period,
+        }
+        ind = add_all_indicators(df.copy(), ip)
+        use_macd = getattr(strat, "use_macd_exit", True)
+        ob = getattr(strat, "rsi_overbought", 70)
+        os_ = getattr(strat, "rsi_oversold", 30)
+        adx_exit = getattr(strat, "adx_threshold", 25) - 10
+        MAX_FWD = 96  # ~8h at 5m: neither barrier nor a momentum exit fired -> EXPIRED
+
+        for r in open_rows:
+            b_at = pd.to_datetime(r["benched_at"])
+            fwd = ind[ind["date"] > b_at]
+            if fwd.empty:
+                continue
+            entry = r["entry_price"]; stop = r["stop_distance"]; lim = r["limit_distance"]
+            if not stop or stop <= 0:
+                continue
+            is_buy = r["direction"] == "BUY"
+            hh = fwd["high"].values; ll = fwd["low"].values; cc = fwd["close"].values
+            mh = fwd["macd_hist"].values if "macd_hist" in fwd.columns else None
+            rs = fwd["rsi"].values if "rsi" in fwd.columns else None
+            ax = fwd["adx"].values if "adx" in fwd.columns else None
+            status = outcome = None; rmult = None; ncdl = 0
+            for i in range(len(fwd)):
+                ncdl = i + 1
+                # Broker barriers (intra-candle). If both touch in one candle assume
+                # stop first (conservative), matching the offline sim.
+                if is_buy:
+                    if ll[i] <= entry - stop:
+                        status, outcome, rmult = "LOSS", "stop", -1.0; break
+                    if hh[i] >= entry + lim:
+                        status, outcome, rmult = "WIN", "limit", lim / stop; break
+                else:
+                    if hh[i] >= entry + stop:
+                        status, outcome, rmult = "LOSS", "stop", -1.0; break
+                    if ll[i] <= entry - lim:
+                        status, outcome, rmult = "WIN", "limit", lim / stop; break
+                # RSI-extreme exit (always active in the live engine)
+                if rs is not None:
+                    if is_buy and rs[i] > ob:
+                        d = (cc[i] - entry) / stop
+                        status, outcome, rmult = ("WIN" if d >= 0 else "LOSS"), "rsi", d; break
+                    if (not is_buy) and rs[i] < os_:
+                        d = (entry - cc[i]) / stop
+                        status, outcome, rmult = ("WIN" if d >= 0 else "LOSS"), "rsi", d; break
+                # MACD-3 momentum exit (indices)
+                if use_macd and mh is not None and i >= 2:
+                    win3 = mh[i - 2:i + 1]
+                    if is_buy and all(h < 0 for h in win3):
+                        d = (cc[i] - entry) / stop
+                        status, outcome, rmult = ("WIN" if d >= 0 else "LOSS"), "macd", d; break
+                    if (not is_buy) and all(h > 0 for h in win3):
+                        d = (entry - cc[i]) / stop
+                        status, outcome, rmult = ("WIN" if d >= 0 else "LOSS"), "macd", d; break
+                # ADX-ranging-3 exit (non-MACD strategies, e.g. Gold)
+                if (not use_macd) and ax is not None and i >= 2:
+                    if all(a < adx_exit for a in ax[i - 2:i + 1]):
+                        d = ((cc[i] - entry) if is_buy else (entry - cc[i])) / stop
+                        status, outcome, rmult = ("WIN" if d >= 0 else "LOSS"), "ranging", d; break
+            if status:
+                journal.resolve_benched(r["id"], status, outcome, ncdl, round(float(rmult), 3))
+            elif len(fwd) >= MAX_FWD:
+                d = ((cc[-1] - entry) if is_buy else (entry - cc[-1])) / stop
+                journal.resolve_benched(r["id"], "EXPIRED", "expired", len(fwd), round(float(d), 3))
+            # else: still OPEN — resolve on a later cycle as more candles arrive
+    except Exception as e:
+        logger.debug(f"Benched resolver failed: {e}")
 
 
 def _maybe_rotate_daily_stats() -> None:

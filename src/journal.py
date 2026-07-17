@@ -78,9 +78,33 @@ class TradeJournal:
                 reject_reason TEXT
             );
 
+            -- Counterfactual outcomes of screener-benched signals. Instrumentation
+            -- only (never affects trading): snapshot a benched signal's entry/stop/
+            -- limit, then resolve later from candles — would it have hit limit (WIN)
+            -- or stop (LOSS)? Answers the 2026-07 review's "does the screener earn
+            -- its keep?" (E1) with live data instead of archive archaeology.
+            CREATE TABLE IF NOT EXISTS benched_outcomes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                epic TEXT NOT NULL,
+                market_name TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                benched_at TEXT NOT NULL,      -- candle-clock timestamp (tz-safe vs resolver)
+                entry_price REAL,
+                stop_distance REAL,
+                limit_distance REAL,
+                score INTEGER,
+                bench_type TEXT,               -- 'cap' (Below top N) | 'quality' (Score too low)
+                status TEXT DEFAULT 'OPEN',    -- OPEN | WIN | LOSS | EXPIRED
+                outcome TEXT,                  -- 'limit' | 'stop' | 'macd' | 'rsi' | 'ranging' | 'expired'
+                resolved_at TEXT,
+                candles_to_resolve INTEGER,
+                r_multiple REAL                -- P&L as a multiple of the stop (risk)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_trades_epic ON trades(epic);
             CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
             CREATE INDEX IF NOT EXISTS idx_rejected_epic ON rejected_signals(epic);
+            CREATE INDEX IF NOT EXISTS idx_benched_status ON benched_outcomes(status);
         """)
         self.db.commit()
 
@@ -256,6 +280,90 @@ class TradeJournal:
             self.db.commit()
         except Exception as e:
             logger.warning(f"Journal: failed to log rejection: {e}")
+
+    # --- Benched-signal outcome tracking (E1 instrumentation) ---
+
+    def log_benched(
+        self,
+        epic: str,
+        market_name: str,
+        direction: str,
+        entry_price: float,
+        stop_distance: float,
+        limit_distance: float,
+        score: int,
+        bench_type: str,
+        benched_at: str,
+    ) -> None:
+        """Snapshot a screener-benched signal so its counterfactual outcome can be
+        resolved later. entry/stop/limit are exactly what the entry would have used;
+        benched_at is the entry candle's timestamp (candle clock, tz-safe). Log-only."""
+        try:
+            self.db.execute(
+                """INSERT INTO benched_outcomes
+                   (epic, market_name, direction, benched_at, entry_price,
+                    stop_distance, limit_distance, score, bench_type, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')""",
+                (epic, market_name, direction, benched_at, entry_price,
+                 stop_distance, limit_distance, score, bench_type),
+            )
+            self.db.commit()
+        except Exception as e:
+            logger.warning(f"Journal: failed to log benched signal: {e}")
+
+    def has_open_benched(self, epic: str, direction: str, since_iso: str) -> bool:
+        """True if an OPEN benched row for this epic+direction exists at/after since_iso.
+        Dedup: a setup benched every candle is one opportunity, not many."""
+        try:
+            row = self.db.execute(
+                """SELECT 1 FROM benched_outcomes
+                   WHERE epic=? AND direction=? AND status='OPEN' AND benched_at>=?
+                   LIMIT 1""",
+                (epic, direction, since_iso),
+            ).fetchone()
+            return row is not None
+        except Exception:
+            return False
+
+    def get_open_benched(self, epic: str) -> list[dict]:
+        """All still-unresolved benched snapshots for an epic."""
+        try:
+            rows = self.db.execute(
+                "SELECT * FROM benched_outcomes WHERE epic=? AND status='OPEN'",
+                (epic,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def resolve_benched(
+        self, row_id: int, status: str, outcome: str,
+        candles_to_resolve: int, r_multiple: float,
+    ) -> None:
+        """Mark a benched snapshot resolved (WIN/LOSS/EXPIRED) with its R-multiple."""
+        try:
+            self.db.execute(
+                """UPDATE benched_outcomes
+                   SET status=?, outcome=?, resolved_at=?, candles_to_resolve=?, r_multiple=?
+                   WHERE id=?""",
+                (status, outcome, datetime.now().isoformat(),
+                 candles_to_resolve, r_multiple, row_id),
+            )
+            self.db.commit()
+        except Exception as e:
+            logger.warning(f"Journal: failed to resolve benched row {row_id}: {e}")
+
+    def get_benched_summary(self) -> list[dict]:
+        """Aggregate resolved benched outcomes by status+bench_type for the review."""
+        try:
+            rows = self.db.execute(
+                """SELECT status, bench_type, COUNT(*) n,
+                          COALESCE(SUM(r_multiple), 0) sum_r
+                   FROM benched_outcomes GROUP BY status, bench_type"""
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
 
     # --- Query methods ---
 
