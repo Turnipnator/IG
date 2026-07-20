@@ -24,6 +24,11 @@ HTF_TRENDS_FILE = _DATA_DIR / "htf_trends.json"
 BREAKOUT_DEALS_FILE = _DATA_DIR / "breakout_deals.json"
 QUIET_RESTART_WINDOW = timedelta(hours=2)
 HTF_REFRESH_COOLDOWN = timedelta(hours=6)  # On startup, skip HTF fetch if one ran within this window
+# Streaming connect is retried before falling back to polling. `streaming_enabled`
+# is decided ONCE at boot and never re-evaluated, so a transient Lightstreamer
+# error strands the bot in the degraded branch until someone restarts it.
+# Seconds to wait after each failed attempt (final entry 0 = no wait, then give up).
+STREAMING_RETRY_BACKOFF = (5, 15, 30, 0)
 
 from config import (
     load_ig_config,
@@ -2454,10 +2459,32 @@ async def main_async():
     # Start Telegram bot
     await telegram.start()
 
-    # Initialize streaming (real-time prices)
+    # Initialize streaming (real-time prices).
+    #
+    # Retry before conceding: on 2026-07-18 a single transient Lightstreamer error
+    # at boot ("[-2] A system error occurred") dropped the bot into polling mode for
+    # 2.5 days — no screener, no candle archiving, and REST allowance burned — even
+    # though the 6-hourly session refresh reconnected the stream fine minutes later.
     streaming_enabled = False
     if LIGHTSTREAMER_AVAILABLE:
-        streaming_enabled = initialize_streaming()
+        attempts = len(STREAMING_RETRY_BACKOFF)
+        for attempt, backoff in enumerate(STREAMING_RETRY_BACKOFF, start=1):
+            streaming_enabled = initialize_streaming()
+            if streaming_enabled:
+                if attempt > 1:
+                    logger.info(f"Streaming initialized on attempt {attempt}/{attempts}")
+                break
+            if backoff:
+                logger.warning(
+                    f"Streaming init failed (attempt {attempt}/{attempts}) — "
+                    f"retrying in {backoff}s"
+                )
+                await asyncio.sleep(backoff)
+        if not streaming_enabled:
+            logger.critical(
+                f"Streaming unavailable after {attempts} attempts — DEGRADED to polling "
+                "mode: no screener, no candle archiving, REST allowance in use"
+            )
     else:
         logger.warning(
             "Lightstreamer not installed. Install with: pip install lightstreamer-client-lib"
@@ -2511,6 +2538,26 @@ async def main_async():
             f"*Regimes:*\n{regime_summary}\n\n"
             f"{'Real-time price streaming active!' if streaming_enabled else 'Using scheduled polling (API limited)'}"
         )
+
+    if not streaming_enabled:
+        # Deliberately IGNORES skip_banner. The 2026-07-18 incident hid exactly this
+        # warning behind the quiet-restart guard — 44 crash-loop restarts put the boot
+        # inside the 2h window, the "Mode: POLLING" banner was suppressed, and the
+        # degradation ran unnoticed until it was spotted by hand. Silent fallback IS
+        # the failure mode, so this alert always goes out.
+        try:
+            await telegram.send_notification(
+                "⚠️ *DEGRADED — running in POLLING mode*\n\n"
+                "Lightstreamer failed to connect at startup after "
+                f"{len(STREAMING_RETRY_BACKOFF)} attempts.\n\n"
+                "*Disabled until restart:*\n"
+                "• Market screener (no active-set updates)\n"
+                "• Candle archiving (backtest data)\n\n"
+                "Trading continues, but the weekly REST allowance is being consumed. "
+                "Restart once IG streaming is healthy."
+            )
+        except Exception as e:
+            logger.error(f"Could not send degraded-mode alert: {e}")
 
     if streaming_enabled:
         logger.info("Bot running with real-time streaming. Analyzing on candle completion.")
