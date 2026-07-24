@@ -228,11 +228,19 @@ class TradingStrategy:
         buy_pullback_valid = price_distance_pct <= pullback_threshold  # Price near/below fast EMA
         sell_pullback_valid = price_distance_pct >= -pullback_threshold  # Price near/above fast EMA
 
-        # MACD pre-check: don't enter if exit condition is already true
-        # This prevents opening and immediately closing (losing the spread)
-        last_3_macd = [df.iloc[-i]["macd_hist"] for i in range(1, 4)] if len(df) >= 4 else [0]
-        macd_already_bearish = all(h < 0 for h in last_3_macd)
-        macd_already_bullish = all(h > 0 for h in last_3_macd)
+        # MACD pre-check: don't enter if the MACD-3 exit is armed or one candle
+        # from arming. The original check blocked only 3/3 (exit already true),
+        # but entering at 2/3 — the two most recent closed candles opposing —
+        # self-destructs one candle later: the next opposing close completes the
+        # streak and the exit fires at the first post-min-hold evaluation
+        # (~5-11 min, spread + adverse drift = guaranteed small loss). 2026-07-24
+        # review: replaying this 2/3 gate over 6wk of real post-cap journal
+        # trades blocks 11 trades netting −£92.85 (9 losers incl. five Wall St
+        # conf-0.56 bleeders vs 2 small wins) while touching NONE of the kept
+        # winners (+£249). Archive sim: PF up on 5/7 index markets.
+        last_2_macd = [df.iloc[-i]["macd_hist"] for i in range(1, 3)] if len(df) >= 3 else [0]
+        macd_already_bearish = all(h < 0 for h in last_2_macd)
+        macd_already_bullish = all(h > 0 for h in last_2_macd)
 
         # Generate signal with multi-timeframe confirmation
         if bullish_ema and price_above_ema and rsi_buy_valid:
@@ -260,7 +268,7 @@ class TradingStrategy:
                     entry_price=current_price,
                     stop_distance=round(stop_distance, 2),
                     limit_distance=round(limit_distance, 2),
-                    reason=f"MACD already bearish (would exit immediately)",
+                    reason=f"MACD already bearish (3-candle exit armed — would fire next candle)",
                 )
 
             # Multi-timeframe filter: check based on strategy requirement
@@ -332,7 +340,7 @@ class TradingStrategy:
                     entry_price=current_price,
                     stop_distance=round(stop_distance, 2),
                     limit_distance=round(limit_distance, 2),
-                    reason=f"MACD already bullish (would exit immediately)",
+                    reason=f"MACD already bullish (3-candle exit armed — would fire next candle)",
                 )
 
             # Multi-timeframe filter: check based on strategy requirement

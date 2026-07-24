@@ -178,6 +178,15 @@ class MarketConfig:
     # tail (#192) since fully given back — 3 straight losers −£64.83 (#198/#215/#225),
     # 0% WR. GBP/USD breakout stays LIVE (backtest PF 1.30, validated).
     breakout_shadow_only: bool = False
+    # SHADOW mode for the momentum pipeline (2026-07-24 review). The market runs
+    # the FULL live signal path — streaming, indicators, HTF, regime, confidence,
+    # hours, cooldowns, calendar — but instead of placing the order the signal is
+    # journaled (rejected_signals 'Shadow-only') and snapshotted into
+    # benched_outcomes (bench_type='shadow'), where the E1 resolver replays it
+    # against subsequent candles to a WIN/LOSS verdict. Candles keep archiving.
+    # Use for: demoted markets we want to keep measuring (FTSE, AI Index) and
+    # the E2 memoryless-thesis test (Russell 2000). Zero orders, zero risk.
+    shadow_only: bool = False
 
 
 # Load configurations from environment
@@ -339,14 +348,21 @@ STRATEGY_PROFILES = {
         use_macd_exit=False,
         require_htf=True,
         pullback_pct=0.3,
-        breakeven_trigger_pct=0.5,  # Lowered 0.7→0.5 (2026-05-31): Yahoo backtest
-                                    # shows +0.33%/55d (5m) and +17.19%/365d PF 4.99
-                                    # (1h) vs live 0.7 at -1.01% / +15.96% PF 3.78
+        breakeven_trigger_pct=0.7,  # 0.5→0.7 (2026-07-24 review): the 0.5 trigger was a
+                                    # YAHOO-derived change (05-31) and the IG-native 6wk
+                                    # archive replay refutes it — early BE-arm + tight trail
+                                    # was clipping winners to avg +£4.53 vs avg loss −£13.66
+                                    # (live 71% WR yet NEGATIVE). be0.7+trail2.0 combo:
+                                    # PF 1.21→1.50, sumR +1.85→+4.13 (n=27→25). Another
+                                    # Yahoo-proxy artifact caught by real-instrument data.
         breakeven_lock_pct=0.25,    # 2026-06-10: lock ~25% of stop (~2-3pts) as profit
                                     # instead of dead-entry. Gold ATR ~10 snapped BE-at-entry
                                     # back to £0 on noise (e.g. 01:10 SELL +£12→£0). 0.25 < 0.5
                                     # trigger so the locked stop stays behind price at arm time.
-        atr_trail_mult=1.5,
+        atr_trail_mult=2.0,         # 1.5→2.0 (2026-07-24, same sweep — only helps PAIRED
+                                    # with be 0.7; trail 2.0 alone tested WORSE). NB the
+                                    # ADX-sustained entry gate was tested too and REFUTED
+                                    # (PF 0.85) — do not add it; recurring tail-clip lesson.
         pullback_entry_atr_frac=0.5,  # 2026-06-11: MTF pullback entry (Oanda-style).
         pullback_entry_window=6,      # Wait ≤6 candles for a 0.5×ATR retrace toward the
                                       # EMA before entering; drop the signal if it never
@@ -633,20 +649,28 @@ MARKETS = [
         adx_ceiling_direction="SELL",  # short-side: longs never reach 55 (dir-split 2026-06-09)
         correlation_group="equity_index",  # cluster filter (2026-06-11)
     ),
-    # Disabled 2026-05-01 — strategy doesn't fit. Tested 5m/15m/30m/1h timeframes,
-    # ADX 30/35/40, slower EMAs, long-only, wide stops — no variant produced a
-    # clean edge. Best 1h/ADX 40 result was 4 trades over 730d (statistically
-    # meaningless). Live: 13 trades, 38% WR, -£11.50 over 57d. Revisit if we
-    # ever build a non-trend strategy (mean reversion / breakout).
-    # MarketConfig(
-    #     epic="IX.D.RUSSELL.DAILY.IP",
-    #     name="US Russell 2000",
-    #     sector="Indices",
-    #     min_stop_distance=1.0,
-    #     default_size=1.0,
-    #     min_confidence=0.55,
-    #     strategy="indices_adx35",
-    # ),
+    # Disabled 2026-05-01 ("strategy doesn't fit"); RE-ADDED AS SHADOW 2026-07-24.
+    # The per-EPIC walk-forward (07-14) flatly contradicted the disable: PF 1.84,
+    # 7/8 quarters green, survives all cost levels — the strongest OOS market in
+    # the sweep. But that ran at 1h and configs don't port to 5m, and because the
+    # market was unsubscribed we have ZERO IG-native candles to re-derive 5m
+    # settings from. shadow_only fixes both: it streams (archive starts building)
+    # and runs the live 5m pipeline observe-only — which is ALSO the E2
+    # memoryless-thesis experiment (does a "disabled" market trade ~like a live
+    # one on the same signals?). Re-decide promote/drop at the next review with
+    # the shadow record + a real 5m archive in hand. No orders until then.
+    MarketConfig(
+        epic="IX.D.RUSSELL.DAILY.IP",
+        name="US Russell 2000",
+        sector="Indices",
+        shadow_only=True,
+        min_stop_distance=1.0,
+        default_size=1.0,
+        min_confidence=0.55,
+        strategy="indices_adx35",
+        correlation_group="equity_index",  # would apply if ever promoted; also keeps
+                                           # the shadow record comparable to live peers
+    ),
 
     # DISABLED 2026-06-08: no real edge. The config's documented "ADX30 PF 3.47"
     # did NOT reproduce — that figure came from the backtest's regime stop-override
@@ -688,6 +712,14 @@ MARKETS = [
         epic="IX.D.FTSE.DAILY.IP",
         name="FTSE 100",
         sector="Indices",
+        shadow_only=True,  # 2026-07-24 review: DEMOTED to shadow. Worst market in the
+                           # book (all-time −£82.29; post-cap −£73.81, 2W/9L, 18% WR).
+                           # Condemned by three independent analyses: confidence sweep
+                           # (no filterable edge — bimodal conf), per-EPIC walk-forward
+                           # (survives only on Yahoo, which flatters FTSE), and the
+                           # 6wk IG-archive replay (n=3, PF 1.07 ≈ breakeven). Signals
+                           # keep logging + resolving via benched_outcomes; re-promote
+                           # only if the shadow record turns clearly positive.
         min_stop_distance=1.0,
         default_size=1.0,
         min_confidence=0.55,
@@ -710,6 +742,15 @@ MARKETS = [
         epic="IX.D.AIIDX.DAILY.IP",
         name="AI Index",
         sector="Indices",
+        shadow_only=True,  # 2026-07-24 review: DEMOTED to shadow. Live 0W/2L −£52.36
+                           # post-cap (owns the worst trade in the journal, #211 blow-off
+                           # top @ ADX 56) — but the evidence is now MIXED, not damning:
+                           # the long-only restriction (06-30) postdates both losses and
+                           # the 7wk IG-archive replay of BUY-only is mildly positive
+                           # (n=4, PF 1.93 at an assumed 3pt spread). Zero live trades
+                           # since long-only deployed, so it's untested. Shadow tests
+                           # long-only risk-free while the archive (our only data source
+                           # for this exotic — no Yahoo proxy) keeps building.
         min_stop_distance=1.0,
         default_size=1.0,
         min_confidence=0.55,
@@ -926,31 +967,30 @@ MARKETS = [
     #     min_confidence=0.55,
     #     strategy="default",
     # ),
-    MarketConfig(
-        # 1h candles: 365d backtest PF 7.03, +22.43%, 17 trades, 65% WR vs
-        # 15m PF 0.20, -2.55%, 6 trades. Cocoa moves in slow ~hour-long
-        # waves — 5m/15m chops it into noise.
-        epic="CO.D.CC.Month2.IP",
-        name="NY Cocoa",
-        sector="Commodities",
-        min_stop_distance=10.0,
-        default_size=0.04,
-        expiry="MAY-26",
-        candle_interval=60,        # 1h candles (was 15m)
-        htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
-        min_confidence=0.55,
-        strategy="cocoa",          # 2026-06-11: dedicated short-only profile (ADX 25)
-        allowed_direction="SELL",  # cull review + sweep: Cocoa edge is short-side (HTF-dependent, modest)
-        trading_start=13,      # ICE US softs session 12:45-17:30 UTC
-        trading_end=18,
-        # ADX-ceiling OBSERVATIONAL (log-only, trade proceeds). All-EPIC sweep
-        # (scripts/backtest_adx_ceiling_all.py, 2026-06-09, CC=F 1h/700d 47t):
-        # capping ADX>55 → PF 1.24→1.49, P&L +8.84→+14.46% (−6t). Yahoo
-        # continuous futures ≠ IG contract; gather live before enforcing.
-        adx_ceiling=55.0,
-        adx_ceiling_enforce=False,
-        adx_ceiling_direction="BUY",  # LONG-side (the inverse!): BUY +5.61, shorts never reach 55 (dir-split 2026-06-09)
-    ),
+    # Disabled 2026-07-24 (v2 review) — INERT for 15 weeks: 4 trades ever, the
+    # last on 04-10 (−£6). The 06-26 agenda said "drop if still inert at 8wk";
+    # it's now doubly past that. The short-only 1h edge was always modest and
+    # HTF-dependent (PF ~1.15 on the honest re-run) and it simply never fires
+    # under the live gates. Not a loser — an idle slot. Profile kept; re-enable
+    # only with evidence it would actually trade.
+    # MarketConfig(
+    #     epic="CO.D.CC.Month2.IP",
+    #     name="NY Cocoa",
+    #     sector="Commodities",
+    #     min_stop_distance=10.0,
+    #     default_size=0.04,
+    #     expiry="MAY-26",
+    #     candle_interval=60,        # 1h candles (was 15m)
+    #     htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
+    #     min_confidence=0.55,
+    #     strategy="cocoa",          # 2026-06-11: dedicated short-only profile (ADX 25)
+    #     allowed_direction="SELL",  # cull review + sweep: Cocoa edge is short-side (HTF-dependent, modest)
+    #     trading_start=13,      # ICE US softs session 12:45-17:30 UTC
+    #     trading_end=18,
+    #     adx_ceiling=55.0,
+    #     adx_ceiling_enforce=False,
+    #     adx_ceiling_direction="BUY",
+    # ),
     # Disabled 2026-06-11 (cull review) — INERT, not a loser: bare `default`
     # profile generates ~1 trade in 60d (15m Yahoo) and 0 live trades ever. No
     # edge to validate, just an idle market slot. Profile kept; re-enable only
@@ -1020,6 +1060,15 @@ MARKETS = [
         strategy="forex",      # Tight 1.0x stops
         trading_start=7,       # London open — avoid illiquid pre-London spread widening
         trading_end=21,
+        breakout_shadow_only=True,  # 2026-07-24 review: GBP/USD breakout demoted to
+                                    # shadow. The walk-forward fade flagged 06-26 has now
+                                    # run FOUR quarters: PF 1.49 → 1.70 → 1.01 → 0.89
+                                    # (first sub-1.0 quarter), and live breakout since
+                                    # 07-08 is −£18.66 (3 trades). Full-period PF 1.44
+                                    # still stands, so this is a demotion not a burial —
+                                    # re-promote if the shadow/quarterly record recovers.
+                                    # This leaves ZERO live forex (EUR/USD already shadow;
+                                    # its 2 resolved shadow episodes both full-stopped).
     ),
     # Disabled 2026-06-25 — chronic loser in BOTH forex modes. All-time live
     # n=11 net −£93.36. The breakout leg was disabled 06-22 (commit 473f3af,
@@ -1059,24 +1108,27 @@ MARKETS = [
     #     min_confidence=0.55,
     #     strategy="default",
     # ),
-    MarketConfig(
-        # 1h candles: 365d backtest PF 1.44, +0.55%, 39 trades, 51% WR vs
-        # 15m PF 0.60, -0.38%, 20 trades, 40% WR. Treasury futures move
-        # on macro headlines — slow timeframe matches the data-release cadence.
-        epic="IR.D.10YEAR100.Month2.IP",
-        name="US 10-Year T-Note",
-        sector="Rates",
-        min_stop_distance=10.0,    # Spread is 4.0 — ATTACHED_ORDER_LEVEL_ERROR at 4.0
-        default_size=1.0,
-        expiry="JUN-26",
-        candle_interval=60,        # 1h candles (was 15m)
-        htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
-        min_confidence=0.55,
-        strategy="default",
-        allowed_direction="BUY",   # 2026-06-11 cull review: long-only. 700d Yahoo
-                                   # long PF 1.26 vs short PF 0.63; both-sides was a
-                                   # net loser only because shorts dragged it down.
-    ),
+    # Disabled 2026-07-24 (v2 review). Condemned on every axis: per-EPIC
+    # walk-forward (07-14) had it green in only 3/8 quarters, failing OOS at
+    # EVERY cost level, with the worst cost structure in the book (ATR only
+    # ~1.8× its 4pt spread — the edge can't clear the toll). Live record ends
+    # with three consecutive ~full-stop losses (−£23.52, −£24.00, −£24.00,
+    # 06-15→06-22) and zero trades since. Profile kept for the record.
+    # MarketConfig(
+    #     epic="IR.D.10YEAR100.Month2.IP",
+    #     name="US 10-Year T-Note",
+    #     sector="Rates",
+    #     min_stop_distance=10.0,    # Spread is 4.0 — ATTACHED_ORDER_LEVEL_ERROR at 4.0
+    #     default_size=1.0,
+    #     expiry="JUN-26",
+    #     candle_interval=60,        # 1h candles (was 15m)
+    #     htf_resolution="DAY",      # Daily HTF since 1h is the entry timeframe
+    #     min_confidence=0.55,
+    #     strategy="default",
+    #     allowed_direction="BUY",   # 2026-06-11 cull review: long-only. 700d Yahoo
+    #                                # long PF 1.26 vs short PF 0.63; both-sides was a
+    #                                # net loser only because shorts dragged it down.
+    # ),
 ]
 
 

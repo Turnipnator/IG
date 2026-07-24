@@ -1356,6 +1356,42 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 )
                 return
 
+        # Shadow-only markets (MarketConfig.shadow_only, 2026-07-24 review): the
+        # signal has now cleared every gate a live trade clears — regime, risk
+        # validation, regime-adjusted confidence, hours, cooldowns, calendar — so
+        # this is exactly the order live would have placed. Journal it and
+        # snapshot into benched_outcomes (bench_type='shadow'); the E1 resolver
+        # replays it to WIN/LOSS off subsequent candles. No order, no Telegram.
+        # Demoted: FTSE 100, AI Index. E2 thesis test: US Russell 2000. Sits
+        # before the order-mechanics blocks (IG stop clamp, sizing, spread/
+        # cluster checks) — those model execution, not signal quality.
+        if getattr(market_config, "shadow_only", False):
+            logger.info(
+                f"👻 Shadow [{market.name}]: {trade_signal.signal.value} @ "
+                f"{trade_signal.confidence:.0%} passed all gates — logged, no order"
+            )
+            _log_suppressed_signal(
+                market_config, df, trade_signal,
+                f"Shadow-only ({trade_signal.confidence:.0%}, ADX {trade_signal.adx:.0f})",
+            )
+            try:
+                if journal and not df.empty and "date" in df.columns:
+                    cand_ts = df.iloc[-1]["date"]
+                    since = (cand_ts - timedelta(minutes=30)).isoformat()
+                    sig_dir = trade_signal.signal.value
+                    if not journal.has_open_benched(epic, sig_dir, since):
+                        journal.log_benched(
+                            epic, market.name, sig_dir,
+                            float(trade_signal.entry_price),
+                            float(trade_signal.stop_distance),
+                            float(trade_signal.limit_distance),
+                            0, "shadow",
+                            cand_ts.isoformat(),
+                        )
+            except Exception as e:
+                logger.debug(f"Shadow snapshot failed for {epic}: {e}")
+            return
+
         # Clamp stop/limit to IG's live minNormalStopOrLimitDistance.
         # Why: config.py min_stop_distance is the strategy floor, but IG's actual
         # minimum varies by account tier / region / CFD-vs-spreadbet. If our value
