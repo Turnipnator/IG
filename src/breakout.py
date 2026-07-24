@@ -50,6 +50,17 @@ BREAKOUT_CONFIGS: dict[str, BreakoutConfig] = {
     # USD/JPY disabled 2026-06-22: walk-forward rejected (-5.13%/2yr, 1/4 quarters +);
     # bled two -£24 full-stop losers (-£48) in one live session. Re-enable only if re-validated.
     # "CS.D.USDJPY.TODAY.IP": BreakoutConfig(n=40, stop_atr_mult=2.0, htf_filter=True),  # weak — shadow-watch only
+
+    # Crude Oil (2026-07-24) — exists for the DISCRETIONARY /mode toggle, NOT as a
+    # validated standing edge. CL=F 730d/1h at 6bps (scripts/backtest_oil_breakout.py):
+    # HTF-filtered full-period is NEGATIVE at every N (N55 PF 0.87, −17.7%) — but
+    # strongly regime-dependent: the most recent quarter is +14.7% PF 1.33 (N40:
+    # +22.9% PF 1.39). Oil breakout pays in trending quarters and bleeds in chop, so
+    # it only makes sense driven by an external regime view (the user's tips), never
+    # permanently on. Default mode is breakout-shadow (MarketConfig.default_mode);
+    # /mode oil breakout is the user's deliberate, informed act. N=55 kept for
+    # consistency with the validated GBP/USD shape rather than snooping N=40.
+    "EN.D.CL.Month1.IP": BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),
 }
 
 

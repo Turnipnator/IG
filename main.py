@@ -861,7 +861,10 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
     result = client.open_position(
         epic=epic, direction=signal.signal.value, size=ps.size,
         stop_distance=signal.stop_distance, limit_distance=signal.limit_distance,
-        expiry=market_config.expiry,
+        # Prefer the instrument's CURRENT expiry from market info: Month1 futures
+        # (e.g. Crude) roll monthly, so a hardcoded config expiry goes stale and
+        # IG rejects the order. Config value is the fallback only.
+        expiry=(info.expiry if info and getattr(info, "expiry", "") else market_config.expiry),
     )
     if not result:
         err = client.last_error or "unknown"
@@ -958,6 +961,24 @@ def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mo
         logger.warning(f"Forex breakout analysis failed for {market.name}: {e}")
 
 
+VALID_MARKET_MODES = ("off", "momentum", "shadow", "breakout", "breakout-shadow")
+
+
+def _market_mode(market_config) -> str:
+    """Effective strategy mode for a NON-forex market (forex keeps /forex).
+
+    Precedence: runtime /mode override (telegram.market_modes, persisted in
+    data/market_modes.json) > MarketConfig.default_mode > shadow_only-derived
+    ("shadow") > "momentum". Keep in sync with telegram_bot._effective_mode.
+    """
+    override = getattr(telegram, "market_modes", {}).get(market_config.epic)
+    if override in VALID_MARKET_MODES:
+        return override
+    if getattr(market_config, "default_mode", None) in VALID_MARKET_MODES:
+        return market_config.default_mode
+    return "shadow" if getattr(market_config, "shadow_only", False) else "momentum"
+
+
 def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
     """Analyze a market using streaming data."""
     try:
@@ -986,6 +1007,25 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 analyze_forex_breakout(epic, market, market_config, effective_mode)
                 return
             # fx_mode == "momentum": fall through to the original momentum pipeline.
+
+        # Per-market strategy mode for NON-forex markets (/mode toggle, 2026-07-24).
+        # Mirrors the forex gate above: off → stream/archive only; breakout(-shadow)
+        # → the same Donchian pipeline forex uses (requires a BREAKOUT_CONFIGS
+        # entry — Crude Oil currently); momentum/shadow → fall through, with
+        # "shadow" honoured at the shadow-only branch further down.
+        mkt_mode = _market_mode(market_config)
+        if market_config.sector != "Forex":
+            if mkt_mode == "off":
+                return
+            if mkt_mode in ("breakout", "breakout-shadow"):
+                if breakout.has_breakout_config(epic):
+                    analyze_forex_breakout(
+                        epic, market, market_config,
+                        "breakout" if mkt_mode == "breakout" else "shadow",
+                    )
+                else:
+                    logger.debug(f"{market.name}: mode {mkt_mode} but no breakout config")
+                return
 
         # Skip if market not tradeable
         if market.market_state != "TRADEABLE":
@@ -1356,16 +1396,17 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 )
                 return
 
-        # Shadow-only markets (MarketConfig.shadow_only, 2026-07-24 review): the
-        # signal has now cleared every gate a live trade clears — regime, risk
-        # validation, regime-adjusted confidence, hours, cooldowns, calendar — so
-        # this is exactly the order live would have placed. Journal it and
-        # snapshot into benched_outcomes (bench_type='shadow'); the E1 resolver
-        # replays it to WIN/LOSS off subsequent candles. No order, no Telegram.
-        # Demoted: FTSE 100, AI Index. E2 thesis test: US Russell 2000. Sits
-        # before the order-mechanics blocks (IG stop clamp, sizing, spread/
-        # cluster checks) — those model execution, not signal quality.
-        if getattr(market_config, "shadow_only", False):
+        # Shadow-mode markets (2026-07-24 review; mode source = _market_mode, i.e.
+        # /mode override > default_mode > shadow_only flag): the signal has now
+        # cleared every gate a live trade clears — regime, risk validation,
+        # regime-adjusted confidence, hours, cooldowns, calendar — so this is
+        # exactly the order live would have placed. Journal it and snapshot into
+        # benched_outcomes (bench_type='shadow'); the E1 resolver replays it to
+        # WIN/LOSS off subsequent candles. No order, no Telegram. Demoted: FTSE
+        # 100, AI Index. E2 thesis test: US Russell 2000. Sits before the
+        # order-mechanics blocks (IG stop clamp, sizing, spread/cluster checks)
+        # — those model execution, not signal quality.
+        if mkt_mode == "shadow" and market_config.sector != "Forex":
             logger.info(
                 f"👻 Shadow [{market.name}]: {trade_signal.signal.value} @ "
                 f"{trade_signal.confidence:.0%} passed all gates — logged, no order"

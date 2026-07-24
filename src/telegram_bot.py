@@ -41,6 +41,13 @@ FOREX_MODE_FILE = STATS_DIR / "forex_mode.json"
 # profiles; shadow = breakout observed only; breakout = breakout live.
 FOREX_MODES = ("off", "momentum", "shadow", "breakout")
 
+# Per-market strategy modes for NON-forex markets, toggled via /mode (2026-07-24).
+# {epic: mode}; a market absent from the dict uses its config default
+# (MarketConfig.default_mode, else shadow_only-derived, else momentum) — so this
+# file only ever holds deliberate user overrides. Read by main._market_mode.
+MARKET_MODES_FILE = STATS_DIR / "market_modes.json"
+MARKET_MODES = ("off", "momentum", "shadow", "breakout", "breakout-shadow")
+
 # The daily stats reset at the 21:00 UTC trading-session boundary
 # (send_daily_summary -> reset_daily_stats, scheduled at 21:00 UTC). Persistence
 # must use the SAME boundary, not calendar midnight — otherwise a restart in the
@@ -127,6 +134,10 @@ class TelegramBot:
         # safe-off. See FOREX_MODE_FILE. Read by main.py's forex gate.
         self.forex_mode = "off"
         self.load_forex_mode()
+        # Per-market /mode overrides for non-forex markets ({epic: mode}).
+        # Read cross-thread by main._market_mode; absent epic = config default.
+        self.market_modes: dict = {}
+        self.load_market_modes()
 
         # Statistics
         self.start_time = datetime.now()
@@ -215,6 +226,32 @@ class TelegramBot:
             logger.warning(f"Failed to load forex mode (defaulting to off): {e}")
             self.forex_mode = "off"
 
+    def save_market_modes(self) -> None:
+        """Persist per-market /mode overrides (non-forex) across restarts."""
+        try:
+            STATS_DIR.mkdir(parents=True, exist_ok=True)
+            MARKET_MODES_FILE.write_text(json.dumps({
+                "market_modes": self.market_modes,
+                "saved_at": datetime.now().isoformat(),
+            }))
+        except Exception as e:
+            logger.warning(f"Failed to save market modes: {e}")
+
+    def load_market_modes(self) -> None:
+        """Restore /mode overrides; silently drop anything malformed (config default wins)."""
+        try:
+            if not MARKET_MODES_FILE.exists():
+                return
+            raw = json.loads(MARKET_MODES_FILE.read_text()).get("market_modes", {})
+            self.market_modes = {
+                e: m for e, m in raw.items() if isinstance(m, str) and m in MARKET_MODES
+            }
+            if self.market_modes:
+                logger.info(f"Restored market modes: {self.market_modes}")
+        except Exception as e:
+            logger.warning(f"Failed to load market modes (using config defaults): {e}")
+            self.market_modes = {}
+
     def is_authorized(self, user_id: int) -> bool:
         """Check if user is authorized."""
         return user_id in self.authorized_users
@@ -267,6 +304,7 @@ class TelegramBot:
             "/stop - Pause trading\n"
             "/resume - Resume trading\n"
             "/forex - Forex mode (off|momentum|shadow|breakout)\n"
+            "/mode - Per-market strategy (off|momentum|shadow|breakout|breakout-shadow)\n"
             "/rebuild - Pull latest code & restart\n"
             "/emergency - ⚠️ Close ALL positions\n\n"
             "*🔔 Notifications:*\n"
@@ -722,6 +760,106 @@ class TelegramBot:
             parse_mode='Markdown'
         )
 
+    def _effective_mode(self, m) -> str:
+        """Effective strategy mode for a non-forex MarketConfig.
+        MUST mirror main._market_mode: /mode override > default_mode > shadow_only > momentum."""
+        override = self.market_modes.get(m.epic)
+        if override in MARKET_MODES:
+            return override
+        if getattr(m, "default_mode", None) in MARKET_MODES:
+            return m.default_mode
+        return "shadow" if getattr(m, "shadow_only", False) else "momentum"
+
+    async def mode_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /mode — per-market strategy toggle for non-forex markets.
+
+        /mode                     -> board of every market's effective mode
+        /mode <market> <mode>     -> set override (off|momentum|shadow|breakout|breakout-shadow)
+        /mode <market> default    -> clear override (config default resumes)
+        """
+        if not self.is_authorized(update.effective_user.id):
+            return
+        self.commands_executed += 1
+        from config import MARKETS
+        from src.breakout import has_breakout_config
+
+        args = [a.lower() for a in (context.args or [])]
+        if not args:
+            emoji = {"off": "⚪", "momentum": "🔵", "shadow": "👻",
+                     "breakout": "🟢", "breakout-shadow": "🟡"}
+            lines = ["🎛 *Market strategy modes*\n"]
+            for m in MARKETS:
+                if m.sector == "Forex":
+                    lines.append(f"• {m.name}: `/forex` governs (mode `{self.forex_mode}`"
+                                 f"{', pair shadow-only' if getattr(m, 'breakout_shadow_only', False) else ''})")
+                    continue
+                eff = self._effective_mode(m)
+                tag = " _(override)_" if m.epic in self.market_modes else ""
+                lines.append(f"{emoji.get(eff, '·')} {m.name}: `{eff}`{tag}")
+            lines.append("\nUsage: `/mode <market> off|momentum|shadow|breakout|breakout-shadow`"
+                         "\n`/mode <market> default` clears the override."
+                         "\n👻 shadow = momentum observed; 🟡 breakout-shadow = breakout observed.")
+            await update.message.reply_text("\n".join(lines), parse_mode='Markdown')
+            return
+
+        if len(args) < 2:
+            await update.message.reply_text(
+                "Usage: `/mode <market> <off|momentum|shadow|breakout|breakout-shadow|default>`",
+                parse_mode='Markdown')
+            return
+        # Mode is the LAST token; everything before it is the market name (handles
+        # "/mode hong kong shadow"). Fuzzy: case-insensitive substring on the name.
+        mode_arg = args[-1]
+        query = " ".join(args[:-1])
+        matches = [m for m in MARKETS if query in m.name.lower()]
+        if not matches:
+            await update.message.reply_text(f"❌ No market matches `{query}`", parse_mode='Markdown')
+            return
+        if len(matches) > 1:
+            await update.message.reply_text(
+                "❌ Ambiguous: " + ", ".join(m.name for m in matches), parse_mode='Markdown')
+            return
+        m = matches[0]
+        if m.sector == "Forex":
+            await update.message.reply_text(
+                f"ℹ️ {m.name} is forex — use `/forex` (per-pair shadow is a config flag).",
+                parse_mode='Markdown')
+            return
+
+        if mode_arg == "default":
+            prev = self.market_modes.pop(m.epic, None)
+            self.save_market_modes()
+            await update.message.reply_text(
+                f"↩️ {m.name}: override cleared (was `{prev}`) — config default "
+                f"`{self._effective_mode(m)}` resumes.", parse_mode='Markdown')
+            return
+        if mode_arg not in MARKET_MODES:
+            await update.message.reply_text(
+                f"❌ Unknown mode `{mode_arg}`. Use: off | momentum | shadow | "
+                f"breakout | breakout-shadow | default", parse_mode='Markdown')
+            return
+        if mode_arg in ("breakout", "breakout-shadow") and not has_breakout_config(m.epic):
+            await update.message.reply_text(
+                f"❌ {m.name} has no breakout config (src/breakout.py BREAKOUT_CONFIGS) — "
+                f"backtest and add one first.", parse_mode='Markdown')
+            return
+
+        prev = self._effective_mode(m)
+        self.market_modes[m.epic] = mode_arg
+        self.save_market_modes()
+        logger.info(f"Market mode changed via Telegram: {m.name} {prev} -> {mode_arg}")
+        warn = ""
+        if mode_arg == "breakout":
+            warn = "\n⚠️ Breakout trading *LIVE* — real orders on the next channel break."
+            if m.epic == "EN.D.CL.Month1.IP":
+                warn += ("\n📊 Reminder: oil breakout is NOT a validated standing edge "
+                         "(full-period PF 0.87) — it pays only in trending regimes. "
+                         "Flip back to `breakout-shadow` when the trend view expires.")
+        elif mode_arg == "momentum" and m.epic == "EN.D.CL.Month1.IP":
+            warn = "\n⚠️ Crude momentum was disabled for cause (live PF 0.38, costs eat the edge)."
+        await update.message.reply_text(
+            f"🎛 *{m.name} → `{mode_arg}`* (was `{prev}`){warn}", parse_mode='Markdown')
+
     async def emergency_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /emergency command - close all and stop."""
         if not self.is_authorized(update.effective_user.id):
@@ -1144,6 +1282,7 @@ class TelegramBot:
             self.app.add_handler(CommandHandler("pause", self.stop_command))  # Alias
             self.app.add_handler(CommandHandler("resume", self.resume_command))
             self.app.add_handler(CommandHandler("forex", self.forex_command))
+            self.app.add_handler(CommandHandler("mode", self.mode_command))
             self.app.add_handler(CommandHandler("emergency", self.emergency_command))
             self.app.add_handler(CommandHandler("rebuild", self.rebuild_command))
 

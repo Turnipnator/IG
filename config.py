@@ -187,6 +187,13 @@ class MarketConfig:
     # Use for: demoted markets we want to keep measuring (FTSE, AI Index) and
     # the E2 memoryless-thesis test (Russell 2000). Zero orders, zero risk.
     shadow_only: bool = False
+    # Default STRATEGY MODE for the /mode Telegram toggle (2026-07-24, non-forex
+    # markets; forex keeps the /forex system). One of: off | momentum | shadow |
+    # breakout | breakout-shadow. None → derived: shadow_only=True → "shadow",
+    # else "momentum" (i.e. existing behaviour, this field changes nothing unless
+    # set). A runtime /mode override (data/market_modes.json) beats this default.
+    # breakout modes additionally require a src/breakout.py BREAKOUT_CONFIGS entry.
+    default_mode: str | None = None
 
 
 # Load configurations from environment
@@ -839,7 +846,33 @@ MARKETS = [
     #     strategy="indices",
     # ),
     # --- COMMODITIES (Big Winners Strategy) ---
-    # Disabled 2026-06-25 — no edge that survives IG's spread. Live: all-time
+    # Crude Oil RE-ADDED 2026-07-24 as a BREAKOUT-SHADOW market for the /mode
+    # discretionary toggle (user gets external trend intel and wants to flip oil
+    # to breakout on demand, like /forex). MOMENTUM stays condemned (the 06-25
+    # verdict below still stands — costs alone reproduce the live PF 0.38).
+    # Breakout is NOT validated either as a standing edge (CL=F 730d/1h N55 HTF
+    # PF 0.87 full-period) but IS positive in trending quarters (latest Q PF
+    # 1.33, +14.7%) — see scripts/backtest_oil_breakout.py — which matches the
+    # tip-driven usage: on when informed, shadow otherwise. Runs 1h candles to
+    # match the validated forex breakout shape (N55 ≈ 55h channel).
+    MarketConfig(
+        epic="EN.D.CL.Month1.IP",
+        name="Crude Oil",
+        sector="Commodities",
+        min_stop_distance=12.0,
+        default_size=0.1,
+        expiry="SEP-26",       # fallback only — breakout orders use the instrument's
+                               # live expiry from market info (Month1 rolls monthly)
+        candle_interval=60,    # 1h for the Donchian channel (was 15m in the momentum era)
+        htf_resolution="DAY",  # Daily HTF since 1h is the entry timeframe
+        min_confidence=0.55,
+        strategy="crude",      # momentum profile kept for /mode momentum (NOT advised)
+        default_mode="breakout-shadow",  # observe-only until the user flips it live
+        trading_start=23,      # Nearly 24h market — avoid IG reset window (21-23 UTC)
+        trading_end=21,
+    ),
+    # Momentum-era record (disabled 2026-06-25) — no edge that survives IG's spread.
+    # Live: all-time
     # n=12 PF 0.38 (−£49.55), since 06-20 n=5 PF 0.05 (−£62.59); the
     # "MACD histogram positive 3 candles" exit alone = −£45.6. Backtest
     # (scripts/backtest_crude_exit.py, CL=F 5m/58d, entry FIXED = live crude,
