@@ -82,6 +82,7 @@ BREAKOUT_CONFIGS: dict[str, BreakoutConfig] = {
     "IX.D.RUSSELL.DAILY.IP":  BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Russell 2000
     "IX.D.NIKKEI.DAILY.IP":   BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Japan 225
     "IX.D.HANGSENG.DAILY.IP": BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Hong Kong
+    "CO.D.DX.Month1.IP":      BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Dollar Index — UNTESTED
 }
 
 

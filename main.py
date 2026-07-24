@@ -572,6 +572,24 @@ def _auto_roll_contract(market_config: 'MarketConfig') -> None:
         logger.error(f"Auto-roll failed for {market_config.name}: {e}")
 
 
+def _screener_exempt_epics() -> set:
+    """Epics that must not consume screener top-N slots: any market that is not
+    LIVE-trading right now (shadow/observer/off modes; forex pairs whose effective
+    mode is observe-only). Recomputed every screen so a /mode or /forex flip takes
+    effect at the next 30-min re-screen."""
+    exempt = set()
+    for m in MARKETS:
+        if m.sector == "Forex":
+            fxm = getattr(telegram, "forex_mode", "off")
+            live = (fxm == "momentum") or (
+                fxm == "breakout" and not getattr(m, "breakout_shadow_only", False))
+            if not live:
+                exempt.add(m.epic)
+        elif _market_mode(m) not in ("momentum", "breakout"):
+            exempt.add(m.epic)
+    return exempt
+
+
 def run_daily_screen(periodic: bool = False) -> None:
     """Run the market screener using streaming data (zero API cost — streaming only).
 
@@ -596,7 +614,10 @@ def run_daily_screen(periodic: bool = False) -> None:
         if market.bid > 0 and market.offer > 0:
             spreads[epic] = market.offer - market.bid
 
-    scores = screener.run_screen(stream_service, htf_trends, spreads)
+    scores = screener.run_screen(
+        stream_service, htf_trends, spreads,
+        exempt_epics=_screener_exempt_epics(),
+    )
     new_active = set(screener.active_epics)
     changed = new_active != prev_active
 

@@ -1044,20 +1044,32 @@ MARKETS = [
 
     # --- FOREX (Big Winners Strategy) ---
 
-    # Dollar Index (DXY) — disabled, negative P&L across all 36 param combos on 15m backtest
-    # MarketConfig(
-    #     epic="CO.D.DX.Month1.IP",
-    #     name="Dollar Index (DXY)",
-    #     sector="Forex",
-    #     min_stop_distance=20.0,
-    #     default_size=1.0,
-    #     expiry="SEP-26",
-    #     candle_interval=15,
-    #     min_confidence=0.55,
-    #     strategy="default",
-    #     trading_start=23,
-    #     trading_end=21,
-    # ),
+    # Dollar Index (DXY) — RE-ADDED 2026-07-24 as a SHADOW market (user request:
+    # USD exposure in the observation stable). Old momentum verdict stands
+    # (negative P&L across all 36 param combos on 15m) — hence default_mode
+    # "shadow": momentum observed via benched_outcomes, and the always-on
+    # observer logs 1h Donchian breakout signals too. /mode dollar momentum|
+    # breakout are available as deliberate flips, warned as unvalidated.
+    # sector deliberately "Indices" not "Forex": DXY is a currency INDEX, and
+    # the "Forex" sector string routes through the /forex pair gate which would
+    # bypass the /mode system (and, in breakout mode, could place LIVE orders).
+    # NB "DFB" is IG's Daily Funded Bet contract type, not an EPIC — this
+    # Month1 future (fallback expiry below; live orders use the instrument's
+    # current expiry) is the USD instrument.
+    MarketConfig(
+        epic="CO.D.DX.Month1.IP",
+        name="Dollar Index (DXY)",
+        sector="Indices",
+        min_stop_distance=20.0,
+        default_size=1.0,
+        expiry="SEP-26",
+        candle_interval=15,
+        min_confidence=0.55,
+        strategy="default",
+        default_mode="shadow",
+        trading_start=23,
+        trading_end=21,
+    ),
 
     MarketConfig(
         # 1h candles: 365d backtest PF 1.25, +0.46%, 48 trades, 48% WR vs

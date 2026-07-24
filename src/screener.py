@@ -315,6 +315,7 @@ class MarketScreener:
         stream_service,
         htf_trends: dict = None,
         spreads: dict = None,
+        exempt_epics: set = None,
     ) -> list[MarketScore]:
         """
         Score all streaming markets and activate the top N.
@@ -323,9 +324,17 @@ class MarketScreener:
             stream_service: IGStreamService with live market data
             htf_trends: Dict of epic -> HTF trend string
             spreads: Dict of epic -> spread in points
+            exempt_epics: Epics that must NOT consume top-N slots (2026-07-24):
+                shadow/observer/off-mode markets. They are still scored and get
+                is_active by the score>=40 quality threshold alone — so a shadow
+                market's counterfactual pipeline behaves like a live one — but
+                the rank cap is allocated over LIVE-trading markets only. Without
+                this, adding observe-only markets (Crude, DXY, Russell...) could
+                push a real live market below the cap and silently bench it.
         """
         htf_trends = htf_trends or {}
         spreads = spreads or {}
+        exempt_epics = exempt_epics or set()
 
         scores = []
         for epic, market_stream in stream_service.markets.items():
@@ -345,12 +354,24 @@ class MarketScreener:
         # Ties on score previously broke on stream insertion order — unfair.
         scores.sort(key=lambda s: (s.score, s.atr_spread_ratio, s.adx), reverse=True)
 
-        # Activate top N
+        # Activate top N (rank slots go to live-trading markets only; exempt
+        # shadow/observer markets activate on the quality threshold alone).
         self.active_epics = set()
-        for i, s in enumerate(scores):
-            if i < self.max_active and s.score >= 40:  # Minimum score threshold
+        rank = 0
+        for s in scores:
+            if s.epic in exempt_epics:
+                if s.score >= 40:
+                    s.is_active = True
+                    s.reason = f"Shadow/observer (score {s.score})"
+                    self.active_epics.add(s.epic)
+                else:
+                    s.is_active = False
+                    s.reason = f"Score too low ({s.score})"
+                continue
+            if rank < self.max_active and s.score >= 40:  # Minimum score threshold
+                rank += 1
                 s.is_active = True
-                s.reason = f"Rank #{i + 1}"
+                s.reason = f"Rank #{rank}"
                 self.active_epics.add(s.epic)
             else:
                 s.is_active = False
