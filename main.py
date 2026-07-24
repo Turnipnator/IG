@@ -935,6 +935,14 @@ def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mo
         df = market.to_dataframe()
         if df is None or len(df) < 50:
             return
+        # Breakout N is calibrated in 1h bars. Markets that stream sub-1h candles
+        # (indices/Gold at 5m) can't form a 55-bar 1h channel from the 100-candle
+        # stream deque — build the frame from archive + stream tail instead.
+        # Native-1h markets (forex, Crude) keep the stream frame (3+ weeks deep).
+        if getattr(market_config, "candle_interval", 60) < 60:
+            df = _breakout_frame_1h(epic, df)
+            if df is None or len(df) < 60:
+                return
         current_price = market.mid_price
         htf_trend = htf_trends.get(epic, "NEUTRAL")
         signal = breakout.analyze_breakout(df, market_config, current_price, htf_trend)
@@ -962,6 +970,88 @@ def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mo
 
 
 VALID_MARKET_MODES = ("off", "momentum", "shadow", "breakout", "breakout-shadow")
+
+# Always-on breakout shadow observer: last evaluation time per epic (hourly cap —
+# the 1h Donchian channel only changes on hour boundaries, so more is just noise).
+_breakout_observe_last: dict[str, datetime] = {}
+
+
+def _breakout_frame_1h(epic: str, stream_df) -> Optional["pd.DataFrame"]:
+    """1-hour OHLC frame for the Donchian breakout path, for markets whose native
+    candle_interval < 60. The in-memory stream keeps only 100 candles (~8h at 5m)
+    — nowhere near a 55-bar 1h channel — so this merges the durable candle archive
+    (may lag up to the 15-min archiver cadence) with the live stream tail, de-dupes,
+    and resamples to 1h. Only fully-CLOSED hours are returned (the forming hour is
+    dropped) so the channel never reads a partial bar."""
+    import pandas as pd
+    from src.streaming import CANDLE_ARCHIVE_DIR
+
+    frames = []
+    path = CANDLE_ARCHIVE_DIR / f"{epic}.jsonl"
+    try:
+        if path.exists():
+            rows = []
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            rows.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue  # tolerate a torn concurrent append
+            if rows:
+                adf = pd.DataFrame(rows)
+                adf["date"] = pd.to_datetime(adf["timestamp"])
+                frames.append(adf[["date", "open", "high", "low", "close"]])
+    except Exception as e:
+        logger.debug(f"Breakout frame: archive read failed for {epic}: {e}")
+    if stream_df is not None and not stream_df.empty and "date" in stream_df.columns:
+        frames.append(stream_df[["date", "open", "high", "low", "close"]])
+    if not frames:
+        return None
+    df = (pd.concat(frames).drop_duplicates(subset="date")
+          .sort_values("date").set_index("date"))
+    hourly = df.resample("1h").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
+    if len(hourly) < 2:
+        return None
+    return hourly.iloc[:-1].reset_index()  # drop the still-forming hour
+
+
+def _observe_breakout_shadow(epic: str, market: MarketStream, market_config) -> None:
+    """ALWAYS-ON breakout observer (2026-07-24, user request): for every non-forex
+    market with a BREAKOUT_CONFIGS entry, log 1h Donchian signals in shadow
+    ALONGSIDE the market's live strategy — momentum keeps trading; this only
+    writes rejected_signals 'Breakout-shadow:' rows. This is the per-EPIC breakout
+    validation the Yahoo cash proxies can't provide (no overnight bars). At most
+    one evaluation per epic per hour. Markets whose MODE is breakout(-shadow)
+    are skipped — their signals already log via the mode path."""
+    try:
+        if not breakout.has_breakout_config(epic):
+            return
+        now = datetime.now()
+        last = _breakout_observe_last.get(epic)
+        if last and (now - last) < timedelta(minutes=60):
+            return
+        _breakout_observe_last[epic] = now
+        df = _breakout_frame_1h(epic, market.to_dataframe())
+        if df is None or len(df) < 60:
+            return
+        sig = breakout.analyze_breakout(
+            df, market_config, market.mid_price, htf_trends.get(epic, "NEUTRAL"))
+        if sig.signal == Signal.HOLD:
+            return
+        logger.info(
+            f"🔬 Breakout observer [{market_config.name}]: would {sig.signal.value} "
+            f"@ {market.mid_price:.1f} — {sig.reason}"
+        )
+        journal.log_rejected_signal(
+            epic=epic, market_name=market_config.name, direction=sig.signal.value,
+            confidence=sig.confidence, adx=sig.atr, rsi=0.0,
+            reject_reason=f"Breakout-shadow: {sig.reason}",
+        )
+    except Exception as e:
+        logger.debug(f"Breakout observer failed for {epic}: {e}")
 
 
 def _market_mode(market_config) -> str:
@@ -1026,6 +1116,10 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 else:
                     logger.debug(f"{market.name}: mode {mkt_mode} but no breakout config")
                 return
+            # momentum / shadow: the always-on observer ALSO logs 1h Donchian
+            # breakout signals for this market (shadow-only, hourly-capped) so
+            # every EPIC accumulates breakout evidence without touching trading.
+            _observe_breakout_shadow(epic, market, market_config)
 
         # Skip if market not tradeable
         if market.market_state != "TRADEABLE":

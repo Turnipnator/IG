@@ -61,6 +61,27 @@ BREAKOUT_CONFIGS: dict[str, BreakoutConfig] = {
     # /mode oil breakout is the user's deliberate, informed act. N=55 kept for
     # consistency with the validated GBP/USD shape rather than snooping N=40.
     "EN.D.CL.Month1.IP": BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),
+
+    # 2026-07-24 (user request): every non-forex EPIC gets a breakout config so the
+    # ALWAYS-ON shadow observer (main._observe_breakout_shadow) can log 1h Donchian
+    # signals alongside each market's live strategy, and /mode can flip any of them
+    # deliberately. N is in 1h bars — the observer/live path resamples sub-1h
+    # markets to 1h (main._breakout_frame_1h), matching the validated GBP/USD shape.
+    # VALIDATION STATUS (be honest at flip time):
+    #   Gold    — GC=F 730d/1h: PF 1.28(N40)/1.22(N55)/1.38(N70), 3/4 quarters
+    #             green, strengthening. The one PRE-validated candidate here.
+    #   Indices — UNTESTED as breakout. Yahoo cash proxies can't test them (no
+    #             overnight bars vs IG's ~24h sessions) — the shadow observer on
+    #             the IG archive IS the test. Do not flip live without its readout.
+    "CS.D.USCGC.TODAY.IP":    BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Gold
+    "IX.D.SPTRD.DAILY.IP":    BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # S&P 500
+    "IX.D.NASDAQ.CASH.IP":    BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # NASDAQ 100
+    "IX.D.DOW.DAILY.IP":      BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Wall Street
+    "IX.D.FTSE.DAILY.IP":     BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # FTSE 100
+    "IX.D.AIIDX.DAILY.IP":    BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # AI Index
+    "IX.D.RUSSELL.DAILY.IP":  BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Russell 2000
+    "IX.D.NIKKEI.DAILY.IP":   BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Japan 225
+    "IX.D.HANGSENG.DAILY.IP": BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Hong Kong
 }
 
 
