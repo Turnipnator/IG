@@ -4,11 +4,47 @@ Utility functions and logging setup.
 
 import logging
 import os
+import re
 import sys
 from datetime import datetime, time
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
 from typing import Optional
+
+
+# Telegram bot tokens look like "<9-10 digits>:<35 chars of A-Za-z0-9_->" and
+# python-telegram-bot embeds them in the request URL. Anything that logs that
+# URL leaks a credential that grants full control of the bot.
+_TOKEN_RE = re.compile(r"\b(bot)?(\d{8,11}):([A-Za-z0-9_-]{30,})")
+
+
+def _redact(text: str) -> str:
+    return _TOKEN_RE.sub(lambda m: f"{m.group(1) or ''}{m.group(2)}:<REDACTED>", text)
+
+
+class RedactSecretsFilter(logging.Filter):
+    """Strip Telegram bot tokens from log records before they reach a handler.
+
+    Belt-and-braces alongside silencing httpx below: httpx is the known leak
+    path, but it still logs at WARNING/ERROR, and any traceback that carries a
+    request URL would expose the token too. Redacting at the handler catches
+    every path, including libraries added later.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str) and ":" in record.msg:
+            record.msg = _redact(record.msg)
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = {
+                    k: _redact(v) if isinstance(v, str) else v
+                    for k, v in record.args.items()
+                }
+            else:
+                record.args = tuple(
+                    _redact(a) if isinstance(a, str) else a for a in record.args
+                )
+        return True
 
 
 def setup_logging(
@@ -66,6 +102,7 @@ def setup_logging(
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(console_formatter)
     console_handler.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    console_handler.addFilter(RedactSecretsFilter())
     logger.addHandler(console_handler)
 
     # File handler (rotating) - if log_file specified
@@ -93,9 +130,17 @@ def setup_logging(
 
         file_handler.setFormatter(file_formatter)
         file_handler.setLevel(logging.DEBUG)  # File gets all levels
+        file_handler.addFilter(RedactSecretsFilter())
         logger.addHandler(file_handler)
 
         logger.info(f"Logging to {log_file} (max {max_bytes/1024/1024:.1f}MB × {backup_count} files)")
+
+    # python-telegram-bot v20+ drives httpx, which logs every request at INFO
+    # as: 'HTTP Request: POST https://api.telegram.org/bot<TOKEN>/getUpdates'.
+    # With a 10s polling loop that wrote the bot token to stdout ~8,600 times a
+    # day. Nothing here needs per-request HTTP chatter, so drop it to WARNING.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     return logger
 
