@@ -1210,7 +1210,8 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 if reached:
                     logger.info(
                         f"✅ Pullback [{market.name}]: {pend_dir} retrace reached "
-                        f"(price {current_price:.1f} vs target {pend['target']:.1f}) — entering"
+                        f"(price {current_price:.1f} vs target {pend['target']:.1f}) — "
+                        f"releasing to entry gates"
                     )
                     trade_signal = pend["signal"]
                     del pending_pullback[epic]
