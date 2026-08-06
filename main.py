@@ -2184,11 +2184,16 @@ def reconcile_provisional_trades(closing_books: bool = False) -> None:
                 _readopt_position(row, live_positions[deal_id])
                 readopted += 1
                 continue
+            # Age out from EXIT time, not entry time: a breakout trade held >3h
+            # would otherwise be declared stale the minute it closed, before the
+            # reconciler ever got a window to match its close transaction.
             try:
-                entry_dt = datetime.fromisoformat(row["entry_time"])
+                exit_dt = datetime.fromisoformat(
+                    row.get("exit_time") or row["entry_time"]
+                )
             except (TypeError, ValueError):
                 continue
-            if entry_dt < stale_cutoff:
+            if exit_dt < stale_cutoff:
                 journal.mark_unmatched(deal_id)
                 aged_out += 1
                 logger.warning(

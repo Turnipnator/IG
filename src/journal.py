@@ -201,13 +201,20 @@ class TradeJournal:
             return False
 
     def get_provisional_rows(self, max_age_hours: int = 24) -> list[dict]:
-        """All PROVISIONAL trades from the last N hours (IG txn history window)."""
+        """All PROVISIONAL trades that CLOSED in the last N hours (IG txn history window).
+
+        Windowed on exit_time, not entry_time: a breakout trade can hold for
+        many hours (even days), and its close transaction only exists after the
+        exit — windowing on entry_time silently dropped long-held trades from
+        reconciliation entirely.
+        """
         cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
         rows = self.db.execute(
             """SELECT deal_id, market_name, direction, size, entry_price,
                       entry_time, exit_time, pnl
                FROM trades
-               WHERE status = 'PROVISIONAL' AND entry_time > ?""",
+               WHERE status = 'PROVISIONAL'
+                 AND COALESCE(exit_time, entry_time) > ?""",
             (cutoff,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -379,7 +386,7 @@ class TradeJournal:
                       ROUND(AVG(pnl), 2) as avg_pnl,
                       ROUND(AVG(duration_mins), 0) as avg_duration
                FROM trades
-               WHERE status = 'CLOSED' AND entry_time > ?
+               WHERE status IN ('CLOSED', 'UNMATCHED') AND entry_time > ?
                GROUP BY market_name
                ORDER BY total_pnl DESC""",
             (cutoff,),
@@ -395,7 +402,7 @@ class TradeJournal:
                       ROUND(SUM(pnl), 2) as total_pnl,
                       ROUND(AVG(pnl), 2) as avg_pnl
                FROM trades
-               WHERE status = 'CLOSED' AND entry_time > ?
+               WHERE status IN ('CLOSED', 'UNMATCHED') AND entry_time > ?
                GROUP BY exit_reason
                ORDER BY total_pnl DESC""",
             (cutoff,),
@@ -416,7 +423,7 @@ class TradeJournal:
                       ROUND(AVG(duration_mins), 0) as avg_duration,
                       ROUND(AVG(adx), 1) as avg_adx_entry
                FROM trades
-               WHERE status = 'CLOSED' AND entry_time > ?""",
+               WHERE status IN ('CLOSED', 'UNMATCHED') AND entry_time > ?""",
             (cutoff,),
         ).fetchone()
         return dict(row) if row else {}
@@ -467,13 +474,18 @@ class TradeJournal:
         }
 
     def get_recent_trades(self, limit: int = 10) -> list[dict]:
-        """Get most recent closed trades."""
+        """Get most recent closed trades.
+
+        Includes UNMATCHED rows: their pnl is the cached stream estimate (the
+        best figure we'll ever get once IG's transaction never matched), and
+        excluding them silently hid real trades from every performance readout.
+        """
         rows = self.db.execute(
             """SELECT market_name, direction, entry_price, exit_price,
                       pnl, exit_reason, duration_mins, adx, confidence,
                       entry_time, htf_trend
                FROM trades
-               WHERE status = 'CLOSED'
+               WHERE status IN ('CLOSED', 'UNMATCHED')
                ORDER BY exit_time DESC
                LIMIT ?""",
             (limit,),
