@@ -26,7 +26,35 @@ class TradeJournal:
         self.db = sqlite3.connect(str(DB_FILE), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self._create_tables()
+        self._migrate()
         logger.info(f"Trade journal initialized: {DB_FILE}")
+
+    def _migrate(self):
+        """Additive column migrations. CREATE TABLE IF NOT EXISTS never alters an
+        existing table, so columns added after a DB was first created must be
+        ALTERed in. Idempotent and data-preserving: existing rows get NULL."""
+        additions = {
+            "benched_outcomes": [
+                ("spread", "REAL"),      # cost snapshot; r_multiple stays GROSS
+                ("exit_price", "REAL"),  # trail/stop level the replay exited at
+            ],
+        }
+        for table, columns in additions.items():
+            try:
+                existing = {
+                    r["name"] for r in
+                    self.db.execute(f"PRAGMA table_info({table})").fetchall()
+                }
+                if not existing:
+                    continue  # table absent — _create_tables owns it
+                for name, coltype in columns:
+                    if name not in existing:
+                        self.db.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {name} {coltype}")
+                        logger.info(f"Journal migration: {table}.{name} added")
+                self.db.commit()
+            except Exception as e:
+                logger.warning(f"Journal migration failed for {table}: {e}")
 
     def _create_tables(self):
         self.db.executescript("""
@@ -331,6 +359,86 @@ class TradeJournal:
             return row is not None
         except Exception:
             return False
+
+    def log_breakout_shadow(
+        self,
+        epic: str,
+        market_name: str,
+        direction: str,
+        entry_price: float,
+        stop_distance: float,
+        benched_at: str,
+        spread: float = 0.0,
+    ) -> None:
+        """Snapshot a breakout-shadow episode (bench_type='breakout-shadow').
+
+        Differs from log_benched in what it deliberately omits: breakout runs NO
+        take-profit, so limit_distance is 0 and the only exit is the Donchian-M
+        trail — see main._resolve_breakout_shadow. spread is stored so the review
+        can compute cost-adjusted R; r_multiple itself stays GROSS, matching the
+        convention of the existing screener/shadow rows."""
+        try:
+            self.db.execute(
+                """INSERT INTO benched_outcomes
+                   (epic, market_name, direction, benched_at, entry_price,
+                    stop_distance, limit_distance, score, bench_type, status, spread)
+                   VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'breakout-shadow', 'OPEN', ?)""",
+                (epic, market_name, direction, benched_at, entry_price,
+                 stop_distance, spread),
+            )
+            self.db.commit()
+        except Exception as e:
+            logger.warning(f"Journal: failed to log breakout-shadow signal: {e}")
+
+    def has_open_breakout_shadow(self, epic: str) -> bool:
+        """True while an unresolved breakout-shadow episode exists for this epic.
+
+        Dedup with NO time window (unlike has_open_benched): a Donchian break stays
+        broken for as long as price holds outside the channel, so the observer
+        re-signals it every hour. Live, that is ONE position held until the trail
+        exits and no re-entry is possible while it's open — so one OPEN row per
+        epic is the faithful model. Without this, a single week-long break inflates
+        into ~100 'signals' and the review counts episodes that never existed."""
+        try:
+            row = self.db.execute(
+                """SELECT 1 FROM benched_outcomes
+                   WHERE epic=? AND bench_type='breakout-shadow' AND status='OPEN'
+                   LIMIT 1""",
+                (epic,),
+            ).fetchone()
+            return row is not None
+        except Exception:
+            return False
+
+    def get_open_breakout_shadow(self, epic: str) -> list[dict]:
+        """Unresolved breakout-shadow episodes for an epic (normally 0 or 1)."""
+        try:
+            rows = self.db.execute(
+                """SELECT * FROM benched_outcomes
+                   WHERE epic=? AND bench_type='breakout-shadow' AND status='OPEN'""",
+                (epic,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def resolve_breakout_shadow(
+        self, row_id: int, status: str, outcome: str,
+        candles_to_resolve: int, r_multiple: float, exit_price: float,
+    ) -> None:
+        """Close out a breakout-shadow episode with its replayed exit."""
+        try:
+            self.db.execute(
+                """UPDATE benched_outcomes
+                   SET status=?, outcome=?, resolved_at=?, candles_to_resolve=?,
+                       r_multiple=?, exit_price=?
+                   WHERE id=?""",
+                (status, outcome, datetime.now().isoformat(),
+                 candles_to_resolve, r_multiple, exit_price, row_id),
+            )
+            self.db.commit()
+        except Exception as e:
+            logger.warning(f"Journal: failed to resolve breakout row {row_id}: {e}")
 
     def get_open_benched(self, epic: str) -> list[dict]:
         """All still-unresolved benched snapshots for an epic."""

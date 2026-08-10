@@ -922,6 +922,39 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
             ), telegram_loop)
 
 
+# 1h trail frame per epic, keyed on the latest closed hour. The Donchian-M level is
+# computed from CLOSED hourly bars, so it cannot change within an hour — rebuilding
+# the frame (an archive read) on every one-minute position check would be pure waste.
+_breakout_trail_frame: dict[str, tuple] = {}
+
+
+def _trail_frame(position, df):
+    """The frame the Donchian trail must be measured on: 1h for markets that stream
+    sub-hourly, the native frame otherwise.
+
+    2026-08-10 bug fix. exit_channel takes M=n//2 bars of WHATEVER frame it is given,
+    so handing it Gold's native 5m stream made the trail a 27x5m = 2.25h channel
+    instead of the validated 27h — while entry correctly used _breakout_frame_1h
+    (126300d). Entry and exit ran different strategies; replay reproduced all 8 live
+    exits on the native frame and only 1 on the 1h frame. Resolved HERE rather than at
+    the call site because that split is exactly how the bug arose: one caller was
+    updated and the other was not."""
+    mc = next((m for m in MARKETS if m.epic == position.epic), None)
+    if not mc or getattr(mc, "candle_interval", 60) >= 60:
+        return df  # already hourly (forex, Crude) — untouched
+    try:
+        hour = df["date"].iloc[-1].floor("h")
+    except Exception:
+        hour = None
+    cached = _breakout_trail_frame.get(position.epic)
+    if cached and hour is not None and cached[0] == hour:
+        return cached[1]
+    frame = _breakout_frame_1h(position.epic, df)
+    if frame is not None and hour is not None:
+        _breakout_trail_frame[position.epic] = (hour, frame)
+    return frame
+
+
 def _update_breakout_trail(position, df) -> None:
     """Donchian-trail exit for an open breakout position: ratchet the broker stop to
     the prior M-bar opposite channel (only ever TIGHTEN, never loosen below the entry
@@ -929,6 +962,9 @@ def _update_breakout_trail(position, df) -> None:
     external-close detection handles cleanup. Replaces BE/ATR/MACD for forex."""
     if position.stop_level is None:
         return
+    df = _trail_frame(position, df)
+    if df is None:
+        return  # frame unavailable — keep the existing broker stop, never widen it
     level = breakout.exit_channel(df, position.epic, position.direction)
     if level is None:
         return
@@ -966,6 +1002,10 @@ def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mo
                 return
         current_price = market.mid_price
         htf_trend = htf_trends.get(epic, "NEUTRAL")
+        # Resolve open shadow episodes on every pass, including when this market is
+        # now trading breakout LIVE — rows snapshotted before a /mode flip still
+        # deserve their verdict.
+        _resolve_breakout_shadow(epic, df)
         signal = breakout.analyze_breakout(df, market_config, current_price, htf_trend)
         if signal.signal == Signal.HOLD:
             return
@@ -983,6 +1023,7 @@ def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mo
                 )
             except Exception:
                 pass
+            _snapshot_breakout_shadow(epic, market.name, signal, df)
             return
         # LIVE breakout.
         _execute_breakout_entry(epic, market, market_config, signal, df)
@@ -1058,6 +1099,9 @@ def _observe_breakout_shadow(epic: str, market: MarketStream, market_config) -> 
         df = _breakout_frame_1h(epic, market.to_dataframe())
         if df is None or len(df) < 60:
             return
+        # Resolve first, and unconditionally: an episode opened days ago must close
+        # out on the trail even on an hour that produces no new signal.
+        _resolve_breakout_shadow(epic, df)
         sig = breakout.analyze_breakout(
             df, market_config, market.mid_price, htf_trends.get(epic, "NEUTRAL"))
         if sig.signal == Signal.HOLD:
@@ -1071,6 +1115,7 @@ def _observe_breakout_shadow(epic: str, market: MarketStream, market_config) -> 
             confidence=sig.confidence, adx=sig.atr, rsi=0.0,
             reject_reason=f"Breakout-shadow: {sig.reason}",
         )
+        _snapshot_breakout_shadow(epic, market_config.name, sig, df)
     except Exception as e:
         logger.debug(f"Breakout observer failed for {epic}: {e}")
 
@@ -2233,6 +2278,130 @@ def _log_suppressed_signal(
         )
     except Exception as e:
         logger.debug(f"Journal: failed to log suppressed signal: {e}")
+
+
+def _breakout_shadow_spread(epic: str) -> float:
+    """Spread estimate for a breakout-shadow snapshot, from the screener's cached
+    score (atr / atr_spread_ratio, re-scored every 30 min). Free — in-memory, no
+    API call. 0.0 when unknown, which the review reads as 'cost unmeasured'."""
+    try:
+        if not screener:
+            return 0.0
+        s = screener.get_score(epic)
+        if not s or not getattr(s, "atr_spread_ratio", 0):
+            return 0.0
+        return round(float(s.atr) / float(s.atr_spread_ratio), 4)
+    except Exception:
+        return 0.0
+
+
+def _snapshot_breakout_shadow(epic, market_name, signal, hourly_df) -> None:
+    """Open a breakout-shadow episode unless one is already running for this epic.
+
+    Deduped because a Donchian break persists for as long as price holds outside
+    the channel — the observer re-signals it hourly, but live that is ONE position
+    held to the trail exit with no re-entry while open."""
+    try:
+        if not journal or hourly_df is None or hourly_df.empty:
+            return
+        if journal.has_open_breakout_shadow(epic):
+            return
+        cand_ts = hourly_df.iloc[-1]["date"]
+        journal.log_breakout_shadow(
+            epic=epic, market_name=market_name, direction=signal.signal.value,
+            entry_price=float(signal.entry_price),
+            stop_distance=float(signal.stop_distance),
+            benched_at=cand_ts.isoformat(),
+            spread=_breakout_shadow_spread(epic),
+        )
+    except Exception as e:
+        logger.debug(f"Breakout-shadow snapshot failed for {epic}: {e}")
+
+
+def _resolve_breakout_shadow(epic: str, hourly_df) -> None:
+    """Replay OPEN breakout-shadow episodes against subsequent CLOSED 1h bars.
+
+    Breakout has no take-profit, so the momentum resolver (_resolve_benched, with
+    its limit barrier and MACD/RSI exits) would answer the wrong question entirely.
+    The only exit here is the one the live engine uses: a k×ATR initial stop that
+    ratchets to the Donchian-M trail (breakout.exit_channel) as the trade runs —
+    which is what lets fat-tail winners run and is the whole point of the edge.
+
+    Instrumentation only: reads the 1h frame the caller already built (no extra
+    archive read, zero API), never places or affects a trade."""
+    try:
+        if not journal or hourly_df is None or hourly_df.empty:
+            return
+        if "date" not in hourly_df.columns:
+            return
+        rows = journal.get_open_breakout_shadow(epic)
+        if not rows:
+            return
+        import pandas as pd
+
+        MAX_BARS = 240  # ~10 trading days: breakout winners must be free to run
+
+        for r in rows:
+            entry = r["entry_price"]
+            risk = r["stop_distance"]
+            if not risk or risk <= 0 or entry is None:
+                continue
+            is_buy = r["direction"] == "BUY"
+            b_at = pd.to_datetime(r["benched_at"])
+            fwd = hourly_df[hourly_df["date"] > b_at].reset_index(drop=True)
+            if fwd.empty:
+                continue
+            # Index of the snapshot bar in the full frame, so the trail can see the
+            # channel history that preceded entry (exit_channel needs M+2 bars).
+            base = len(hourly_df) - len(fwd)
+            stop = entry - risk if is_buy else entry + risk
+            initial_stop = stop
+            status = outcome = None
+            exit_px = None
+            ncdl = 0
+
+            for i in range(len(fwd)):
+                ncdl = i + 1
+                bar = fwd.iloc[i]
+                # The stop in force on this bar was set by bars that closed BEFORE
+                # it — check the cross first, then ratchet for the next bar.
+                if is_buy and float(bar["low"]) <= stop:
+                    exit_px = stop
+                elif (not is_buy) and float(bar["high"]) >= stop:
+                    exit_px = stop
+                if exit_px is not None:
+                    outcome = "stop" if stop == initial_stop else "trail"
+                    break
+                level = breakout.exit_channel(
+                    hourly_df.iloc[:base + i + 1], epic, r["direction"])
+                if level is not None:
+                    stop = max(stop, level) if is_buy else min(stop, level)
+                if ncdl >= MAX_BARS:
+                    break
+
+            if exit_px is None:
+                # Still running past the horizon (or still open) — only record a
+                # verdict once it has actually exceeded MAX_BARS; otherwise leave
+                # it OPEN so a live winner keeps running.
+                if ncdl < MAX_BARS:
+                    continue
+                exit_px = float(fwd.iloc[-1]["close"])
+                outcome = "expired"
+
+            r_mult = ((exit_px - entry) if is_buy else (entry - exit_px)) / risk
+            if outcome == "expired":
+                status = "EXPIRED"
+            else:
+                status = "WIN" if r_mult > 0 else "LOSS"
+            journal.resolve_breakout_shadow(
+                r["id"], status, outcome, ncdl, round(r_mult, 3), round(exit_px, 2))
+            logger.info(
+                f"🔬 Breakout-shadow resolved [{r['market_name']}]: {r['direction']} "
+                f"{status} via {outcome} @ {exit_px:.1f} "
+                f"({r_mult:+.2f}R over {ncdl} 1h bars)"
+            )
+    except Exception as e:
+        logger.debug(f"Breakout-shadow resolution failed for {epic}: {e}")
 
 
 def _resolve_benched(market_config, df) -> None:
