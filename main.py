@@ -2669,6 +2669,115 @@ def _streaming_watchdog() -> None:
     os._exit(1)
 
 
+_htf_xcheck_last: Optional[datetime] = None
+# 5m candles to tail per HTF resolution. HOUR needs 30 closed 1h bars = 360 candles;
+# DAY needs 30 daily bars ≈ 8,640. Generous slack for gaps, still far cheaper than
+# re-reading an 11k-line archive per market per hour.
+_HTF_XCHECK_TAIL = {"DAY": 20000}
+_HTF_XCHECK_DEFAULT_TAIL = 2000
+
+
+def _tail_lines(path, n: int) -> list:
+    """Last n lines of a file without reading the whole thing."""
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        data = b""
+        while size > 0 and data.count(b"\n") <= n:
+            step = min(8192, size)
+            size -= step
+            f.seek(size)
+            data = f.read(step) + data
+        return data.decode("utf-8", "ignore").splitlines()[-n:]
+
+
+def _observe_archive_htf() -> None:
+    """OBSERVATIONAL ONLY: compute the HTF trend off the free candle archive and log
+    where it disagrees with the live REST-derived value. Writes NOTHING to
+    htf_trends — it cannot move an entry gate, by construction.
+
+    Why (2026-08-10): computing HTF from the archive would make the trend refreshable
+    hourly at zero API cost and would remove the dominant consumer of the 10k/week
+    allowance (~570pts/day). But a one-off replay of 195 logged readings agreed only
+    82.4% (Wall Street 60%, AI Index 67%, Gold 80%) — on 08-10 the archive said
+    NEUTRAL for Gold where REST said BULLISH, which would have switched off live Gold
+    breakout entries. Agreement is worst where the archive is gappiest, so the swap is
+    NOT entry-neutral and is not a silent optimisation. This logs paired values every
+    hour so the decision can be made on weeks of data instead of one replay.
+
+    One compact line per hour (~24/day), parseable the same way the REST 'HTF trend ='
+    lines already are."""
+    global _htf_xcheck_last
+    try:
+        now = datetime.now()
+        if _htf_xcheck_last and (now - _htf_xcheck_last) < timedelta(minutes=60):
+            return
+        _htf_xcheck_last = now
+
+        import pandas as pd
+        from src.indicators import calculate_ema
+        from src.streaming import CANDLE_ARCHIVE_DIR
+
+        rule = {"HOUR": "1h", "HOUR_2": "2h", "HOUR_3": "3h",
+                "HOUR_4": "4h", "DAY": "1D"}
+        agree = differ = unavailable = 0
+        diffs = []
+        for mc in MARKETS:
+            live_val = htf_trends.get(mc.epic)
+            if not live_val:
+                unavailable += 1
+                continue
+            res = getattr(mc, "htf_resolution", "HOUR")
+            path = CANDLE_ARCHIVE_DIR / f"{mc.epic}.jsonl"
+            if not path.exists():
+                unavailable += 1
+                continue
+            rows = []
+            for line in _tail_lines(path, _HTF_XCHECK_TAIL.get(res, _HTF_XCHECK_DEFAULT_TAIL)):
+                line = line.strip()
+                if line:
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+            if not rows:
+                unavailable += 1
+                continue
+            d = pd.DataFrame(rows)
+            d["date"] = pd.to_datetime(d["timestamp"])
+            d = d.drop_duplicates(subset="date").sort_values("date").set_index("date")
+            h = d.resample(rule.get(res, "1h")).agg({"close": "last"}).dropna()
+            h = h.iloc[:-1]  # drop the forming bar
+            if len(h) < 21:
+                unavailable += 1
+                continue
+            df = h.tail(30)
+            e9 = calculate_ema(df["close"], 9).iloc[-1]
+            e21 = calculate_ema(df["close"], 21).iloc[-1]
+            close = df["close"].iloc[-1]
+            if e9 > e21 and close > e21:
+                arch = "BULLISH"
+            elif e9 < e21 and close < e21:
+                arch = "BEARISH"
+            else:
+                arch = "NEUTRAL"
+            if arch == live_val:
+                agree += 1
+            else:
+                differ += 1
+                diffs.append(f"{mc.name} REST={live_val} archive={arch}")
+
+        total = agree + differ
+        msg = f"🔬 HTF archive x-check: {agree}/{total} agree"
+        if unavailable:
+            msg += f" ({unavailable} unavailable)"
+        if diffs:
+            msg += " | DIFFER: " + "; ".join(diffs)
+        logger.info(msg)
+    except Exception as e:
+        logger.debug(f"HTF archive x-check failed: {e}")
+
+
 def _htf_staleness_guard() -> None:
     """Force an HTF refresh if the daily wall-clock one was missed.
 
@@ -2716,6 +2825,10 @@ def periodic_tasks() -> None:
 
             # Catch a wall-clock HTF refresh the process slept through
             _htf_staleness_guard()
+
+            # Log-only: archive-derived HTF vs the live REST value (never writes
+            # htf_trends — see _observe_archive_htf)
+            _observe_archive_htf()
 
             # Log streaming status every 5 minutes
             if stream_service and stream_service.connected:
