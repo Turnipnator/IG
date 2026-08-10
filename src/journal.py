@@ -440,12 +440,29 @@ class TradeJournal:
         except Exception as e:
             logger.warning(f"Journal: failed to resolve breakout row {row_id}: {e}")
 
+    # Bench types owned by the MOMENTUM resolver (main._resolve_benched). Deliberately
+    # an allowlist, not "NOT LIKE 'breakout%'": a bench type added later is then simply
+    # not resolved — visible as OPEN rows piling up — instead of being silently swept
+    # into a resolver whose exit model does not fit it.
+    MOMENTUM_BENCH_TYPES = ("cap", "quality", "shadow")
+
     def get_open_benched(self, epic: str) -> list[dict]:
-        """All still-unresolved benched snapshots for an epic."""
+        """Still-unresolved MOMENTUM benched snapshots for an epic.
+
+        Must filter on bench_type. Without it (bug shipped and caught 2026-08-10) the
+        momentum resolver also picked up breakout-shadow rows, which carry
+        limit_distance=0 because breakout runs no take-profit — so its win test
+        `high >= entry + limit` collapsed to `high >= entry` and stamped a bogus WIN at
+        0.0R on the first bar that ticked up. Corrupted 4 rows within 5 minutes of
+        deploy before being caught. Breakout rows are owned by
+        main._resolve_breakout_shadow, which models the Donchian trail instead."""
         try:
+            placeholders = ",".join("?" * len(self.MOMENTUM_BENCH_TYPES))
             rows = self.db.execute(
-                "SELECT * FROM benched_outcomes WHERE epic=? AND status='OPEN'",
-                (epic,),
+                f"""SELECT * FROM benched_outcomes
+                    WHERE epic=? AND status='OPEN'
+                      AND bench_type IN ({placeholders})""",
+                (epic, *self.MOMENTUM_BENCH_TYPES),
             ).fetchall()
             return [dict(r) for r in rows]
         except Exception:
