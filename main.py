@@ -537,6 +537,14 @@ def update_htf_trends(force: bool = False) -> None:
         except Exception as e:
             logger.warning(f"Could not write HTF refresh cache: {e}")
 
+    # Take an at-refresh x-check sample while the REST values are FRESH. The hourly
+    # sample compares archive-now against a REST value that may be many hours old, so
+    # on its own it conflates two different things — the archive computing something
+    # different, and the daily snapshot having gone stale. Those imply opposite fixes.
+    # Only fires on the path where a fetch actually completed (the startup-cooldown
+    # path returns before here), so this is genuinely fresh-vs-fresh.
+    _observe_archive_htf(force=True, tag="at-refresh")
+
 
 def _auto_roll_contract(market_config: 'MarketConfig') -> None:
     """
@@ -2691,10 +2699,19 @@ def _tail_lines(path, n: int) -> list:
         return data.decode("utf-8", "ignore").splitlines()[-n:]
 
 
-def _observe_archive_htf() -> None:
+def _observe_archive_htf(force: bool = False, tag: str = "drift") -> None:
     """OBSERVATIONAL ONLY: compute the HTF trend off the free candle archive and log
     where it disagrees with the live REST-derived value. Writes NOTHING to
     htf_trends — it cannot move an entry gate, by construction.
+
+    Two labelled sample types, because one number cannot answer both questions:
+      'at-refresh' (force=True, once/day straight after update_htf_trends) — both
+        sides FRESH, so it isolates "does the archive compute the same thing as REST?"
+        That is the question that decides whether the source can ever be swapped.
+      'drift' (hourly) — archive-now vs a REST value up to 24h old, which measures
+        how fast the daily snapshot decays. Observed 2026-08-10: 10/13 at 1.5h stale,
+        6/13 at 2.5h. That is evidence about the GATE's fitness, not the source's.
+    Mixing them was the flaw in the first version (shipped bd8c474, refined same day).
 
     Why (2026-08-10): computing HTF from the archive would make the trend refreshable
     hourly at zero API cost and would remove the dominant consumer of the 10k/week
@@ -2710,9 +2727,10 @@ def _observe_archive_htf() -> None:
     global _htf_xcheck_last
     try:
         now = datetime.now()
-        if _htf_xcheck_last and (now - _htf_xcheck_last) < timedelta(minutes=60):
-            return
-        _htf_xcheck_last = now
+        if not force:
+            if _htf_xcheck_last and (now - _htf_xcheck_last) < timedelta(minutes=60):
+                return
+            _htf_xcheck_last = now
 
         import pandas as pd
         from src.indicators import calculate_ema
@@ -2768,7 +2786,7 @@ def _observe_archive_htf() -> None:
                 diffs.append(f"{mc.name} REST={live_val} archive={arch}")
 
         total = agree + differ
-        msg = f"🔬 HTF archive x-check: {agree}/{total} agree"
+        msg = f"🔬 HTF archive x-check [{tag}]: {agree}/{total} agree"
         if unavailable:
             msg += f" ({unavailable} unavailable)"
         if diffs:
