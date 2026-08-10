@@ -24,6 +24,14 @@ HTF_TRENDS_FILE = _DATA_DIR / "htf_trends.json"
 BREAKOUT_DEALS_FILE = _DATA_DIR / "breakout_deals.json"
 QUIET_RESTART_WINDOW = timedelta(hours=2)
 HTF_REFRESH_COOLDOWN = timedelta(hours=6)  # On startup, skip HTF fetch if one ran within this window
+# Daily HTF refresh on a fixed WALL CLOCK, not relative to process start (2026-08-10).
+# every(24).hours re-anchored on every restart, so two bots on identical code held
+# different trend snapshots — and since a BUY breakout needs HTF exactly BULLISH, a
+# restart silently changed which signals could fire for the next 24h. 21:30 UTC sits
+# after the 21:00 session boundary and IG's daily-candle roll, before the 23:00 Asia
+# screener, so each trading session runs on a trend built from its own opening data.
+HTF_REFRESH_TIME = "21:30"
+HTF_STALE_AFTER = timedelta(hours=25)  # 1h slack past the daily cadence
 # Streaming connect is retried before falling back to polling. `streaming_enabled`
 # is decided ONCE at boot and never re-evaluated, so a transient Lightstreamer
 # error strands the bot in the degraded branch until someone restarts it.
@@ -1008,6 +1016,7 @@ def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mo
         _resolve_breakout_shadow(epic, df)
         signal = breakout.analyze_breakout(df, market_config, current_price, htf_trend)
         if signal.signal == Signal.HOLD:
+            _log_blocked_break(epic, market.name, signal)
             return
         if fx_mode != "breakout":
             # SHADOW — observe-only.
@@ -1032,6 +1041,41 @@ def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mo
 
 
 VALID_MARKET_MODES = ("off", "momentum", "shadow", "breakout", "breakout-shadow")
+
+# Blocked-break log throttle: epic -> (reason, last_logged_at).
+_breakout_block_last: dict[str, tuple] = {}
+
+
+def _log_blocked_break(epic: str, market_name: str, signal) -> None:
+    """Log a break that FIRED but was filtered out — the silent case that made a
+    friend's bot look idle while ours traded Gold twice (2026-08-10).
+
+    analyze_breakout returns HOLD for two very different situations: 'no break'
+    (nothing happened, uninteresting) and 'break blocked' (the setup was there and
+    a filter vetoed it, which is exactly what you want when reconciling two bots or
+    asking why a market went quiet). Both used to return silently. Only the blocked
+    case is logged, and only on a CHANGE of reason or once an hour, so a break that
+    stays blocked for a day does not spam the log or rejected_signals."""
+    try:
+        reason = getattr(signal, "reason", "") or ""
+        if "blocked" not in reason:
+            return  # 'No break' / 'ATR not ready' — genuinely nothing to say
+        now = datetime.now()
+        prev = _breakout_block_last.get(epic)
+        if prev and prev[0] == reason and (now - prev[1]) < timedelta(minutes=60):
+            return
+        _breakout_block_last[epic] = (reason, now)
+        logger.info(f"⛔ Breakout blocked [{market_name}]: {reason}")
+        if journal:
+            journal.log_rejected_signal(
+                epic=epic, market_name=market_name,
+                direction=(signal.signal.value if signal.signal else "HOLD"),
+                confidence=0.0, adx=getattr(signal, "atr", 0.0) or 0.0, rsi=0.0,
+                reject_reason=f"Breakout-blocked: {reason}",
+            )
+    except Exception as e:
+        logger.debug(f"Blocked-break logging failed for {epic}: {e}")
+
 
 # Always-on breakout shadow observer: last evaluation time per epic (hourly cap —
 # the 1h Donchian channel only changes on hour boundaries, so more is just noise).
@@ -1105,6 +1149,7 @@ def _observe_breakout_shadow(epic: str, market: MarketStream, market_config) -> 
         sig = breakout.analyze_breakout(
             df, market_config, market.mid_price, htf_trends.get(epic, "NEUTRAL"))
         if sig.signal == Signal.HOLD:
+            _log_blocked_break(epic, market_config.name, sig)
             return
         logger.info(
             f"🔬 Breakout observer [{market_config.name}]: would {sig.signal.value} "
@@ -2624,6 +2669,35 @@ def _streaming_watchdog() -> None:
     os._exit(1)
 
 
+def _htf_staleness_guard() -> None:
+    """Force an HTF refresh if the daily wall-clock one was missed.
+
+    schedule.every().day.at() computes the NEXT occurrence — it does not replay a
+    run the process slept through. So a container that is down or rebuilding at
+    HTF_REFRESH_TIME loses that day's refresh entirely and trades on trends up to
+    48h old, a worse version of the staleness the wall-clock move exists to fix.
+    (The old every(24).hours could not be missed: it was relative to boot.)
+
+    Reads the same LAST_HTF_REFRESH_FILE that update_htf_trends writes on success,
+    so it is correct across restarts with no extra state. Costs nothing in the
+    normal case — the file is younger than HTF_STALE_AFTER every time."""
+    try:
+        if not LAST_HTF_REFRESH_FILE.exists():
+            return
+        last = datetime.fromisoformat(LAST_HTF_REFRESH_FILE.read_text().strip())
+        age = datetime.now() - last
+        if age < HTF_STALE_AFTER:
+            return
+        logger.warning(
+            f"HTF trends {age.total_seconds()/3600:.1f}h old (> "
+            f"{HTF_STALE_AFTER.total_seconds()/3600:.0f}h) — the {HTF_REFRESH_TIME} UTC "
+            f"refresh was missed, forcing one now"
+        )
+        update_htf_trends(force=True)
+    except Exception as e:
+        logger.warning(f"HTF staleness guard failed: {e}")
+
+
 def periodic_tasks() -> None:
     """Run periodic tasks (position checks, etc.)."""
     while running:
@@ -2639,6 +2713,9 @@ def periodic_tasks() -> None:
 
             # Keep daily_stats.json's date field current across midnight
             _maybe_rotate_daily_stats()
+
+            # Catch a wall-clock HTF refresh the process slept through
+            _htf_staleness_guard()
 
             # Log streaming status every 5 minutes
             if stream_service and stream_service.connected:
@@ -2940,7 +3017,11 @@ async def main_async():
         import schedule
 
         schedule.every(6).hours.do(refresh_session)
-        schedule.every(24).hours.do(update_htf_trends, force=True)  # 1x/day — 19 markets × 30pts = 570pts/day, 3,990/week
+        # Fixed wall clock, explicit UTC (container TZ is Europe/London — a bare
+        # .at() would shift an hour at each DST boundary, the bug class already
+        # fixed in c1e244f/5bcb5dd). 1x/day: 19 markets × 30pts = 570pts/day.
+        _htf_job = schedule.every().day.at(HTF_REFRESH_TIME, "UTC").do(
+            update_htf_trends, force=True)
         schedule.every(15).minutes.do(_scheduled_save_candles)  # Persist candles for restarts (calls CURRENT stream_service — see wrapper note)
         schedule.every(15).minutes.do(_scheduled_archive_candles)  # Durable history harvest (free, IG-native backtest source incl. AI Index)
         # Screener at each major session open — full briefings (zero API cost)
@@ -2956,6 +3037,12 @@ async def main_async():
         schedule.every(30).minutes.do(run_daily_screen, periodic=True)
         schedule.every().day.at("21:00", "UTC").do(send_daily_summary)
         schedule.every().day.at("22:00").do(_scheduled_prune_archive)  # Bound the durable archive (HDD-safe retention, default 365d)
+
+        logger.info(
+            f"HTF trend refresh scheduled daily at {HTF_REFRESH_TIME} UTC "
+            f"(next: {_htf_job.next_run}); staleness guard forces one at "
+            f"{HTF_STALE_AFTER.total_seconds()/3600:.0f}h"
+        )
 
         # Run scheduler in background
         def run_schedule():
