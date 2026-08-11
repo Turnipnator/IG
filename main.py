@@ -954,7 +954,18 @@ def _trail_frame(position, df):
     (126300d). Entry and exit ran different strategies; replay reproduced all 8 live
     exits on the native frame and only 1 on the 1h frame. Resolved HERE rather than at
     the call site because that split is exactly how the bug arose: one caller was
-    updated and the other was not."""
+    updated and the other was not.
+
+    2026-08-11 follow-up: drop_forming=False. The first fix handed the trail the
+    ENTRY frame (closed hours only), so exit_channel's own df[-1] drop removed a real
+    CLOSED bar and the window ended an hour early — one bar staler than forex, than
+    backtest_forex_breakout.py's `.shift(1)`, and than _resolve_breakout_shadow (which
+    re-includes the tested bar via iloc[:base+i+1], so the v3 shadow numbers were
+    modelling a trail live did not run). Including the forming hour makes df[-1] the
+    bar in progress for every market, so all four agree. Measured impact on the 11
+    live breakout trades: 10 identical, DXY #284 +2.3 pts — a consistency fix, not a
+    P&L one. The cached frame's forming row is stale within the hour but exit_channel
+    never reads it; every bar in the window is closed and immutable."""
     mc = next((m for m in MARKETS if m.epic == position.epic), None)
     if not mc or getattr(mc, "candle_interval", 60) >= 60:
         return df  # already hourly (forex, Crude) — untouched
@@ -965,7 +976,7 @@ def _trail_frame(position, df):
     cached = _breakout_trail_frame.get(position.epic)
     if cached and hour is not None and cached[0] == hour:
         return cached[1]
-    frame = _breakout_frame_1h(position.epic, df)
+    frame = _breakout_frame_1h(position.epic, df, drop_forming=False)
     if frame is not None and hour is not None:
         _breakout_trail_frame[position.epic] = (hour, frame)
     return frame
@@ -1090,13 +1101,21 @@ def _log_blocked_break(epic: str, market_name: str, signal) -> None:
 _breakout_observe_last: dict[str, datetime] = {}
 
 
-def _breakout_frame_1h(epic: str, stream_df) -> Optional["pd.DataFrame"]:
+def _breakout_frame_1h(epic: str, stream_df, drop_forming: bool = True) -> Optional["pd.DataFrame"]:
     """1-hour OHLC frame for the Donchian breakout path, for markets whose native
     candle_interval < 60. The in-memory stream keeps only 100 candles (~8h at 5m)
     — nowhere near a 55-bar 1h channel — so this merges the durable candle archive
     (may lag up to the 15-min archiver cadence) with the live stream tail, de-dupes,
-    and resamples to 1h. Only fully-CLOSED hours are returned (the forming hour is
-    dropped) so the channel never reads a partial bar."""
+    and resamples to 1h.
+
+    drop_forming: the ENTRY path (analyze_breakout) wants df[-1] to be the bar being
+    TESTED for a break — a fully-closed hour — so it keeps the default True. The TRAIL
+    (exit_channel via _trail_frame) wants df[-1] to be the bar in PROGRESS, because
+    both helpers drop df[-1] and measure the window before it; the validated model is
+    `low.rolling(m).min().shift(1)` (backtest_forex_breakout.py:81) — at bar i the level
+    in force is the min over the m bars immediately preceding i. Native-1h markets get
+    that for free (their raw stream frame ends with the forming hour), so passing them a
+    closed-only frame here would measure an hour too far back. 2026-08-11 fix."""
     import pandas as pd
     from src.streaming import CANDLE_ARCHIVE_DIR
 
@@ -1129,7 +1148,9 @@ def _breakout_frame_1h(epic: str, stream_df) -> Optional["pd.DataFrame"]:
         {"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
     if len(hourly) < 2:
         return None
-    return hourly.iloc[:-1].reset_index()  # drop the still-forming hour
+    if drop_forming:
+        return hourly.iloc[:-1].reset_index()  # drop the still-forming hour
+    return hourly.reset_index()
 
 
 def _observe_breakout_shadow(epic: str, market: MarketStream, market_config) -> None:
