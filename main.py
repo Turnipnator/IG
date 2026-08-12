@@ -3176,7 +3176,18 @@ async def main_async():
             update_htf_trends, force=True)
         schedule.every(15).minutes.do(_scheduled_save_candles)  # Persist candles for restarts (calls CURRENT stream_service — see wrapper note)
         schedule.every(15).minutes.do(_scheduled_archive_candles)  # Durable history harvest (free, IG-native backtest source incl. AI Index)
-        # Screener at each major session open — full briefings (zero API cost)
+        # Screener at each major session open — full briefings (zero API cost).
+        #
+        # These SIX are deliberately container-local (Europe/London), NOT "UTC" —
+        # do not "fix" them to match the UTC-pinned jobs above. Market sessions are
+        # defined in local exchange time, which tracks DST; London and New York shift
+        # within a fortnight of each other, so Europe/London holds a stable offset to
+        # both year-round. Pinning these to UTC would drift them an hour twice a year,
+        # i.e. it would CREATE the bug it looks like it's fixing. The UTC-pinned jobs
+        # (HTF refresh 21:30, send_daily_summary 21:00) track the bot's accounting day
+        # and IG's daily candle roll instead — broker clock, not market clock.
+        # Verified in-container 2026-08-12: TZ=Europe/London, .at("07:00") -> 07:00
+        # local, .at("07:00","UTC") -> 08:00 local. Raised as a suspected bug 3x.
         schedule.every().day.at("23:00").do(run_daily_screen)  # Asia/forex open
         schedule.every().day.at("03:00").do(run_daily_screen)  # Pre-London
         schedule.every().day.at("07:00").do(run_daily_screen)  # London open
