@@ -62,7 +62,7 @@ def prep(bt, name):
     # breakout frame: raw + ATR + merged daily HTF column
     brk = raw.copy()
     brk["atr"] = calculate_atr(brk["high"], brk["low"], brk["close"], 14)
-    hs = htf_series(bt, name)
+    hs = htf_series(bt, name, days=DAYS)
     brk_df = pd.merge_asof(brk.sort_values("date"), hs.sort_values("date"),
                            on="date", direction="backward") if hs is not None else brk.assign(htf="NEUTRAL")
     min_stop = float(mom_df["close"].median()) * 0.0003
