@@ -936,6 +936,16 @@ MARKETS = [
                                # (nothing fires <55%). Pullback kept (PB+55 beats NOPB+55).
                                # Prior: lowered 0.70→0.60 (2026-05-31, 0.70 = zero trades).
         strategy="gold",       # Custom: fast EMAs 3/8/21, RSI 85/15, 1.5x stops, R:R 3.0
+        htf_resolution="DAY",  # 2026-08-13: was the inherited default HOUR. Breakout entry
+                               # runs on a 1h frame and holds for days, but the HOUR gate is
+                               # a ~21h lookback — shorter than the hold. Varying ONLY this
+                               # field (Yahoo GC=F 730d 1h, cost 0.286xATR = measured live
+                               # entry slip): PF HOUR 1.09 → HOUR_4 1.24 → DAY 1.51, and
+                               # trades 198 → 122, i.e. HOUR was admitting ~40% more, lower
+                               # quality breaks. Longer lookback won in 8 of 9 markets tested
+                               # (FTSE flat, the sole exception). NB every Gold-breakout PF
+                               # quoted before this (1.28-1.51) came from a DAY-HTF backtest,
+                               # so the LIVE config had never been the one measured.
         trading_start=23,
         trading_end=21,
     ),
@@ -1064,6 +1074,9 @@ MARKETS = [
         default_size=1.0,
         expiry="SEP-26",
         candle_interval=15,
+        htf_resolution="DAY",  # 2026-08-13: same change and same evidence as Gold above —
+                               # PF HOUR 1.01 → HOUR_4 1.15 → DAY 1.35 (trades 223 → 126).
+                               # At the inherited HOUR default DXY was running at break-even.
         min_confidence=0.55,
         strategy="default",
         default_mode="shadow",
@@ -1105,15 +1118,31 @@ MARKETS = [
         strategy="forex",      # Tight 1.0x stops
         trading_start=7,       # London open — avoid illiquid pre-London spread widening
         trading_end=21,
-        breakout_shadow_only=True,  # 2026-07-24 review: GBP/USD breakout demoted to
-                                    # shadow. The walk-forward fade flagged 06-26 has now
-                                    # run FOUR quarters: PF 1.49 → 1.70 → 1.01 → 0.89
-                                    # (first sub-1.0 quarter), and live breakout since
-                                    # 07-08 is −£18.66 (3 trades). Full-period PF 1.44
-                                    # still stands, so this is a demotion not a burial —
-                                    # re-promote if the shadow/quarterly record recovers.
-                                    # This leaves ZERO live forex (EUR/USD already shadow;
-                                    # its 2 resolved shadow episodes both full-stopped).
+        breakout_shadow_only=False,  # RE-PROMOTED TO LIVE 2026-08-13. Demoted 07-24 on
+                                     # walk-forward quarters 1.49 → 1.70 → 1.01 → 0.89, an
+                                     # explicitly conditional demotion ("re-promote if the
+                                     # quarterly record recovers", full-period PF 1.44).
+                                     # The condition is met, and the sub-1.0 quarter that
+                                     # triggered the demotion was largely an ARTEFACT:
+                                     # scripts/backtest_forex_breakout.htf_series() attaches
+                                     # each NATIVE daily bar to the 1h bars of that SAME day
+                                     # via merge_asof(backward), so a 00:00 entry was gated
+                                     # by a trend computed from that day's CLOSE — look-ahead.
+                                     # Same script, same 3-pip cost, daily label shifted one
+                                     # bar so a day is gated by the last COMPLETED day (what
+                                     # live actually does): quarters 1.76 → 1.82 → 1.13 →
+                                     # 1.19, all four green, most recent above the stated 1.0
+                                     # gate (as-shipped it read 0.78). Full period PF 1.55.
+                                     # Corroborated by an independent look-ahead-free sim at
+                                     # the live config (DAY HTF, cost 0.286xATR): 8/8 91-day
+                                     # quarters green, most recent PF 1.85, +54.81R over 730d
+                                     # — the best market on the book — and POSITIVE through
+                                     # the last 60 days when 7 of 9 markets were negative.
+                                     # EUR/USD stays shadow: same corrected run leaves its
+                                     # most recent quarter at 0.57. This is the first live
+                                     # forex since 07-24. NB the look-ahead affects every
+                                     # script importing htf_series — treat older forex
+                                     # breakout numbers from those scripts with suspicion.
     ),
     # Disabled 2026-06-25 — chronic loser in BOTH forex modes. All-time live
     # n=11 net −£93.36. The breakout leg was disabled 06-22 (commit 473f3af,
