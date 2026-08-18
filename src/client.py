@@ -34,10 +34,13 @@ DISK_CACHE_TTL_MINUTES = 360  # Use disk cache if < 6 hours old (saves API budge
 POSITION_FAILURES_BEFORE_RESET = 3
 POSITION_FAILURES_BEFORE_EXIT = 25
 
-# Stop-amendment rejection backoff. IG rejects an amendment with
-# ATTACHED_ORDER_LEVEL_ERROR when the requested level sits inside its minimum
-# stop distance from current price — routine on wide-spread markets (DXY was
-# screening at ATR/Spread 0.4x during the 2026-08-17 episode). The caller keeps
+# Stop-amendment rejection backoff. IG refuses an amendment with
+# ATTACHED_ORDER_LEVEL_ERROR when the requested level is too close to current
+# price — but the exact rule is NOT confirmed to be the entry-order rule
+# (minNormalStopOrLimitDistance): on 2026-08-18 the amendment that finally
+# SUCCEEDED sat ~3.5pt above DXY's offer against a stated 10.0pt minimum. See
+# _log_stop_amend_diagnostics — measuring that rule is the whole point of the
+# extra fields on the refusal line. The caller keeps
 # the old level in trailing_stop_levels on failure, so it recomputes the SAME
 # level and retries every cycle: 124 identical ERROR lines over two blocks, and
 # two earlier episodes on 08-05 and 08-06. The level eventually became legal on
@@ -49,6 +52,12 @@ STOP_AMEND_FAILURES_BEFORE_BACKOFF = 3
 STOP_AMEND_BACKOFF_SECONDS = 60
 STOP_AMEND_BACKOFF_MAX_SECONDS = 300
 STOP_AMEND_RELOG_MINUTES = 60
+
+# minNormalStopOrLimitDistance is an instrument/account property (tier, region,
+# CFD-vs-spreadbet), not a tick-by-tick quantity, so a day-long cache is ample.
+# Fetched lazily on the first refusal only — a market whose amendments are being
+# accepted never pays for it.
+MIN_STOP_DISTANCE_TTL_HOURS = 24
 
 
 @dataclass
@@ -117,6 +126,10 @@ class IGClient:
         # a restart clearing it costs one duplicate log line, whereas a stale
         # backoff surviving a restart would hold back a real stop tighten.
         self._stop_amend_failures: dict[str, dict] = {}
+
+        # epic -> (min_stop_distance, fetched_at). Populated only when an
+        # amendment is refused; see MIN_STOP_DISTANCE_TTL_HOURS.
+        self._min_stop_distance_cache: dict[str, tuple] = {}
 
         # Try to load disk cache from previous session
         self._load_disk_cache()
@@ -931,6 +944,10 @@ class IGClient:
         deal_id: str,
         new_stop_level: float,
         new_limit_level: Optional[float] = None,
+        *,
+        epic: Optional[str] = None,
+        bid: Optional[float] = None,
+        offer: Optional[float] = None,
     ) -> bool:
         """
         Update the stop level on an existing position (used for break-even trail).
@@ -939,6 +956,10 @@ class IGClient:
             deal_id: The deal ID to update
             new_stop_level: New stop price level
             new_limit_level: New limit price level (unchanged if None)
+            epic: Instrument, for diagnostics on refusal only — never used to
+                decide anything. Omitting it costs a less useful log line.
+            bid, offer: Live streaming prices at the moment of the request,
+                for the same purpose.
 
         Returns:
             True if successfully updated
@@ -973,7 +994,8 @@ class IGClient:
                     logger.info(f"Stop updated for {deal_id}: new stop={new_stop_level}")
                     return True
                 self._note_stop_amend_failure(
-                    deal_id, new_stop_level, self.last_error or "rejected"
+                    deal_id, new_stop_level, self.last_error or "rejected",
+                    epic=epic, bid=bid, offer=offer,
                 )
                 return False
             # Position already closed (race between stop-hit and BE/trail update).
@@ -985,7 +1007,8 @@ class IGClient:
                 )
                 return True
             self._note_stop_amend_failure(
-                deal_id, new_stop_level, f"HTTP {response.status_code}: {response.text}"
+                deal_id, new_stop_level, f"HTTP {response.status_code}: {response.text}",
+                epic=epic, bid=bid, offer=offer,
             )
             return False
 
@@ -1009,8 +1032,61 @@ class IGClient:
             return False
         return datetime.now() < state["next_attempt"]
 
+    def _cached_min_stop_distance(self, epic: str) -> Optional[float]:
+        """IG's stated minimum stop distance for an epic, cached for a day."""
+        cached = self._min_stop_distance_cache.get(epic)
+        if cached and datetime.now() - cached[1] < timedelta(
+            hours=MIN_STOP_DISTANCE_TTL_HOURS
+        ):
+            return cached[0]
+        info = self.get_market_info(epic)
+        if info is None:
+            return None
+        self._min_stop_distance_cache[epic] = (info.min_stop_distance, datetime.now())
+        return info.min_stop_distance
+
+    def _log_stop_amend_diagnostics(
+        self,
+        epic: Optional[str],
+        new_stop_level: float,
+        bid: Optional[float],
+        offer: Optional[float],
+    ) -> str:
+        """Measure — don't assume — what makes IG refuse an amendment.
+
+        The entry path clamps to minNormalStopOrLimitDistance (main.py:1687) and
+        it was the obvious explanation here too, but the numbers don't close: on
+        2026-08-18 the DXY amendment that SUCCEEDED asked for a level ~3.5pt
+        above the offer against a stated 10.0pt minimum, while ones refused an
+        hour earlier were ~3.9pt away. So log the distance to BOTH sides of the
+        book and the stated minimum, and let a real episode settle which
+        quantity IG actually tests. Picking a side here would bake in the very
+        assumption this line exists to check. Diagnostics only — nothing below
+        feeds a decision, and any failure is swallowed."""
+        if not epic:
+            return ""
+        try:
+            parts = []
+            if bid is not None and offer is not None:
+                parts.append(f"bid={bid} offer={offer}")
+                parts.append(f"dist_bid={abs(new_stop_level - bid):.2f}")
+                parts.append(f"dist_offer={abs(new_stop_level - offer):.2f}")
+            ig_min = self._cached_min_stop_distance(epic)
+            if ig_min is not None:
+                parts.append(f"ig_min={ig_min:.2f}")
+            return f" [{epic} " + " ".join(parts) + "]" if parts else ""
+        except Exception as e:  # never let instrumentation break the trail
+            logger.debug(f"Stop-amend diagnostics failed for {epic}: {e}")
+            return ""
+
     def _note_stop_amend_failure(
-        self, deal_id: str, new_stop_level: float, reason: str
+        self,
+        deal_id: str,
+        new_stop_level: float,
+        reason: str,
+        epic: Optional[str] = None,
+        bid: Optional[float] = None,
+        offer: Optional[float] = None,
     ) -> None:
         """Record a refused amendment and log it at a rate that stays readable.
 
@@ -1052,7 +1128,13 @@ class IGClient:
         )
         if first or changed or stale:
             state["last_logged"] = now
-            logger.error(message)
+            # Diagnostics only on the lines we actually surface, so a long
+            # suppressed streak never fetches market info once a minute.
+            logger.error(
+                message + self._log_stop_amend_diagnostics(
+                    epic, new_stop_level, bid, offer
+                )
+            )
         else:
             logger.debug(message)
 

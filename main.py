@@ -742,6 +742,7 @@ def on_price_update(epic: str, market: MarketStream) -> None:
                         deal_id=deal_id,
                         new_stop_level=new_stop,
                         new_limit_level=position.limit_level,
+                        epic=epic, bid=market.bid, offer=market.offer,
                     )
                     if success:
                         breakeven_applied.add(deal_id)
@@ -812,6 +813,7 @@ def on_price_update(epic: str, market: MarketStream) -> None:
             deal_id=deal_id,
             new_stop_level=new_trail,
             new_limit_level=position.limit_level,
+            epic=epic, bid=market.bid, offer=market.offer,
         )
         if success:
             trailing_stop_levels[deal_id] = new_trail
@@ -1003,7 +1005,17 @@ def _update_breakout_trail(position, df) -> None:
     else:
         if new_stop >= cur:   # only tighten downward
             return
-    if client.update_position_stop(position.deal_id, new_stop, position.limit_level):
+    # Streaming quote for the refusal diagnostics only — never gates the trail,
+    # so a missing MarketStream costs a thinner log line and nothing else.
+    try:
+        quote = stream_service.get_market_data(position.epic) if stream_service else None
+    except Exception:
+        quote = None
+    if client.update_position_stop(
+        position.deal_id, new_stop, position.limit_level,
+        epic=position.epic,
+        bid=getattr(quote, "bid", None), offer=getattr(quote, "offer", None),
+    ):
         trailing_stop_levels[position.deal_id] = new_stop
         logger.info(f"📉 Breakout trail [{position.epic}]: stop {cur:.1f} -> {new_stop:.1f} (Donchian exit channel)")
 
