@@ -34,6 +34,22 @@ DISK_CACHE_TTL_MINUTES = 360  # Use disk cache if < 6 hours old (saves API budge
 POSITION_FAILURES_BEFORE_RESET = 3
 POSITION_FAILURES_BEFORE_EXIT = 25
 
+# Stop-amendment rejection backoff. IG rejects an amendment with
+# ATTACHED_ORDER_LEVEL_ERROR when the requested level sits inside its minimum
+# stop distance from current price — routine on wide-spread markets (DXY was
+# screening at ATR/Spread 0.4x during the 2026-08-17 episode). The caller keeps
+# the old level in trailing_stop_levels on failure, so it recomputes the SAME
+# level and retries every cycle: 124 identical ERROR lines over two blocks, and
+# two earlier episodes on 08-05 and 08-06. The level eventually became legal on
+# its own each time, so the retry is right; the cadence and the missing context
+# are not. Skip the call while the same deal wants the same rejected level, and
+# never let that delay a level that has CHANGED — a tighter stop always goes
+# straight through.
+STOP_AMEND_FAILURES_BEFORE_BACKOFF = 3
+STOP_AMEND_BACKOFF_SECONDS = 60
+STOP_AMEND_BACKOFF_MAX_SECONDS = 300
+STOP_AMEND_RELOG_MINUTES = 60
+
 
 @dataclass
 class CachedPriceData:
@@ -95,6 +111,12 @@ class IGClient:
         # On consecutive failures we recreate the Session; if that doesn't
         # help, exit so Docker restarts the container.
         self._consecutive_position_failures = 0
+
+        # Stop-amendment rejection state, keyed by deal_id ->
+        # {level, reason, failures, next_attempt, last_logged}. In-memory only:
+        # a restart clearing it costs one duplicate log line, whereas a stale
+        # backoff surviving a restart would hold back a real stop tighten.
+        self._stop_amend_failures: dict[str, dict] = {}
 
         # Try to load disk cache from previous session
         self._load_disk_cache()
@@ -925,6 +947,9 @@ class IGClient:
             logger.error("Not logged in")
             return False
 
+        if self._stop_amend_backed_off(deal_id, new_stop_level):
+            return False
+
         payload = {
             "stopLevel": new_stop_level,
         }
@@ -944,22 +969,92 @@ class IGClient:
                 deal_ref = result.get("dealReference")
                 confirmation = self._confirm_deal(deal_ref)
                 if confirmation:
+                    self._stop_amend_failures.pop(deal_id, None)
                     logger.info(f"Stop updated for {deal_id}: new stop={new_stop_level}")
                     return True
+                self._note_stop_amend_failure(
+                    deal_id, new_stop_level, self.last_error or "rejected"
+                )
                 return False
             # Position already closed (race between stop-hit and BE/trail update).
             # Treat as success so the caller stops retrying.
             if "position.details.null" in response.text:
+                self._stop_amend_failures.pop(deal_id, None)
                 logger.info(
                     f"Stop update skipped for {deal_id}: position already closed"
                 )
                 return True
-            logger.error(f"Failed to update stop for {deal_id}: {response.text}")
+            self._note_stop_amend_failure(
+                deal_id, new_stop_level, f"HTTP {response.status_code}: {response.text}"
+            )
             return False
 
         except requests.RequestException as e:
+            # Transport failure, not a level the broker refuses — don't let it
+            # arm the backoff, or one timeout would hold back the next tighten.
             logger.error(f"Update stop request failed: {e}")
             return False
+
+    def _stop_amend_backed_off(self, deal_id: str, new_stop_level: float) -> bool:
+        """True if this deal is still backing off from rejections of THIS level.
+
+        A changed level clears the backoff outright: the trail only ever moves a
+        stop tighter, so a new level is strictly better protection than the one
+        already on the book and must never queue behind a stale rejection."""
+        state = self._stop_amend_failures.get(deal_id)
+        if state is None:
+            return False
+        if abs(state["level"] - new_stop_level) > 1e-6:
+            del self._stop_amend_failures[deal_id]
+            return False
+        return datetime.now() < state["next_attempt"]
+
+    def _note_stop_amend_failure(
+        self, deal_id: str, new_stop_level: float, reason: str
+    ) -> None:
+        """Record a refused amendment and log it at a rate that stays readable.
+
+        The bare 'Deal rejected: <reason>' from _confirm_deal names neither the
+        deal nor the level, so 124 of them in a row (2026-08-17) said nothing
+        about which position was affected or what it was asking for. Log the
+        full picture at ERROR on the first failure and on any change of reason,
+        then drop to DEBUG and re-surface hourly while the streak continues."""
+        now = datetime.now()
+        state = self._stop_amend_failures.get(deal_id)
+        if state is None or abs(state["level"] - new_stop_level) > 1e-6:
+            state = {"level": new_stop_level, "reason": None, "failures": 0,
+                     "next_attempt": now, "last_logged": None}
+            self._stop_amend_failures[deal_id] = state
+
+        previous_reason = state["reason"]
+        state["failures"] += 1
+        state["reason"] = reason
+
+        if state["failures"] >= STOP_AMEND_FAILURES_BEFORE_BACKOFF:
+            backoff = min(
+                STOP_AMEND_BACKOFF_SECONDS
+                * 2 ** (state["failures"] - STOP_AMEND_FAILURES_BEFORE_BACKOFF),
+                STOP_AMEND_BACKOFF_MAX_SECONDS,
+            )
+            state["next_attempt"] = now + timedelta(seconds=backoff)
+        else:
+            backoff = 0
+
+        first = state["last_logged"] is None
+        changed = previous_reason is not None and previous_reason != reason
+        stale = state["last_logged"] is not None and (
+            now - state["last_logged"] >= timedelta(minutes=STOP_AMEND_RELOG_MINUTES)
+        )
+        message = (
+            f"Stop amendment refused for {deal_id}: requested stop={new_stop_level} "
+            f"— {reason} (consecutive={state['failures']}"
+            + (f", retrying in {backoff}s)" if backoff else ")")
+        )
+        if first or changed or stale:
+            state["last_logged"] = now
+            logger.error(message)
+        else:
+            logger.debug(message)
 
     @staticmethod
     def _parse_pnl(pnl_str: str) -> float:
