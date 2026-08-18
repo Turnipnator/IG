@@ -946,6 +946,29 @@ MARKETS = [
                                # (FTSE flat, the sole exception). NB every Gold-breakout PF
                                # quoted before this (1.28-1.51) came from a DAY-HTF backtest,
                                # so the LIVE config had never been the one measured.
+                               #
+                               # RE-VERIFIED 2026-08-18 (scripts/backtest_gold_momentum_vs_
+                               # breakout.py + the ladder rerun). DAY holds and the decision
+                               # stands, but two corrections to the numbers above:
+                               #   slip-charged  HOUR 1.16 (n=193) | HOUR_4 1.12 (n=166) |
+                               #                 DAY  1.44 (n=109)
+                               #   gross         HOUR 1.43 | HOUR_4 1.39 | DAY 1.77
+                               # (1) DAY 1.51 → 1.44 is just the 730d window rolling 5 days;
+                               #     the figure was sound. (2) THE LADDER IS NOT MONOTONIC —
+                               #     HOUR_4 (1.12) is the WORST rung, below HOUR (1.16), not
+                               #     the middle one. So Gold does not support "longer lookback
+                               #     is monotonically better"; it supports "DAY specifically
+                               #     wins". Anything leaning on the monotonic reading (v3 item
+                               #     15b) needs re-checking on the other 8 markets.
+                               # Caveat on method: DAY is built from NATIVE 1d bars (as live's
+                               # update_htf_trends fetches), HOUR/HOUR_4 by resampling the 1h
+                               # frame — no native Yahoo 4h exists. Resampling FLATTERS (a
+                               # resampled DAY reads 1.57 vs 1.44 native), so the DAY-vs-HOUR
+                               # gap is if anything understated here.
+                               # Also measured, same run: Gold breakout is concentrated —
+                               # top 3 of 109 trades = +26.16% of a +24.37% total (ex-top3
+                               # −1.78%) — and cost-sensitive: PF 1.77 gross → 1.44 at 1x
+                               # slip → 1.19 at 2x. Quarters 0.52 / 1.69 / 3.03 / 1.17.
         trading_start=23,
         trading_end=21,
     ),
