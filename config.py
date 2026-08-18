@@ -675,6 +675,23 @@ MARKETS = [
         default_size=1.0,
         min_confidence=0.55,
         strategy="indices_adx35",
+        htf_resolution="DAY",  # 2026-08-18: was the inherited HOUR. Russell has the
+                               # LARGEST DAY-vs-HOUR gap in the breakout book — 730d 1h,
+                               # N55/2.0xATR, 0.286xATR slip: HOUR 0.98 -> DAY 1.47
+                               # (n=73 -> 44). On HOUR the shadow was recording the
+                               # weaker of the two configs, so a promote/drop call read
+                               # off it would have judged the wrong strategy.
+                               # Checked the path this ALSO gates and the ladder did not
+                               # measure: momentum on the live 5m frame (^RUT 59d,
+                               # indices_adx35, profile stop forced) reads HOUR PF 3.96
+                               # (+1.73%, 12t) vs DAY 3.28 (+1.59%, 13t) — DAY slightly
+                               # worse, but n=12 is noise against +0.49 PF over 44
+                               # breakout trades. Accepted knowingly, not overlooked.
+                               # NB this puts a CONFIG-ERA BOUNDARY in Russell's shadow
+                               # record at 2026-08-18; bucket either side before reading
+                               # it at v3. Not monotonic-lookback reasoning — see the
+                               # 15(b) re-check: DAY wins 7/9 but the ladder is monotonic
+                               # in only 3/9, and Hong Kong is 1.34 HOUR -> 1.09 DAY.
         correlation_group="equity_index",  # would apply if ever promoted; also keeps
                                            # the shadow record comparable to live peers
     ),
