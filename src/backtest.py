@@ -359,8 +359,17 @@ class Backtester:
         if htf_data is None or htf_data.empty:
             return "NEUTRAL"
 
-        # Get the most recent hourly candle before current_time
-        mask = htf_data["date"] <= current_time
+        # Most recent higher-timeframe candle that has actually CLOSED.
+        # 2026-08-19: this was `date <= current_time`, which selects the bar still
+        # FORMING — its `close` is a price from the future relative to the 5m bar
+        # being traded. Live never does this: update_htf_trends fetches 30
+        # COMPLETED bars. Same look-ahead class as the one fixed in htf_series
+        # (5cba8b3); this is the copy that lives in the engine. Rows are stamped
+        # at bar START, so a bar counts only once start + span <= now.
+        span = htf_data["date"].diff().median()
+        if pd.isna(span):
+            span = pd.Timedelta(0)
+        mask = (htf_data["date"] + span) <= current_time
         if not mask.any():
             return "NEUTRAL"
 
@@ -575,21 +584,44 @@ class Backtester:
                 exit_reason = None
                 exit_price = None
 
-                # Check stop loss
-                if position.direction == "BUY" and close <= position.stop_price:
-                    exit_reason = "Stop loss"
-                    exit_price = position.stop_price
-                elif position.direction == "SELL" and close >= position.stop_price:
-                    exit_reason = "Stop loss"
-                    exit_price = position.stop_price
+                # --- Stop / take-profit, checked INTRABAR ---------------------
+                # 2026-08-19: these were compared against the CLOSE only, so a bar
+                # that pierced the stop and recovered was booked as still open.
+                # The bot attaches a real broker stop at order time
+                # (main.py -> client.open_position(stop_distance=...),
+                # guaranteed_stop=False), so it triggers the moment price TOUCHES
+                # the level intrabar — it does not wait for a close. Re-pricing
+                # Gold momentum with this fix: gross PF 1.52 -> 1.05 (5m) and
+                # 2.40 -> 1.53 (1h), which is the term that reconciles this
+                # engine to the live record (Gold momentum live PF 1.00, n=59).
+                #
+                # Fill convention, matching a non-guaranteed broker stop: it fills
+                # AT the level, and slips only when the bar GAPPED through it — in
+                # which case the fill is the open. Do not re-price to the close;
+                # that over-charges by 8-30x (measured bar-to-bar gap on IG 5m is
+                # 0.028-0.063xATR, exceeding 0.5xATR on 0.4-0.9% of bars).
+                high = row["high"]
+                low = row["low"]
+                opn = row["open"]
 
-                # Check take profit
-                if position.direction == "BUY" and close >= position.limit_price:
+                if position.direction == "BUY":
+                    stop_hit = low <= position.stop_price
+                    tp_hit = high >= position.limit_price
+                    stop_fill = min(opn, position.stop_price)   # gap-through = worse
+                else:
+                    stop_hit = high >= position.stop_price
+                    tp_hit = low <= position.limit_price
+                    stop_fill = max(opn, position.stop_price)
+
+                # Stop takes precedence when a single bar touches both. The bar
+                # gives no intrabar ordering, and assuming the favourable one is
+                # how a backtest invents money it never made.
+                if stop_hit:
+                    exit_reason = "Stop loss"
+                    exit_price = stop_fill
+                elif tp_hit:
                     exit_reason = "Take profit"
-                    exit_price = position.limit_price
-                elif position.direction == "SELL" and close <= position.limit_price:
-                    exit_reason = "Take profit"
-                    exit_price = position.limit_price
+                    exit_price = position.limit_price   # limit fills at level or better
 
                 # Minimum-hold gate: the two momentum exits (MACD-3 / ranging-3)
                 # may NOT fire until the position has been held min_hold_candles

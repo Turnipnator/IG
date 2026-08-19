@@ -108,20 +108,28 @@ def breakout_sim(df, n, stop_k, exit_mode, use_filter, min_stop, cost_pips=0.0, 
         if pos:
             d = pos["dir"]
             reason = price = None
+            # Exits fill at the level, or at the OPEN when the bar gapped
+            # through it — mirroring the entry, which already does
+            # `entry = max(o, upper)`. 2026-08-19: exits used to fill at the exact
+            # level regardless, a free lunch worth up to -0.14 PF on the gappy
+            # cash indices (NASDAQ 0.773->0.688, HK 1.341->1.198, Russell
+            # 1.471->1.343, Japan 0.921->0.849; Gold/DXY/GBP move 2-3 trades).
+            # Adverse-side only: a BUY exits DOWN, so a gap fills LOWER (min);
+            # a SELL exits UP, so a gap fills HIGHER (max).
             if d == "BUY":
                 if l <= pos["stop"]:
-                    reason, price = "Stop", pos["stop"]
+                    reason, price = "Stop", min(o, pos["stop"])
                 elif exit_mode == "rr" and h >= pos["limit"]:
-                    reason, price = "TP", pos["limit"]
+                    reason, price = "TP", pos["limit"]   # limit fills at level or better
                 elif exit_mode == "donchian" and not pd.isna(exit_low.iloc[i]) and l <= exit_low.iloc[i]:
-                    reason, price = "DonExit", exit_low.iloc[i]
+                    reason, price = "DonExit", min(o, exit_low.iloc[i])
             else:
                 if h >= pos["stop"]:
-                    reason, price = "Stop", pos["stop"]
+                    reason, price = "Stop", max(o, pos["stop"])
                 elif exit_mode == "rr" and l <= pos["limit"]:
                     reason, price = "TP", pos["limit"]
                 elif exit_mode == "donchian" and not pd.isna(exit_high.iloc[i]) and h >= exit_high.iloc[i]:
-                    reason, price = "DonExit", exit_high.iloc[i]
+                    reason, price = "DonExit", max(o, exit_high.iloc[i])
             if reason:
                 pnlp = ((price - pos["entry"]) if d == "BUY" else (pos["entry"] - price)) / pos["entry"] * 100
                 pnlp -= cost_frac / pos["entry"] * 100   # spread + slippage haircut
