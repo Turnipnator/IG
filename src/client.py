@@ -399,8 +399,10 @@ class IGClient:
                     offer=snapshot.get("offer", 0.0),
                     high=snapshot.get("high", 0.0),
                     low=snapshot.get("low", 0.0),
-                    min_deal_size=(dealing_rules.get("minDealSize") or {}).get("value", 0.1),
-                    min_stop_distance=(dealing_rules.get("minNormalStopOrLimitDistance") or {}).get("value", 0.0),
+                    min_deal_size=self._rule(dealing_rules, "minDealSize", 0.1, epic),
+                    min_stop_distance=self._rule(
+                        dealing_rules, "minNormalStopOrLimitDistance", 0.0, epic
+                    ),
                     market_status=snapshot.get("marketStatus", "CLOSED"),
                     expiry=instrument.get("expiry", ""),
                 )
@@ -411,6 +413,34 @@ class IGClient:
         except requests.RequestException as e:
             logger.error(f"Market info request failed: {e}")
             return None
+
+    @staticmethod
+    def _rule(dealing_rules: dict, key: str, default: float, epic: str) -> float:
+        """Read one IG dealing rule, and SAY SO when it is missing.
+
+        Both callers used to fall back silently, which hides the failure in the
+        two places it matters most:
+
+        - min_stop_distance -> 0.0 makes the order-time clamp
+          (`if info.min_stop_distance > 0`) skip entirely, so the stop goes to IG
+          unchecked and a too-tight one is rejected — the signal is lost with no
+          hint as to why. Indistinguishable from IG legitimately reporting 0.
+        - min_deal_size -> 0.1 is worse: it is the exact wrong value that once had
+          IG reject every Gold order ("IG minimum is 1.0 per point (was 0.1 - all
+          trades rejected!)", config.py), and it feeds position sizing.
+
+        The defaults are kept, so behaviour is unchanged — this only makes the
+        substitution visible. Refusing to trade on unknown dealing rules would be
+        a behaviour change and needs its own decision.
+        """
+        node = dealing_rules.get(key)
+        if isinstance(node, dict) and node.get("value") is not None:
+            return node["value"]
+        logger.warning(
+            f"[{epic}] IG returned no {key} — falling back to {default}. "
+            f"The order-time safety clamp cannot be applied on this value."
+        )
+        return default
 
     def _is_cache_valid(self, epic: str) -> bool:
         """Check if cached data for an epic is still valid."""
