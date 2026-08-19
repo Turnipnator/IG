@@ -1722,9 +1722,23 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             if live_market_info.min_stop_distance > 0:
                 ig_min = live_market_info.min_stop_distance + 0.5  # 0.5pt buffer
                 if trade_signal.stop_distance < ig_min:
+                    # The limit is NOT rescaled with the stop, so widening the stop
+                    # here shrinks realised R:R below the configured reward_risk.
+                    # Deliberate, not an oversight: rescaling would push the target
+                    # further out on live orders, changing which trades win, and
+                    # target placement is the family this book has refuted over and
+                    # over (Gold profit-protection: every variant lost). Measured
+                    # exposure is one trade in the bot's history that actually
+                    # exited at a clamp-degraded target (NASDAQ 2026-04-30, +£8.28);
+                    # 9 of 290 TP trades reached a degraded target at all and 8 of
+                    # those were Gold running the R:R 2.0 of its own era, not this.
+                    # Revisit only with a backtest, never on the arithmetic alone.
+                    degraded = (trade_signal.limit_distance / ig_min) if ig_min else 0
                     logger.info(
                         f"[{market.name}] Raising stop {trade_signal.stop_distance:.2f} "
-                        f"-> {ig_min:.2f} (IG min {live_market_info.min_stop_distance:.2f})"
+                        f"-> {ig_min:.2f} (IG min {live_market_info.min_stop_distance:.2f}); "
+                        f"limit held at {trade_signal.limit_distance:.2f} "
+                        f"=> realised R:R {degraded:.2f}"
                     )
                     trade_signal.stop_distance = ig_min
                 if trade_signal.limit_distance < ig_min:
