@@ -892,6 +892,29 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
     )
     if not ps.approved:
         logger.warning(f"[BREAKOUT] {market_config.name}: size not approved ({ps.reason}) — skip")
+        # Journal it too. This path logged and returned, so breakout cap-skips
+        # existed ONLY in the container log: `rejected_signals` held 12 rows ever,
+        # all momentum, all 2026-06, none Gold — while 9 real Gold breakout
+        # cap-skips sat in the log on 2026-08-06 (`Min size 1.0 x stop 46.0 risks
+        # £46.02 > £45.00`), one of them dropping a whole entry. Any query asking
+        # "how often do we cap-skip?" therefore returned a FALSE ZERO for every
+        # breakout market — and Gold, the only market on live breakout, skips
+        # ~16% of its Donchian break bars because min_deal_size 1.0 x a 2xATR stop
+        # clears the £45 cap. Reason is prefixed to keep breakout rows separable
+        # from momentum's in a table with no strategy column, matching the
+        # `Breakout-blocked:` convention in _log_blocked_break.
+        try:
+            if journal:
+                journal.log_rejected_signal(
+                    epic=epic, market_name=market_config.name,
+                    direction=(signal.signal.value if signal.signal else "HOLD"),
+                    confidence=float(getattr(signal, "confidence", 0.0) or 0.0),
+                    adx=float(getattr(signal, "adx", 0.0) or 0.0),
+                    rsi=float(getattr(signal, "rsi", 0.0) or 0.0),
+                    reject_reason=f"Breakout-sizing: {ps.reason}",
+                )
+        except Exception as e:   # instrumentation must never break the order path
+            logger.debug(f"Breakout rejection journalling failed for {epic}: {e}")
         return
     logger.info(
         f"🟢 Breakout OPEN {signal.signal.value} {market_config.name}: size={ps.size} "
