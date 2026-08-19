@@ -242,11 +242,23 @@ def utc_hour() -> int:
 # +£17.62 @30m, as 30m drags in a +£45.20 winner) — so 15m kept, do NOT widen.
 # When enforced the 2nd+ correlated entry is logged + journalled (rejected_signals
 # LIKE 'Cluster-filter%') AND skipped; the first member is always let through.
-# recent_group_entries records the last entry time + direction per epic (recorded
-# only on a successful open, so a blocked entry never anchors the next one).
+# recent_group_entries records the last entry time + direction per epic. A slot is
+# RESERVED under _cluster_lock before the order goes out and released if it fails, so
+# a blocked or failed entry still never anchors the next one — but a peer evaluating
+# concurrently now sees the reservation. 2026-08-19: it used to be written only AFTER
+# client.open_position returned (~line 1874) while the check read it ~55 lines earlier,
+# and on_candle_complete spawns a THREAD PER MARKET (line ~842), so two correlated
+# markets completing the same candle both scanned an empty dict and both opened. The
+# filter caught 5m and 10m gaps and silently missed 0m ones — the doubled bet it exists
+# to stop. Leak: 2 clusters / 4 trades / -£68.75 (S&P+Wall St 2026-07-20 and 08-19).
 CLUSTER_FILTER_WINDOW_MIN = 15
 CLUSTER_FILTER_ENFORCE = True
 recent_group_entries: dict[str, tuple[datetime, str]] = {}  # epic -> (entry_time, direction)
+# Guards the check-and-reserve on recent_group_entries ONLY. Holds for a dict scan and
+# one write — microseconds, never any I/O. Deliberately NOT a lock around the whole
+# order path: an IG round trip is seconds, and serialising every market behind it would
+# change entry timing book-wide to fix a ~1-per-3-weeks race.
+_cluster_lock = threading.Lock()
 
 # MTF pullback-entry state (StrategyConfig.pullback_entry_atr_frac/window). When a
 # signal arms a pullback, we hold it here until price retraces frac×ATR toward the
@@ -1806,26 +1818,37 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 )
                 return
 
-        # Correlation-cluster filter — OBSERVATIONAL (log + journal only unless
-        # CLUSTER_FILTER_ENFORCE). When a correlated group member already opened
-        # the SAME direction within the window, this 2nd entry is a doubled bet
-        # that historically whipsaws (cluster avg -£8.23 vs solo +£2.62, journal
-        # 2026-06-11). The first member is let through; only the 2nd+ is flagged
-        # — which is exactly what an enforced guard would block. Placed last so
-        # only trades that would actually open are counted (matches the backtest).
+        # Correlation-cluster filter — ENFORCED (CLUSTER_FILTER_ENFORCE, on since
+        # 2026-07-06). When a correlated group member already opened the SAME
+        # direction within the window, this 2nd entry is a doubled bet that
+        # historically whipsaws (cluster avg -£8.23 vs solo +£2.62, journal
+        # 2026-06-11). The first member is let through; only the 2nd+ is blocked.
+        # Placed last so only trades that would actually open are counted.
+        #
+        # The scan AND the reservation happen together under _cluster_lock: a
+        # concurrent peer must not be able to scan between our scan and our write.
+        # Logging and journalling are deliberately OUTSIDE the lock — they do disk
+        # I/O, and nothing else may block on this lock while that happens.
+        cluster_reserved = False
+        cluster_peer = None
         if market_config.correlation_group:
-            now_t = datetime.now()
-            cluster_peer = None
-            for o_epic, (o_time, o_dir) in recent_group_entries.items():
-                if o_epic == epic or o_dir != trade_signal.signal.value:
-                    continue
-                o_cfg = next((m for m in MARKETS if m.epic == o_epic), None)
-                if not o_cfg or o_cfg.correlation_group != market_config.correlation_group:
-                    continue
-                age_min = (now_t - o_time).total_seconds() / 60
-                if 0 <= age_min <= CLUSTER_FILTER_WINDOW_MIN:
-                    cluster_peer = (o_cfg.name, age_min)
-                    break
+            with _cluster_lock:
+                now_t = datetime.now()
+                for o_epic, (o_time, o_dir) in recent_group_entries.items():
+                    if o_epic == epic or o_dir != trade_signal.signal.value:
+                        continue
+                    o_cfg = next((m for m in MARKETS if m.epic == o_epic), None)
+                    if not o_cfg or o_cfg.correlation_group != market_config.correlation_group:
+                        continue
+                    age_min = (now_t - o_time).total_seconds() / 60
+                    if 0 <= age_min <= CLUSTER_FILTER_WINDOW_MIN:
+                        cluster_peer = (o_cfg.name, age_min)
+                        break
+                if cluster_peer is None or not CLUSTER_FILTER_ENFORCE:
+                    # Claim the slot NOW, before the order leaves. Released in the
+                    # finally below if the order does not open.
+                    recent_group_entries[epic] = (now_t, trade_signal.signal.value)
+                    cluster_reserved = True
             if cluster_peer:
                 peer_name, peer_age = cluster_peer
                 verb = "BLOCKED" if CLUSTER_FILTER_ENFORCE else "would be BLOCKED"
@@ -1851,22 +1874,34 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
             f"limit={trade_signal.limit_distance}"
         )
 
-        result = client.open_position(
-            epic=epic,
-            direction=trade_signal.signal.value,
-            size=position_size.size,
-            stop_distance=trade_signal.stop_distance,
-            limit_distance=trade_signal.limit_distance,
-            expiry=market_config.expiry,
-        )
+        result = None
+        try:
+            result = client.open_position(
+                epic=epic,
+                direction=trade_signal.signal.value,
+                size=position_size.size,
+                stop_distance=trade_signal.stop_distance,
+                limit_distance=trade_signal.limit_distance,
+                expiry=market_config.expiry,
+            )
+        finally:
+            # No position opened (rejected, None, or an exception on the way out)
+            # => give the cluster slot back, or this epic silently blocks its
+            # correlated peers for the rest of the window on a trade that never
+            # existed. finally, not except: an exception must release it too.
+            if cluster_reserved and not result:
+                with _cluster_lock:
+                    recent_group_entries.pop(epic, None)
 
         if result:
             # trades_today incremented in notify_trade_opened()
 
-            # Record group entry for the correlation-cluster window check so a
-            # later correlated same-direction entry can detect this one.
+            # Re-anchor the reserved slot to the ACTUAL open time (the reservation
+            # above was stamped pre-order). Seconds of difference on a 15-min
+            # window, but the window should measure from the fill.
             if market_config.correlation_group:
-                recent_group_entries[epic] = (datetime.now(), trade_signal.signal.value)
+                with _cluster_lock:
+                    recent_group_entries[epic] = (datetime.now(), trade_signal.signal.value)
 
             # Track in known_positions for external close detection
             deal_id = result.get("dealId", "")
