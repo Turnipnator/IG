@@ -1771,3 +1771,129 @@ Also worth a separate pre-flight, deliberately **not** bundled: the clamp's fail
 3. **Whether momentum shadow *should* record pre-clamp stops.** `main.py:1654-1655` says yes by design (signal quality ≠ execution) — but that makes shadow R non-comparable to live R on FTSE/HK/Russell for 41–75% of future rows. Design call, not a bug.
 4. **Cost charge for breakout-shadow R**: 0.035R (stored spread) vs 0.16R (`cost_pips`). Do not quote a cost-adjusted tally until reconciled; the gap is −16.9R vs −19.9R.
 5. **The −15.86R figure's provenance** — irreproducible from the current table (−16.034R live-closed). Treat as a stale snapshot.
+---
+
+## 2026-08-20 — "Is it the strategy or the settings?" — the live book answers it in R
+
+**Question.** After a full year of paper trading the bot is down in £ and no closer to
+go-live. Two proposed routes: (a) go back to basics and source new strategies from the
+TradingView library, or (b) keep fine-tuning what we run. Which?
+
+**Hypotheses.**
+- H1 — The entry signal is weak; better signals exist and we haven't found them yet.
+- H2 — The settings are wrong; the right per-market parameters would make it profitable.
+- H3 — The strategies are fine but execution cost eats the edge.
+- H4 — There is no edge of *tradeable size* available from past-price rules on these
+  instruments, and the paper year has now measured that rather than failed to.
+
+### Evidence — live journal, decomposed in R (n=317 closed, size-invariant)
+
+R = pnl / (size x initial stop_distance), so it is comparable across risk-% eras and
+across the Gold min-size distortion that dominates the £ figures.
+
+| bucket | n | avgR | totalR | t | 95% CI on avgR |
+|---|---|---|---|---|---|
+| ALL CLOSED | 317 | **-0.041** | -13.04 | -0.84 | [-0.137, +0.055] |
+| pre-MACD-gate | 262 | -0.047 | -12.27 | -0.86 | — |
+| post-MACD-gate | 55 | -0.014 | -0.76 | -0.13 | — |
+
+Pooled per-trade sd of R = **0.87** (live momentum), materially lower than the breakout
+study's 1.64R because momentum exits cut trades short. That matters for power:
+n = (2*0.87/0.10)^2 = **302 trades to resolve a +0.10R edge at t=2 — and we have 317.**
+
+**This is the key structural difference from the breakout power result.** The breakout
+arm needs ~2,400 trades (~7 yr) because its R distribution is fat-tailed. The momentum
+arm does not. **The paper-trading year was adequately powered for the momentum arm and
+returned a negative.**
+
+Best market in the book is NASDAQ 100 at +0.223R (n=31, t=+1.86, CI [-0.012, +0.457]) —
+the only arm even approaching significance, and it does not clear it.
+
+### Evidence — cost is NOT the binding constraint for momentum
+
+Live spread snapshot 2026-08-20 08:27 BST, cost/R = spread / median realised stop:
+
+| market | cost/R | | market | cost/R |
+|---|---|---|---|---|
+| NASDAQ 100 | 0.026 | | Wall Street | 0.064 |
+| Japan 225 | 0.029 | | S&P 500 | 0.067 |
+| GBP/USD | 0.030 | | Hong Kong HS50 | 0.094 |
+| Gold / EUR/USD | 0.031 | | **Crude Oil** | **0.185 FAIL** |
+| FTSE 100 | 0.041 | | **Dollar Index** | **0.400 FAIL** |
+
+Ten of twelve markets sit **inside** the 0.10R go-live gate. This **corrects the framing
+carried over from the breakout study**: the 0.139R cost figure there is dominated by
+0.286xATR *entry slippage on the channel break*, not by spread. Momentum pays ~0.03-0.09R
+and is still flat. So:
+
+- **Momentum: cost is low, gross edge is ~zero.** Adding back cost puts gross at ~+0.01R.
+- **Breakout: gross edge real (+0.191R, t=+3.85, n=676), 73% destroyed by entry slip.**
+
+Two arms, two *different* failure modes. Conflating them has been a persistent error.
+
+### Confidence
+
+- **H4 — HIGH for the momentum arm specifically.** n=317, CI upper bound +0.055R.
+  Caveat that lowers it from HIGH-plus: trades are **not independent** (correlated markets,
+  clustered in time), so effective n < 317 and the true CI is wider — realistically the
+  upper bound is +0.05 to +0.09R rather than +0.055R. Either way an edge worth trading
+  (>= +0.10R) is excluded. Also note this rules out **momentum as operated across 21
+  markets and many config eras**, not momentum in principle.
+- **H3 — HIGH for breakout, REFUTED for momentum.** See cost table above.
+- **H2 — REFUTED (prior work).** Per-EPIC walkforward: 21/21 profitable in-sample,
+  12/20 out-of-sample. `min_confidence` is regime-gated and bimodal so sweeping it is a
+  no-op. Settings do not port across timeframes.
+- **H1 — LOW support, and the test was weak.** 12 Alorse Pine strategies ported: all 12
+  net-negative pooled OOS; best -0.028R vs incumbent -0.049R. **But that design had ~1%
+  power at 60-cell correction**, so "nothing survived" was foreclosed. The load-bearing
+  evidence against H1 is not the significance tests — it is the pooled point estimates all
+  leaning negative, plus the barrier test below.
+- **Mean reversion — DEAD, HIGH, fourth independent confirmation.** Symmetric 1R-barrier
+  hit rate 49.50%, 95% CI 48.08-50.93%, n=4737.
+
+The barrier test is the deepest explanation available and it applies to *any* past-price
+rule: at these horizons on these instruments, direction is a coin flip. TradingView hosts
+~100k published strategies but every one of them is a function of the same OHLCV series.
+Sampling more of them is sampling from a distribution already measured as centred on zero.
+
+### Self-critique
+
+- **Short holds look terrible (<=15m: n=141, -19.00R) and 1-4h looks great (n=29, +8.96R).
+  This is CONFOUNDED and must not be acted on.** A trade that goes wrong immediately exits
+  immediately; hold time is an *outcome*, not a treatment. Same trap for the RSI-exit
+  bucket (+1.179R, WR 95.5%, n=22) — RSI-overbought only fires after price has already run,
+  so it marks good trades rather than causing them. Neither is evidence for holding longer.
+  Testing it needs a replay that forces longer holds, not a cross-section. — LOW
+- The "LIMIT" classification (any `Stop/limit hit` finishing positive) is **contaminated by
+  break-even-stop hits**, which is why it averages +0.376R rather than the ~+2R a real
+  take-profit would pay. The BE-at-0.7 setting converting winners into scratches is a live
+  hypothesis, NOT yet a finding — and it is adjacent to the already-REFUTED Gold
+  profit-protection result, so it needs its own pre-registered test before any change.
+- R uses the *initial* stop; break-even moves mean realised risk < initial risk on some
+  trades, mildly inflating |R| on the loss side. Small, and it biases against the bot.
+- Survivorship/snooping: the per-market table is 21 markets deep and the best one (NASDAQ)
+  is exactly what you would expect the max of 21 noisy draws to look like. Do not promote
+  on it.
+
+### Conclusion
+
+**Neither route the question offered is the right one.** Fine-tuning is refuted (H2) and
+strategy-shopping is sampling from a measured-zero distribution (H1/H4). The one place a
+*measured, statistically significant* quantity is being destroyed by something mechanically
+fixable is **breakout entry slippage**: +0.191R gross, 0.143R lost to filling market-on-close
+after the channel break. That is an execution problem, not a strategy problem, and it is the
+only lever left that acts on a number we have actually established.
+
+### Next steps (ranked)
+
+1. **Breakout entry via resting stop-order at the channel level** instead of market-on-close.
+   Directly attacks 0.143R of a +0.191R edge. Needs a pre-flight (order path).
+2. **Retire the momentum arm** or cut it to the one or two markets with any positive lean.
+   It has been measured and it is flat; continuing to run it 13-wide generates cost and
+   noise without generating information.
+3. **Pre-registered BE-stop test** (does BE-at-0.7 convert winners to scratches?).
+4. Do NOT: source more TradingView strategies, sweep more parameters, or add markets.
+
+**Open.** Non-price data (economic calendar, carry/rate differentials, cross-asset) is the
+only genuinely unexplored axis. No evidence behind it, and it is a large build — flagged,
+not recommended.

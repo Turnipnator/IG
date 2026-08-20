@@ -56,6 +56,12 @@ class TradeSignal:
     ema_fast: float = 0.0
     ema_medium: float = 0.0
     ema_slow: float = 0.0
+    # Donchian breakout only: the CHANNEL BOUNDARY the break crossed (analyze_breakout's
+    # `level`). Previously this survived only inside `reason` as free text, so nothing
+    # downstream could measure the gap between the level and the price we actually paid
+    # — the +0.143R/trade entry slip. Journalling it makes that slip queryable.
+    # 0.0 for every non-breakout signal.
+    break_level: float = 0.0
 
 
 class TradingStrategy:

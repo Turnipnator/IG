@@ -149,6 +149,84 @@ def analyze_breakout(df, market: MarketConfig, current_price: float, htf_trend: 
         reason=(f"Breakout: {direction.value} break of {cfg.n}-bar channel @ {level:.1f} "
                 f"(stop {stop_distance:.1f}={cfg.stop_atr_mult}xATR, HTF={htf_trend})"),
         atr=round(atr, 2),
+        break_level=round(level, 2),
+    )
+
+
+def current_channel(df, epic: str) -> tuple[float, float] | None:
+    """(upper, lower) of the last N CLOSED bars — the channel the NEXT bar can break.
+
+    This is the ARMING counterpart to analyze_breakout, which is the CONFIRMING one,
+    and the two deliberately slice the frame one bar apart:
+
+        analyze_breakout, run at the close of bar T, asks "did bar T break the channel
+        formed by the N bars BEFORE it?" -> df.iloc[-(n+1):-1]
+        current_channel, run at the same close, asks "what must bar T+1 exceed?"
+        -> df.iloc[-n:], which INCLUDES bar T
+
+    Getting that off by one bar silently arms yesterday's level, so it is spelled out
+    rather than inferred. Both callers must pass the SAME frame — for sub-1h markets
+    that means main._breakout_frame_1h output, not the native stream frame (the
+    frame-relative trap that misframed the Donchian trail in 0057aa9).
+
+    Returns None when the epic has no breakout config or the frame is too short.
+    """
+    cfg = BREAKOUT_CONFIGS.get(epic)
+    if cfg is None or df is None or len(df) < cfg.n:
+        return None
+    window = df.iloc[-cfg.n:]
+    upper = float(window["high"].max())
+    lower = float(window["low"].min())
+    if not (upper > lower > 0):
+        return None
+    return upper, lower
+
+
+@dataclass
+class ArmedChannel:
+    """Everything the tick-entry path needs to act on a break WITHOUT re-reading the
+    frame. Computed once per closed bar; consumed by main._check_breakout_tick_trigger
+    on the stream thread, which must never touch pandas."""
+    upper: float
+    lower: float
+    stop_distance: float
+    atr: float
+    htf_trend: str
+    htf_filter: bool
+    bar_time: str
+
+
+def arm_channel(df, market: MarketConfig, htf_trend: str) -> ArmedChannel | None:
+    """Snapshot the channel + stop for tick-triggered entry on the NEXT bar.
+
+    Deliberately mirrors analyze_breakout's arithmetic — same ATR period, same
+    k*ATR-vs-min_stop clamp, same htf_filter flag — so a tick entry and a close
+    entry differ ONLY in WHEN they fire, never in what they risk. If the two ever
+    drift apart, the slip measurement they exist to produce becomes meaningless.
+
+    Returns None when the epic has no config, the frame is short, or ATR is unusable.
+    """
+    cfg = BREAKOUT_CONFIGS.get(market.epic)
+    if cfg is None:
+        return None
+    ch = current_channel(df, market.epic)
+    if ch is None:
+        return None
+    atr_series = calculate_atr(df["high"], df["low"], df["close"], 14)
+    atr = float(atr_series.iloc[-1])
+    if pd.isna(atr) or atr <= 0:
+        return None
+    # Identity of the bar that produced this channel. Used as the arming latch key,
+    # so it must change exactly once per closed bar and never within one.
+    if "date" in getattr(df, "columns", []):
+        bar_time = str(df["date"].iloc[-1])
+    else:
+        bar_time = str(df.index[-1])
+    return ArmedChannel(
+        upper=ch[0], lower=ch[1],
+        stop_distance=round(max(atr * cfg.stop_atr_mult, market.min_stop_distance), 2),
+        atr=round(atr, 2), htf_trend=htf_trend, htf_filter=cfg.htf_filter,
+        bar_time=bar_time,
     )
 
 

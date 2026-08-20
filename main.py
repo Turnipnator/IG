@@ -47,7 +47,7 @@ from config import (
     get_strategy_for_market,
 )
 from src.client import IGClient, Position
-from src.strategy import TradingStrategy, Signal, should_close_position
+from src.strategy import TradingStrategy, Signal, TradeSignal, should_close_position
 from src import breakout
 from src.risk_manager import RiskManager
 from src.telegram_bot import TelegramBot, _session_date
@@ -259,6 +259,46 @@ recent_group_entries: dict[str, tuple[datetime, str]] = {}  # epic -> (entry_tim
 # order path: an IG round trip is seconds, and serialising every market behind it would
 # change entry timing book-wide to fix a ~1-per-3-weeks race.
 _cluster_lock = threading.Lock()
+
+# --- Tick-triggered breakout entry (2026-08-20) --------------------------------------
+# The breakout path enters at CANDLE CLOSE: analyze_breakout confirms the break at the
+# close of bar T, then sends a MARKET order at whatever price has arrived by then. On a
+# 1h frame that is up to an hour after price first crossed the channel. The measured gap
+# between the channel level and the price actually paid is +0.143R/trade against a pooled
+# gross edge of +0.191R (t=+3.85, n=676) — ~73% of the edge is spent getting in late, and
+# it is the single reason the net residual (+0.048R) is unmeasurable.
+#
+# The channel is fully known at the close of bar T-1, so the crossing can be caught on
+# the STREAM instead of at the next close. Arm (upper, lower) once per closed bar, then
+# compare each tick. NO working order is placed at IG — this stays a market order sent
+# from our own process, so there is nothing to orphan on the broker's book if the
+# container restarts. The trade POPULATION is unchanged: analyze_breakout already fires
+# on `high >= upper` (an intrabar touch), not on a close beyond the channel, so the same
+# breaks are taken — only the fill improves. If trade count rises materially, the premise
+# is wrong and this must be switched back off.
+#
+# MODE (env BREAKOUT_TICK_ENTRY):
+#   off  — disabled entirely.
+#   log  — DEFAULT. Detect the crossing and journal what a tick entry WOULD have filled
+#          at; the close-based path still does all the trading. Places no orders, so it
+#          carries no money risk, and it runs on SHADOW markets too — which is where the
+#          sample is (36 shadow signals in 10 days vs a handful live). Phase 1 validates
+#          the MECHANISM (fires exactly once per bar, at the right level), not the
+#          hypothesis; the +0.143R is already measured.
+#   live  — the tick trigger places the order. The close-based path then self-suppresses
+#          for that bar via the existing one-position-per-epic guard in
+#          _execute_breakout_entry; if the tick order FAILS, the close path still runs
+#          as the fallback it always was.
+BREAKOUT_TICK_ENTRY = os.getenv("BREAKOUT_TICK_ENTRY", "log").strip().lower()
+
+# epic -> dict(channel: breakout.ArmedChannel, live: bool, consumed: bool, armed_at)
+# `consumed` is the LATCH. on_price_update fires on EVERY tick, so without it a crossing
+# would re-fire hundreds of times a second — the "can it fire in a loop?" money risk.
+# It is claimed under _breakout_tick_lock and released ONLY by arming a new bar.
+_breakout_armed: dict[str, dict] = {}
+# Guards claim-the-latch and re-arm. Held for a dict read plus one flag write, never
+# across I/O — same discipline as _cluster_lock above.
+_breakout_tick_lock = threading.Lock()
 
 # MTF pullback-entry state (StrategyConfig.pullback_entry_atr_frac/window). When a
 # signal arms a pullback, we hold it here until price retraces frac×ATR toward the
@@ -697,6 +737,12 @@ def on_price_update(epic: str, market: MarketStream) -> None:
     Zero API cost for checking — only calls update_position_stop() when
     a threshold is actually crossed (throttled by 20% minimum move).
     """
+    # Breakout ENTRY on the tick that crosses the armed channel, rather than at the
+    # next candle close. Must run BEFORE the early return below: the entry case is
+    # precisely when there is no open position, so gating it on known_positions would
+    # make it dead code.
+    _check_breakout_tick_trigger(epic, market)
+
     if not known_positions:
         return
 
@@ -1055,6 +1101,120 @@ def _update_breakout_trail(position, df) -> None:
         logger.info(f"📉 Breakout trail [{position.epic}]: stop {cur:.1f} -> {new_stop:.1f} (Donchian exit channel)")
 
 
+def _arm_breakout_levels(epic: str, market_config, df, htf_trend: str, live: bool) -> None:
+    """Arm the Donchian channel for tick-triggered entry on the NEXT bar.
+
+    Called from analyze_forex_breakout with the SAME frame analyze_breakout is about to
+    use — for sub-1h markets that is the _breakout_frame_1h output, not the native 5m
+    stream. Handing this the wrong frame silently arms a channel of the wrong length,
+    which is the trap that misframed the Donchian trail in 0057aa9.
+    """
+    if BREAKOUT_TICK_ENTRY == "off":
+        return
+    try:
+        ch = breakout.arm_channel(df, market_config, htf_trend)
+        if ch is None:
+            return
+        with _breakout_tick_lock:
+            prev = _breakout_armed.get(epic)
+            # Re-evaluating the SAME closed bar (the 30-min re-screen, a debounced
+            # candle callback, a restart replay) must NOT clear a consumed latch —
+            # that would re-open the very tick loop the latch exists to prevent.
+            if prev is not None and prev["channel"].bar_time == ch.bar_time:
+                prev["live"] = live
+                return
+            _breakout_armed[epic] = {
+                "channel": ch, "live": live, "consumed": False,
+                "armed_at": datetime.now(),
+            }
+        logger.debug(
+            f"[TICK-ARM] {market_config.name}: {ch.lower:.1f}-{ch.upper:.1f} "
+            f"stop={ch.stop_distance} htf={ch.htf_trend} bar={ch.bar_time} live={live}"
+        )
+    except Exception as e:   # arming must never break the analysis path
+        logger.debug(f"Breakout arm failed for {epic}: {e}")
+
+
+def _check_breakout_tick_trigger(epic: str, market: MarketStream) -> None:
+    """Fire (or, in log mode, record) a breakout entry the moment a tick crosses the
+    armed channel — instead of waiting for the candle to close.
+
+    Runs on the STREAMING thread on every tick, so it does no pandas work and returns
+    on a dict lookup in the overwhelmingly common case. Comparison is on MID price to
+    match analyze_breakout, whose channel is built from mid-price candles; the
+    executable price (offer for a buy, bid for a sell) is recorded alongside so the
+    realised slip can be measured against the level.
+    """
+    if BREAKOUT_TICK_ENTRY == "off":
+        return
+    armed = _breakout_armed.get(epic)
+    if armed is None or armed["consumed"]:
+        return
+    ch = armed["channel"]
+    mid = market.mid_price
+    if not mid:
+        return
+    if mid >= ch.upper:
+        direction, level, exec_price = "BUY", ch.upper, (market.offer or mid)
+        if ch.htf_filter and ch.htf_trend != "BULLISH":
+            return          # blocked, NOT consumed — HTF cannot change within a bar
+    elif mid <= ch.lower:
+        direction, level, exec_price = "SELL", ch.lower, (market.bid or mid)
+        if ch.htf_filter and ch.htf_trend != "BEARISH":
+            return
+    else:
+        return
+
+    # --- claim the latch. Exactly one tick may pass this point per armed bar. ---
+    with _breakout_tick_lock:
+        cur = _breakout_armed.get(epic)
+        if cur is None or cur is not armed or cur["consumed"]:
+            return
+        cur["consumed"] = True
+
+    market_config = next((m for m in MARKETS if m.epic == epic), None)
+    if market_config is None:
+        return
+    slip = (exec_price - level) if direction == "BUY" else (level - exec_price)
+    slip_r = (slip / ch.stop_distance) if ch.stop_distance else 0.0
+    tag = "LIVE" if (armed["live"] and BREAKOUT_TICK_ENTRY == "live") else "log"
+    logger.info(
+        f"⚡ Breakout TICK-CROSS [{market_config.name}] {direction} @ {exec_price:.1f} "
+        f"(level {level:.1f}, slip {slip:+.1f}pt = {slip_r:+.3f}R, stop {ch.stop_distance}) "
+        f"[{tag}]"
+    )
+    try:
+        if journal:
+            # No schema change: discriminated by reason prefix, matching the existing
+            # Breakout-blocked: / Breakout-shadow: / Breakout-sizing: convention.
+            journal.log_rejected_signal(
+                epic=epic, market_name=market_config.name, direction=direction,
+                confidence=0.7, adx=ch.atr, rsi=0.0,
+                reject_reason=(f"Breakout-tick[{tag}]: level={level:.1f} exec={exec_price:.1f} "
+                               f"slip={slip:+.1f} slipR={slip_r:+.3f} stop={ch.stop_distance} "
+                               f"bar={ch.bar_time}"),
+            )
+    except Exception as e:
+        logger.debug(f"Tick-cross journalling failed for {epic}: {e}")
+
+    if tag != "LIVE":
+        return
+    # --- live: build the signal analyze_breakout would have built and reuse the ---
+    # --- EXISTING order path unchanged, so every gate still applies.            ---
+    sig = TradeSignal(
+        signal=Signal.BUY if direction == "BUY" else Signal.SELL,
+        epic=epic, market_name=market_config.name, confidence=0.7,
+        entry_price=exec_price, stop_distance=ch.stop_distance, limit_distance=0.0,
+        reason=(f"Breakout: {direction} tick-cross of channel @ {level:.1f} "
+                f"(stop {ch.stop_distance}={breakout.BREAKOUT_CONFIGS[epic].stop_atr_mult}xATR, "
+                f"HTF={ch.htf_trend})"),
+        atr=ch.atr, break_level=round(level, 2),
+    )
+    # df is unused by _execute_breakout_entry (it gates on market info + risk, not the
+    # frame), and the stream thread has no 1h frame to hand it.
+    _execute_breakout_entry(epic, market, market_config, sig, None)
+
+
 def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mode: str) -> None:
     """Forex breakout entry path. 'shadow' = observe-only (log + journal, no order);
     'breakout' = LIVE (places the order via _execute_breakout_entry). Momentum
@@ -1076,6 +1236,11 @@ def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mo
                 return
         current_price = market.mid_price
         htf_trend = htf_trends.get(epic, "NEUTRAL")
+        # Arm the NEXT bar's channel for tick-triggered entry. Deliberately before the
+        # HOLD return below: the whole point is to be armed on bars where nothing has
+        # broken YET, and `df` here is already the frame analyze_breakout will use.
+        _arm_breakout_levels(epic, market_config, df, htf_trend,
+                             live=(fx_mode == "breakout"))
         # Resolve open shadow episodes on every pass, including when this market is
         # now trading breakout LIVE — rows snapshotted before a /mode flip still
         # deserve their verdict.
