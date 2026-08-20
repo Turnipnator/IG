@@ -2674,10 +2674,34 @@ def _resolve_breakout_shadow(epic: str, hourly_df) -> None:
 
         MAX_BARS = 240  # ~10 trading days: breakout winners must be free to run
 
+        # Frame-ownership guard. The rows and the frame arrive from two independent
+        # sources (a DB query and the caller's resampled candles) and NOTHING else
+        # checks they describe the same instrument. On 2026-08-20 they did not: NASDAQ
+        # episode #134 (entry 29837.3) was resolved against GOLD's frame and stamped
+        # exit_price=4406.77 — a real Gold high from 2026-08-18T14:40 — for +211.39R,
+        # which single-handedly flipped the pooled breakout-shadow readout from -15.27R
+        # to +196.12R. The suspected cause is that journal.db is ONE sqlite3 connection
+        # opened check_same_thread=False and shared by a thread-per-market with no
+        # serialisation, so one thread can be handed another's result set. That is a
+        # separate fix in the ledger write path; this guard is cheap, independent of
+        # the cause, and turns a silent 200R corruption into a loud skip.
+        ref_close = float(hourly_df["close"].iloc[-1]) if len(hourly_df) else 0.0
+
         for r in rows:
             entry = r["entry_price"]
             risk = r["stop_distance"]
             if not risk or risk <= 0 or entry is None:
+                continue
+            # These instruments cannot move 50% within MAX_BARS (~10 trading days), so
+            # this only ever fires on cross-instrument contamination, never on a real
+            # runner. Leave the row OPEN — it resolves correctly on a later clean pass.
+            if ref_close > 0 and abs(ref_close - float(entry)) / float(entry) > 0.5:
+                logger.warning(
+                    f"[{r['market_name']}] breakout-shadow row #{r['id']} SKIPPED: frame "
+                    f"does not belong to this episode (frame close {ref_close:.1f} vs "
+                    f"entry {float(entry):.1f}). Resolver was handed another market's "
+                    f"candles — row left OPEN."
+                )
                 continue
             is_buy = r["direction"] == "BUY"
             b_at = pd.to_datetime(r["benched_at"])
