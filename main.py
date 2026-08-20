@@ -1384,6 +1384,16 @@ def _observe_breakout_shadow(epic: str, market: MarketStream, market_config) -> 
         df = _breakout_frame_1h(epic, market.to_dataframe())
         if df is None or len(df) < 60:
             return
+        # Arm the tick-entry channel here TOO, not just on the /mode breakout path.
+        # These are the 8 indices + AI Index — the bulk of the shadow sample (36
+        # signals in 10 days across 12 markets vs a handful on the live path), so
+        # without this Phase 1 would measure the slip on ~5 markets instead of 13.
+        # live=False unconditionally: this observer is observe-only by definition,
+        # so even BREAKOUT_TICK_ENTRY=live can never place an order from here.
+        # The hourly cap is correct rather than merely tolerable — the 1h Donchian
+        # channel cannot change within an hour.
+        _arm_breakout_levels(epic, market_config, df, htf_trends.get(epic, "NEUTRAL"),
+                             live=False)
         # Resolve first, and unconditionally: an episode opened days ago must close
         # out on the trail even on an hour that produces no new signal.
         _resolve_breakout_shadow(epic, df)
