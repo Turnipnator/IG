@@ -1,0 +1,105 @@
+name: CI
+
+# The gate rebuild-watcher.sh consults before it will deploy a commit to the
+# live bot. Until this existed, the watcher hard-reset to origin/main and
+# rebuilt unconditionally: a push that broke an import produced a
+# crash-looping container under `restart: unless-stopped` AND a Telegram
+# message saying "Rebuild complete". Same failure shape as the 2026-07
+# polling-mode degradation — the alarm reported success while the thing was
+# degraded.
+#
+# The job below is named `verify` and rebuild-watcher.sh matches that name
+# EXACTLY. Renaming this job without changing the watcher makes the gate
+# fail closed on every deploy (it will never find a job called `verify`).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # 3.12 to match the Dockerfile's python:3.12-slim, NOT the 3.14 in the
+      # local venvs. A CI leg on a different Python minor is testing a
+      # runtime that never reaches the VPS.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install --no-cache-dir -r requirements.lock.txt
+
+      # Catches a syntax error anywhere in the tree, including the scripts/
+      # backtest corpus that nothing else ever imports.
+      - name: Compile every tracked Python file
+        run: git ls-files '*.py' | xargs -n1 python -m py_compile
+
+      # The real gate. Every module must import with NO credentials present —
+      # config.py falls back to defaults, so this runs clean on a bare runner.
+      # This is what catches the broken-import class that would otherwise
+      # crash-loop the container on the VPS.
+      - name: Import every module without credentials
+        run: |
+          python - <<'PY'
+          import importlib, pathlib, sys
+          mods = ["config", "main"] + sorted(
+              "src." + p.stem for p in pathlib.Path("src").glob("*.py") if p.stem != "__init__"
+          )
+          failed = []
+          for m in mods:
+              try:
+                  importlib.import_module(m)
+              except Exception as e:
+                  failed.append(f"{m}: {type(e).__name__}: {e}")
+          print(f"imported {len(mods) - len(failed)}/{len(mods)} modules")
+          for f in failed:
+              print(f"  FAIL {f}", file=sys.stderr)
+          sys.exit(1 if failed else 0)
+          PY
+
+      # Guards the split between requirements.txt (human-edited intent) and
+      # requirements.lock.txt (machine-resolved consequence): adding a direct
+      # dependency to the former and forgetting to re-freeze would otherwise
+      # only surface as an ImportError inside the container on the VPS, after
+      # `docker compose down` had already stopped the bot.
+      - name: Every declared dependency appears in the lock
+        run: |
+          python - <<'PY'
+          import re, sys
+          def names(path, pat):
+              out = set()
+              for line in open(path):
+                  line = line.split("#")[0].strip()
+                  if not line:
+                      continue
+                  m = re.match(pat, line)
+                  if m:
+                      out.add(m.group(1).lower().replace("_", "-"))
+              return out
+          declared = names("requirements.txt", r"^([A-Za-z0-9._-]+)")
+          locked = names("requirements.lock.txt", r"^([A-Za-z0-9._-]+)==")
+          missing = sorted(declared - locked)
+          if missing:
+              print(f"declared in requirements.txt but absent from the lock: {missing}", file=sys.stderr)
+              print("re-freeze from a container built off this change.", file=sys.stderr)
+              sys.exit(1)
+          print(f"{len(declared)} declared deps all present among {len(locked)} pins")
+          PY
+
+      # Proves the lock actually installs and the image still builds. This is
+      # the leg that catches a yanked or unbuildable release BEFORE the
+      # watcher stops the running bot to rebuild it.
+      - name: Docker build
+        run: docker build -t ig-bot:ci .

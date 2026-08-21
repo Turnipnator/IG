@@ -1,0 +1,74 @@
+# Fully-pinned dependency set — the ONLY thing the Docker image installs.
+#
+# WHY THIS EXISTS
+# ---------------
+# requirements.txt uses >= ranges and the deploy path rebuilds with
+# `docker compose build --no-cache`, so every rebuild re-resolved every
+# package to whatever was newest on PyPI that day. That is not theoretical:
+# by 2026-08-21 production had silently crossed FOUR major versions against
+# the ranges in requirements.txt — pandas 2->3, lightstreamer 1->2,
+# python-telegram-bot 20->22, yfinance 0->1.
+#
+# That matters more here than in most projects. The edge is .ewm() /
+# .resample() / .rolling() / .shift() arithmetic, so a pandas minor bump
+# changes signal numbers with no exception, no log line, and no crash — it
+# presents exactly like the htf_series look-ahead bug did: backtest and live
+# disagree and the strategy gets blamed.
+#
+# HOW IT WAS BUILT
+# ----------------
+# Captured from `pip freeze` inside the RUNNING ig-trading-bot container on
+# 2026-08-21 (up 26h, healthy, Python 3.12.14). It pins the known-good
+# production state as it actually ran — deliberately NOT today's PyPI latest
+# and NOT either local venv (venv has pandas 2.3.3, .venv-bt has 3.0.3, both
+# on Python 3.14). This file is a freeze, not an upgrade.
+#
+# HOW TO CHANGE IT
+# ----------------
+# Never hand-edit a version to "just try" a bump. Either let Dependabot open
+# the PR (CI must pass before rebuild-watcher.sh will deploy it), or bump
+# requirements.txt and re-freeze from a container built off that change.
+#
+# requirements.txt remains the human-edited statement of intent — direct
+# dependencies and why. This file is the machine-resolved consequence.
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.3
+aiosignal==1.4.0
+anyio==4.14.2
+attrs==26.1.0
+beautifulsoup4==4.15.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+curl_cffi==0.16.0
+frozenlist==1.8.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.19
+jsonpatch==1.33
+jsonpointer==3.1.1
+lightstreamer-client-lib==2.2.3
+lxml==6.1.2
+multidict==6.7.1
+multitasking==0.0.13
+numpy==2.5.2
+pandas==3.0.5
+peewee==4.3.0
+platformdirs==4.11.3
+propcache==0.5.2
+protobuf==7.35.1
+pycparser==3.0
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+python-telegram-bot==22.8
+pytz==2026.3.post1
+requests==2.34.2
+schedule==1.2.2
+six==1.17.0
+soupsieve==2.9.2
+typing_extensions==4.16.0
+urllib3==2.7.0
+websockets==17.0.1
+yarl==1.24.5
+yfinance==1.6.0

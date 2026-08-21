@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # Pinning without a bump path is just rot with extra steps. These PRs are
+  # how requirements.lock.txt stays current — and because ci.yml runs on
+  # pull_request, a bump that breaks an import or the Docker build is caught
+  # here rather than by rebuild-watcher.sh after it has stopped the bot.
+  #
+  # NB: Dependabot edits the lock's `==` pins directly. requirements.txt (the
+  # >= ranges) stays hand-edited; the CI consistency step keeps the two from
+  # silently diverging.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  # Actions are pinned to commit SHAs in ci.yml specifically so a compromised
+  # tag can't silently change what runs on a repo that gates production
+  # deploys. This is what keeps those pins current without hand-tracking
+  # upstream releases.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
