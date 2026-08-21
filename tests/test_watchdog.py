@@ -60,12 +60,19 @@ class WatchdogTestCase(unittest.TestCase):
         # `docker inspect -f <fmt> <name>` — note the format string is $3, not
         # $2, because `inspect` is itself an argument. Match on "$*" so the
         # stub cannot be broken by argument order again.
+        # STRICT: only the format strings docker actually understands are
+        # answered; anything else exits non-zero with no output. A permissive
+        # stub is worse than none — the first version matched
+        # *State.RestartCount*, which is a docker TEMPLATE ERROR rather than a
+        # real field, so it happily confirmed a probe that was dead in
+        # production. The stub must not be more forgiving than the real tool.
         self._stub("docker", f"""
             case "$*" in
-              *State.Running*)      [ -n "{running}" ] && echo "{running}" ;;
-              *State.StartedAt*)    echo "{started}" ;;
-              *State.Health.Status*) echo "{health}" ;;
-              *State.RestartCount*) echo "{restarts}" ;;
+              *"{{{{.State.Running}}}}"*)       [ -n "{running}" ] && echo "{running}" ;;
+              *"{{{{.State.StartedAt}}}}"*)     echo "{started}" ;;
+              *"{{{{.State.Health.Status}}}}"*) echo "{health}" ;;
+              *"{{{{.RestartCount}}}}"*)        echo "{restarts}" ;;
+              *) echo "template parsing error" >&2; exit 1 ;;
             esac
             exit 0
         """)
@@ -101,6 +108,34 @@ class TestStaysQuietWhenHealthy(WatchdogTestCase):
         no gap over 20 min. A 19-minute-old log must NOT alert."""
         os.utime(self.log, (time.time() - 19 * 60, time.time() - 19 * 60))
         self.assertEqual(self.run_watchdog(), [])
+
+
+class TestProbeContract(WatchdogTestCase):
+    """The probes must ask docker for fields docker actually has.
+
+    A wrong format string is a template parsing ERROR, not an empty result, and
+    the script's `[ -n "$restarts" ]` guard turns that into silence rather than
+    a failure. Live verification caught it; these keep it caught.
+    """
+
+    def test_healthy_run_records_the_restart_count(self):
+        """If the field name is wrong, `restarts` is empty and this line is
+        never written — which is exactly how crash-loop detection died."""
+        self.run_watchdog(restarts="3")
+        self.assertIn("_restarts=3", self.state.read_text(),
+                      "state file has no _restarts line — the RestartCount probe returned nothing")
+
+    def test_script_queries_top_level_RestartCount(self):
+        """Comment lines are stripped first. The script documents the bad field
+        name in prose to explain why it is wrong, and a naive substring search
+        over the raw text reports a violation that exists only in a comment —
+        found by exactly that false positive."""
+        code = "\n".join(ln for ln in SCRIPT.read_text().splitlines()
+                         if not ln.lstrip().startswith("#"))
+        self.assertIn("{{.RestartCount}}", code)
+        self.assertNotIn("{{.State.RestartCount}}", code,
+                         "RestartCount is top-level in docker inspect; .State.RestartCount "
+                         "is a template error and silently disables crash-loop detection")
 
 
 class TestDeployGrace(WatchdogTestCase):

@@ -102,7 +102,11 @@ problem() { KEYS+=("$1"); MSGS+=("$2"); }
 running=$(inspect '{{.State.Running}}')
 started=$(inspect '{{.State.StartedAt}}')
 health=$(inspect '{{.State.Health.Status}}')
-restarts=$(inspect '{{.State.RestartCount}}')
+# RestartCount lives at the TOP LEVEL of docker inspect, not under .State —
+# `{{.State.RestartCount}}` is a template parsing error, not an empty string,
+# so this probe was silently dead until a live run exposed it. The test stub
+# had encoded the same wrong assumption, which is why the suite was green.
+restarts=$(inspect '{{.RestartCount}}')
 
 # A container that started moments ago is mid-deploy or mid-restart: its health
 # is legitimately "starting" and its log legitimately thin. Suppress only the
