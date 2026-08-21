@@ -19,8 +19,16 @@ import unittest
 REPO = pathlib.Path(__file__).resolve().parent.parent
 WATCHER = REPO / "rebuild-watcher.sh"
 
+# These drive the real function against real `git remote` state, so they need a
+# git binary. The bot image deliberately has none — it runs the bot, it does not
+# build it — and the suite is shipped in that image so the golden tests can be
+# run against the container. Skip rather than error there; CI and any dev
+# machine have git and run them for real.
+HAVE_GIT = shutil.which("git") is not None
+
 
 @unittest.skipUnless(WATCHER.exists(), "rebuild-watcher.sh not present")
+@unittest.skipUnless(HAVE_GIT, "git not installed (bot image) — parser tests need real remotes")
 class TestDeriveGithubRepo(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
