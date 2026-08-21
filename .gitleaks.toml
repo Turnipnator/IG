@@ -1,0 +1,8 @@
+# A custom gitleaks config REPLACES the default ruleset unless it explicitly
+# extends it. Without the [extend] block below, gitleaks would load this file,
+# find no rules, and report "no leaks found" on every scan forever — a guard
+# that fails OPEN and looks identical to a clean repo.
+title = "IG trading bot gitleaks config"
+
+[extend]
+useDefault = true

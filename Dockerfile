@@ -14,8 +14,10 @@ RUN pip install --no-cache-dir -r requirements.lock.txt
 # Copy application code
 COPY . .
 
-# Create logs directory
-RUN mkdir -p logs
+# Create the volume mount points. Both are bind-mounted at runtime and are now
+# excluded from the build context, so create them explicitly rather than relying
+# on COPY having brought them in.
+RUN mkdir -p logs data
 
 # Run the bot
 CMD ["python", "main.py"]

@@ -1,0 +1,52 @@
+# Build context exclusions.
+#
+# Without this file, `COPY . .` baked the live IG and Telegram credentials
+# into an image layer (/app/.env, 440 bytes), plus a build-time snapshot of
+# the trade journal and candle archive (15M) and the log directory (9.1M).
+# The data/ and logs/ volume mounts shadow those at runtime, which is exactly
+# why nobody noticed: everything worked, and the credentials survived in a
+# layer regardless of anything done to .env afterwards.
+#
+# WHAT MUST NOT BE ADDED HERE
+# ---------------------------
+# scripts/ — a weekly VPS cron runs it FROM INSIDE the container:
+#   0 9 * * 1 docker exec ig-trading-bot python3 /app/scripts/tick_entry_readout.py
+# Excluding it would break that readout silently, into /root/tick-readout.log.
+#
+# tests/ is deliberately KEPT (164KB) so the golden suite can be run against
+# the container itself:
+#   docker exec ig-trading-bot python3 -m unittest discover -s tests -t .
+# which is the most direct proof that live computes the validated numbers.
+
+# Credentials
+.env
+.env.*
+
+# Runtime state — both are bind-mounted volumes; the image copy is dead weight
+# that is shadowed the moment the container starts.
+data/
+logs/
+
+# Virtual environments (~310MB of build context)
+venv/
+.venv/
+.venv-bt/
+*.old
+
+# VCS and tooling
+.git/
+.github/
+.claude/
+.gitignore
+.dockerignore
+
+# Python artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Local-only
+CLAUDE.local.md
+backtest_results/
+.DS_Store
