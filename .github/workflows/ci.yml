@@ -69,6 +69,20 @@ jobs:
           sys.exit(1 if failed else 0)
           PY
 
+      # The test suite. Three layers, deliberately: property tests assert what
+      # MUST hold (the Donchian window bounds, the trail's tighten-only rule),
+      # golden files catch any silent numeric drift against real archive
+      # candles, and the config-coherence tests catch the string references
+      # nothing type-checks. Every one of them was verified to FAIL against a
+      # deliberately mutated source before being committed — a test that has
+      # never been seen to fail is not evidence of anything.
+      #
+      # stdlib unittest, no pytest: requirements.lock.txt is defined as exactly
+      # what the container installs and a step below asserts that. Adding a
+      # test-only dependency to it would break that invariant.
+      - name: Tests
+        run: python -m unittest discover -s tests -t . -v
+
       # Guards the split between requirements.txt (human-edited intent) and
       # requirements.lock.txt (machine-resolved consequence): adding a direct
       # dependency to the former and forgetting to re-freeze would otherwise

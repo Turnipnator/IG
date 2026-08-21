@@ -1,0 +1,43 @@
+{
+  "epic": "CS.D.GBPUSD.TODAY.IP",
+  "m": 27,
+  "n": 55,
+  "samples": {
+    "200": {
+      "armed_atr": 22.62,
+      "armed_bar_time": "2026-06-18 12:00:00",
+      "armed_stop_distance": 45.23,
+      "channel_lower": 13205.15,
+      "channel_upper": 13442.75,
+      "exit_buy": 13224.75,
+      "exit_sell": 13421.55
+    },
+    "400": {
+      "armed_atr": 10.65,
+      "armed_bar_time": "2026-06-30 11:00:00",
+      "armed_stop_distance": 21.3,
+      "channel_lower": 13191.25,
+      "channel_upper": 13262.85,
+      "exit_buy": 13203.15,
+      "exit_sell": 13262.85
+    },
+    "60": {
+      "armed_atr": 17.97,
+      "armed_bar_time": "2026-06-10 18:00:00",
+      "armed_stop_distance": 35.94,
+      "channel_lower": 13331.15,
+      "channel_upper": 13417.55,
+      "exit_buy": 13358.35,
+      "exit_sell": 13417.55
+    },
+    "95": {
+      "armed_atr": 14.76,
+      "armed_bar_time": "2026-06-12 05:00:00",
+      "armed_stop_distance": 29.53,
+      "channel_lower": 13324.45,
+      "channel_upper": 13433.65,
+      "exit_buy": 13324.45,
+      "exit_sell": 13433.65
+    }
+  }
+}
