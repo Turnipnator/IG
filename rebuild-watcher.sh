@@ -41,21 +41,59 @@
 # it stopped indefinitely. Building first means a failed build costs nothing:
 # the old container is still up on the old image.
 
-BOT_DIR="/root/ig-bot"
+# PORTABILITY
+# -----------
+# Nothing here is hardcoded to one host or one fork, because this script is a
+# TRACKED file: `git reset --hard` below would wipe any local edit to it on
+# every single deploy. Anyone editing constants in this file to suit their
+# machine would silently lose that edit the first time they deployed. So the
+# two host-specific values are DERIVED, and everything else takes an env
+# override (settable via systemd `Environment=` without touching the repo).
+
+# The bot directory is simply wherever this script lives — it ships inside the
+# repo it deploys, so its own location is the answer.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOT_DIR="${IG_BOT_DIR:-$SCRIPT_DIR}"
+
 TRIGGER_FILE="$BOT_DIR/data/rebuild_trigger"
 FORCE_TRIGGER_FILE="$BOT_DIR/data/rebuild_trigger_force"
-UPSTREAM_REMOTE="origin"
-UPSTREAM_BRANCH="main"
+UPSTREAM_REMOTE="${IG_UPSTREAM_REMOTE:-origin}"
+UPSTREAM_BRANCH="${IG_UPSTREAM_BRANCH:-main}"
 
 # CI gate configuration.
-# GITHUB_REPO is public, so the check-runs API needs no token (60 req/hr per
-# IP, unauthenticated). CI_JOB_NAME must match the `name:` of the job in
-# .github/workflows/ci.yml EXACTLY — rename one without the other and the gate
-# fails closed on every deploy.
-GITHUB_REPO="Turnipnator/IG"
-CI_JOB_NAME="verify"
-CI_WAIT_SECONDS=600     # how long to wait for an in-progress run to finish
-CI_POLL_SECONDS=30      # ~20 API calls worst case, well inside the 60/hr budget
+# The repo is read from the git remote rather than hardcoded, so a fork gates
+# against ITS OWN CI. Hardcoding one owner would make a fork query the upstream
+# repo for a SHA that only exists in the fork — a 404 on every deploy, i.e. a
+# permanently blocked deploy path, with a confusing "was it pushed?" message.
+#
+# Public repos need no token for check-runs (60 req/hr per IP, unauthenticated).
+# CI_JOB_NAME must match the `name:` of the job in .github/workflows/ci.yml
+# EXACTLY — rename one without the other and the gate fails closed on every
+# deploy. tests/test_packaging_hygiene.py asserts the two agree.
+derive_github_repo() {
+    local url
+    url=$(git -C "$BOT_DIR" remote get-url "$UPSTREAM_REMOTE" 2>/dev/null) || return 1
+    case "$url" in
+        git@github.com:*)          url="${url#git@github.com:}" ;;
+        ssh://git@github.com/*)    url="${url#ssh://git@github.com/}" ;;
+        https://github.com/*)      url="${url#https://github.com/}" ;;
+        http://github.com/*)       url="${url#http://github.com/}" ;;
+        *) return 1 ;;   # not GitHub — the check-runs API cannot answer for it
+    esac
+    url="${url%.git}"
+    url="${url%/}"
+    # Must look like owner/repo and nothing more.
+    case "$url" in
+        */*/*|*/) return 1 ;;
+        */*) printf '%s' "$url" ;;
+        *) return 1 ;;
+    esac
+}
+
+GITHUB_REPO="${IG_GITHUB_REPO:-$(derive_github_repo)}"
+CI_JOB_NAME="${IG_CI_JOB_NAME:-verify}"
+CI_WAIT_SECONDS="${IG_CI_WAIT_SECONDS:-600}"   # wait for an in-progress run
+CI_POLL_SECONDS="${IG_CI_POLL_SECONDS:-30}"    # ~20 API calls worst case, inside 60/hr
 
 # Best-effort Telegram notification from the host. Sources the bot's own
 # .env so we reuse its token/chat id. Never fails the script.
@@ -188,6 +226,14 @@ while true; do
         fi
 
         # 3. CI gate.
+        if [ "$FORCED" -eq 0 ] && [ -z "$GITHUB_REPO" ]; then
+            # Fail closed rather than deploy ungated. Happens when the remote is
+            # not GitHub, or is missing entirely.
+            echo "[rebuild-watcher] cannot determine GitHub repo from remote '$UPSTREAM_REMOTE' — aborting"
+            notify "⛔ *Rebuild BLOCKED*: cannot determine the GitHub repo from remote \`$UPSTREAM_REMOTE\`.
+Set \`IG_GITHUB_REPO=owner/repo\`, or force with \`touch data/rebuild_trigger_force\`."
+            continue
+        fi
         if [ "$FORCED" -eq 1 ]; then
             echo "[rebuild-watcher] CI gate BYPASSED (force trigger) for ${TARGET_SHA:0:7}"
             notify "⚠️ *Force rebuild* — CI gate BYPASSED for \`${TARGET_SHA:0:7}\`. Deploying unverified code."

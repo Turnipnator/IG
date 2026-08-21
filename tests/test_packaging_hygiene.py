@@ -92,10 +92,14 @@ class TestDeployGateWiring(unittest.TestCase):
                       f"ci.yml no longer declares a job named {self.JOB!r}")
 
     def test_rebuild_watcher_looks_for_that_job(self):
+        """Matches the DEFAULT in the env-override form. The value is
+        overridable per host precisely so nobody edits this tracked file — a
+        local edit here is wiped by the `git reset --hard` the script itself
+        performs on the next deploy."""
         watcher = (REPO / "rebuild-watcher.sh").read_text()
-        self.assertIn(f'CI_JOB_NAME="{self.JOB}"', watcher,
-                      f"rebuild-watcher.sh CI_JOB_NAME is not {self.JOB!r} — the gate will "
-                      f"never match and every deploy will be refused")
+        self.assertIn(f'CI_JOB_NAME="${{IG_CI_JOB_NAME:-{self.JOB}}}"', watcher,
+                      f"rebuild-watcher.sh no longer defaults CI_JOB_NAME to {self.JOB!r} — "
+                      f"the gate will never match and every deploy will be refused")
 
     def test_health_workflow_watches_the_same_job(self):
         health = (REPO / ".github" / "workflows" / "health.yml").read_text()
@@ -110,6 +114,38 @@ class TestDeployGateWiring(unittest.TestCase):
         watcher = (REPO / "rebuild-watcher.sh").read_text()
         self.assertIn("/check-runs", watcher)
         self.assertNotIn("/status?", watcher)
+
+    def test_no_host_or_owner_is_hardcoded_in_the_deploy_scripts(self):
+        """Both scripts are TRACKED files, and rebuild-watcher.sh runs
+        `git reset --hard` on every deploy — so any constant somebody edits to
+        suit their own machine is silently reverted the next time they deploy.
+        Host-specific values must therefore be derived or env-overridable,
+        never literals.
+
+        The concrete failure: a hardcoded owner/repo makes a FORK query the
+        upstream repo for a SHA that exists only in the fork, which 404s, which
+        fails the gate closed — a permanently blocked deploy path.
+        """
+        for name in ("rebuild-watcher.sh", "watchdog.sh"):
+            code = "\n".join(ln for ln in (REPO / name).read_text().splitlines()
+                             if not ln.lstrip().startswith("#"))
+            self.assertNotIn('BOT_DIR="/root/', code,
+                             f"{name} hardcodes an absolute bot directory")
+            self.assertNotIn('GITHUB_REPO="Turnipnator', code,
+                             f"{name} hardcodes a repo owner — a fork would gate against "
+                             f"the wrong repository and never deploy")
+
+    def test_watcher_derives_the_repo_from_the_git_remote(self):
+        watcher = (REPO / "rebuild-watcher.sh").read_text()
+        self.assertIn("derive_github_repo", watcher)
+        self.assertIn("remote get-url", watcher)
+
+    def test_watcher_fails_closed_when_the_repo_cannot_be_determined(self):
+        """A non-GitHub or missing remote must block the deploy, not wave it
+        through ungated."""
+        watcher = (REPO / "rebuild-watcher.sh").read_text()
+        self.assertIn('[ -z "$GITHUB_REPO" ]', watcher,
+                      "no guard for an undeterminable repo — the gate would be skipped")
 
     def test_watcher_still_has_the_force_escape_hatch(self):
         """The gate fails closed. Without the override, a GitHub outage or a

@@ -39,7 +39,11 @@
 
 set -uo pipefail
 
-BOT_DIR="${WATCHDOG_BOT_DIR:-/root/ig-bot}"
+# Defaults to wherever this script lives — it ships inside the repo it watches,
+# so its own directory is the answer, and no host hardcodes a path into a
+# tracked file that `git reset --hard` would wipe on the next deploy.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOT_DIR="${WATCHDOG_BOT_DIR:-$SCRIPT_DIR}"
 CONTAINER="${WATCHDOG_CONTAINER:-ig-trading-bot}"
 WATCHER_UNIT="${WATCHDOG_WATCHER_UNIT:-rebuild-watcher}"
 LOG_FILE="${WATCHDOG_LOG_FILE:-$BOT_DIR/logs/ig_bot.log}"
