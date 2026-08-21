@@ -13,7 +13,18 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 
+# These assert facts about the REPOSITORY, not about the running system. The
+# suite is deliberately shipped inside the image so the golden tests can be run
+# against the container (`docker exec ig-trading-bot python3 -m unittest
+# discover -s tests -t .`), but .dockerignore excludes itself from that image,
+# so in there these have nothing to check. Skip rather than fail — and key the
+# skip on being at /app, the same discriminator main.py uses, so that a
+# .dockerignore actually DELETED from the repo still fails loudly in CI instead
+# of quietly skipping.
+IN_CONTAINER = REPO == pathlib.Path("/app")
 
+
+@unittest.skipIf(IN_CONTAINER, "repository-hygiene test; not meaningful inside the image")
 class TestGitleaksConfig(unittest.TestCase):
     def test_config_extends_the_default_ruleset(self):
         """A custom gitleaks config REPLACES the defaults unless it extends
@@ -29,6 +40,7 @@ class TestGitleaksConfig(unittest.TestCase):
         )
 
 
+@unittest.skipIf(IN_CONTAINER, "repository-hygiene test; .dockerignore excludes itself from the image")
 class TestDockerignore(unittest.TestCase):
     def setUp(self):
         path = REPO / ".dockerignore"

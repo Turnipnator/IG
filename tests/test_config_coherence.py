@@ -74,22 +74,41 @@ class TestModeConstants(unittest.TestCase):
 
 
 class TestMarketModesFile(unittest.TestCase):
-    """data/market_modes.json holds runtime /mode overrides. An epic in it that
-    no longer exists in MARKETS is dead config: it silently does nothing, and
-    the market it was meant to control runs its code default instead."""
+    """data/market_modes.json holds runtime /mode overrides.
+
+    Parsed exactly as telegram_bot.load_market_modes does — `.get("market_modes",
+    {})`, not the top level, which also carries a "saved_at" stamp. Reimplementing
+    the format here was wrong once already; reading it the same way the loader
+    does is the only version that cannot drift from it.
+
+    Note what the loader does and does not check: it drops entries whose MODE is
+    invalid, but never validates the EPIC. An override naming an epic that has
+    since been renamed or disabled therefore survives into self.market_modes and
+    simply never matches anything — dead config that looks live on the /mode
+    board. That gap is what test_every_override_names_a_real_epic covers.
+    """
 
     def setUp(self):
         self.path = REPO / "data" / "market_modes.json"
-
-    def test_every_override_names_a_real_epic_and_a_valid_mode(self):
         if not self.path.exists():
-            self.skipTest("no data/market_modes.json in this checkout (VPS runtime state)")
-        import main
+            self.skipTest("no data/market_modes.json (VPS runtime state, absent in a fresh checkout)")
+        raw = json.loads(self.path.read_text())
+        self.overrides = raw.get("market_modes", {})
 
-        data = json.loads(self.path.read_text())
-        for epic, mode in data.items():
-            self.assertIn(epic, EPICS, f"market_modes.json overrides unknown epic {epic!r}")
-            self.assertIn(mode, main.VALID_MARKET_MODES, f"{epic} has invalid mode {mode!r}")
+    def test_every_override_names_a_real_epic(self):
+        for epic in self.overrides:
+            self.assertIn(epic, EPICS,
+                          f"market_modes.json overrides {epic!r}, which is not in MARKETS — "
+                          f"the loader will keep it and it will never match")
+
+    def test_every_override_has_a_mode_the_loader_will_keep(self):
+        """An invalid mode is dropped silently by load_market_modes, so the
+        market reverts to its config default while the file still claims
+        otherwise."""
+        import main
+        for epic, mode in self.overrides.items():
+            self.assertIn(mode, main.VALID_MARKET_MODES,
+                          f"{epic} has mode {mode!r}, which load_market_modes will silently drop")
 
 
 class TestBreakoutCoverage(unittest.TestCase):
