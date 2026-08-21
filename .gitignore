@@ -35,6 +35,10 @@ venv/
 ENV/
 env/
 .venv/
+# Backtest venv, pinned to requirements.lock.txt so it matches the
+# container. Python 3.12's venv does not write a self-ignoring
+# .gitignore the way 3.14's did, so name it explicitly — it is 160MB.
+.venv-bt/
 
 # IDE
 .idea/
