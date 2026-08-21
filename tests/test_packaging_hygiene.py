@@ -71,5 +71,52 @@ class TestDockerignore(unittest.TestCase):
                              f".dockerignore excludes {forbidden!r}, which the bot needs at runtime")
 
 
+@unittest.skipIf(IN_CONTAINER, "repository-hygiene test; .github/ is excluded from the image")
+class TestDeployGateWiring(unittest.TestCase):
+    """The name of the CI job is load-bearing in THREE files.
+
+    rebuild-watcher.sh will not deploy a commit unless a check run with that
+    exact name reports success. Rename the job in ci.yml alone and the gate
+    stops finding it — and because the gate fails CLOSED, every deploy silently
+    refuses. You would discover it on the day you needed to ship a fix.
+
+    health.yml's `gate` job queries the same name weekly for the same reason;
+    it is the watchdog on the watchdog, and it too must agree.
+    """
+
+    JOB = "verify"
+
+    def test_ci_declares_the_job_the_watcher_looks_for(self):
+        ci = (REPO / ".github" / "workflows" / "ci.yml").read_text()
+        self.assertIn(f'name: {self.JOB}', ci,
+                      f"ci.yml no longer declares a job named {self.JOB!r}")
+
+    def test_rebuild_watcher_looks_for_that_job(self):
+        watcher = (REPO / "rebuild-watcher.sh").read_text()
+        self.assertIn(f'CI_JOB_NAME="{self.JOB}"', watcher,
+                      f"rebuild-watcher.sh CI_JOB_NAME is not {self.JOB!r} — the gate will "
+                      f"never match and every deploy will be refused")
+
+    def test_health_workflow_watches_the_same_job(self):
+        health = (REPO / ".github" / "workflows" / "health.yml").read_text()
+        self.assertIn(f'select(.name == "{self.JOB}")', health,
+                      "health.yml's gate job queries a different job name than the watcher uses, "
+                      "so it is no longer testing the real deploy gate")
+
+    def test_watcher_uses_check_runs_not_the_legacy_status_endpoint(self):
+        """/commits/{sha}/status returns state=pending with zero statuses
+        forever on an Actions-only repo. A gate built on it either blocks every
+        deploy or never blocks anything."""
+        watcher = (REPO / "rebuild-watcher.sh").read_text()
+        self.assertIn("/check-runs", watcher)
+        self.assertNotIn("/status?", watcher)
+
+    def test_watcher_still_has_the_force_escape_hatch(self):
+        """The gate fails closed. Without the override, a GitHub outage or a
+        rollback to a pre-CI commit means no deploy is possible at all."""
+        watcher = (REPO / "rebuild-watcher.sh").read_text()
+        self.assertIn("rebuild_trigger_force", watcher)
+
+
 if __name__ == "__main__":
     unittest.main()

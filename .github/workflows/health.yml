@@ -1,0 +1,116 @@
+name: Weekly health
+
+# Watches the things that rot while nobody is looking, on a repo whose CI is a
+# LOAD-BEARING DEPLOY GATE. Deliberately overlaps ci.yml, but tests the
+# ENVIRONMENT rather than the code: no pip cache, no docker layer cache, and it
+# runs when nothing has changed.
+#
+# What this exists to catch, all of which surface at the worst possible moment
+# — the day you push an urgent fix and discover you cannot deploy it:
+#   * a pinned package yanked or unavailable on PyPI (requirements.lock.txt
+#     pins hard, so one yanked wheel breaks every rebuild)
+#   * python:3.12-slim changing or failing to build
+#   * a SHA-pinned action disappearing
+#   * the deploy gate itself breaking — see the `gate` job below
+#
+# NB: GitHub auto-disables scheduled workflows in a public repo after 60 days
+# of no repository activity. workflow_dispatch is the manual restart.
+
+on:
+  schedule:
+    # 05:17 UTC Monday — off-hour and off-the-hour, since scheduled events
+    # queue and are delayed at the top of each hour.
+    - cron: "17 5 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  rot:
+    name: cold rebuild from the lock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          # Deliberately NO `cache: pip`. A cache hit would hide exactly the
+          # failure this job exists to find: a pin that no longer resolves.
+      - run: pip install --no-cache-dir -r requirements.lock.txt
+      - run: python -m unittest discover -s tests -t .
+      - name: Cold docker build
+        run: docker build --no-cache -t ig-bot:health .
+
+  # The watchdog on the watchdog. rebuild-watcher.sh refuses to deploy unless a
+  # check run named `verify` reports success for the target commit — so if that
+  # job is renamed, removed, or the API shape changes, the gate fails CLOSED and
+  # every deploy silently stops working. Nothing else would tell you until you
+  # needed a deploy.
+  gate:
+    name: deploy gate still answers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Query check-runs exactly as rebuild-watcher.sh does
+        run: |
+          sha=$(git rev-parse HEAD)
+          # Same endpoint and same jq expression as ci_gate() in
+          # rebuild-watcher.sh. If these two ever drift, this job stops being a
+          # test of the real gate.
+          body=$(curl -sS -m 20 -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${sha}/check-runs?per_page=100")
+          read -r status conclusion <<<"$(printf '%s' "$body" | jq -r '
+            (([.check_runs[] | select(.name == "verify")] | sort_by(.started_at) | last) // {})
+            | "\(.status // "absent") \(.conclusion // "none")"')"
+          echo "verify on ${sha:0:7}: status=$status conclusion=$conclusion"
+          if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+            echo "The deploy gate would REFUSE main. Either CI is genuinely red, or the" >&2
+            echo "job name 'verify' no longer matches CI_JOB_NAME in rebuild-watcher.sh." >&2
+            exit 1
+          fi
+
+  # Issue-as-alert-channel: this repo has no other out-of-band notification, and
+  # a failed scheduled run is otherwise just a red tick nobody visits.
+  alert:
+    name: raise or clear the tracking issue
+    needs: [rot, gate]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      FAILED: ${{ needs.rot.result != 'success' || needs.gate.result != 'success' }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Ensure the label exists
+        # `gh issue create --label` fails outright on a label that does not
+        # exist, and nothing else creates it. --force makes a re-run a no-op.
+        run: gh label create health --description "Weekly health workflow" --color b60205 --force
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Open or update on failure
+        if: env.FAILED == 'true'
+        run: |
+          body="Weekly health run FAILED on $(date -u +%Y-%m-%d).
+
+          - cold rebuild from the lock: \`${{ needs.rot.result }}\`
+          - deploy gate still answers: \`${{ needs.gate.result }}\`
+
+          A failure here means a deploy would likely fail or be refused. Run: ${RUN_URL}"
+          existing=$(gh issue list --label health --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "Weekly health check failing" --body "$body" --label health
+          fi
+
+      - name: Close when healthy again
+        if: env.FAILED != 'true'
+        run: |
+          existing=$(gh issue list --label health --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Weekly health run is green again as of $(date -u +%Y-%m-%d). Run: ${RUN_URL}"
+            gh issue close "$existing"
+          fi
