@@ -48,6 +48,7 @@ CONTAINER="${WATCHDOG_CONTAINER:-ig-trading-bot}"
 WATCHER_UNIT="${WATCHDOG_WATCHER_UNIT:-rebuild-watcher}"
 LOG_FILE="${WATCHDOG_LOG_FILE:-$BOT_DIR/logs/ig_bot.log}"
 STATE_FILE="${WATCHDOG_STATE_FILE:-$BOT_DIR/data/.watchdog_state}"
+HEARTBEAT_FILE="${WATCHDOG_HEARTBEAT_FILE:-$BOT_DIR/data/.watchdog_heartbeat}"
 STALE_MIN="${WATCHDOG_STALE_MIN:-30}"
 GRACE_MIN="${WATCHDOG_GRACE_MIN:-5}"
 TRIGGER_STALE_MIN="${WATCHDOG_TRIGGER_STALE_MIN:-10}"
@@ -229,5 +230,29 @@ done
 
 mkdir -p "$(dirname "$STATE_FILE")"
 { printf '%s' "$new_state"; [ -n "$restarts" ] && printf '_restarts=%s\n' "$restarts"; } > "$STATE_FILE"
+
+# Heartbeat: proof this script RAN and reached the end.
+#
+# Without it, a healthy run is completely invisible — it writes nothing to its
+# cron log, and `>>` with no output does not even touch that file's mtime. So a
+# watchdog whose cron entry had been removed would look EXACTLY like a watchdog
+# reporting all-clear: silent, with an old log. The thing that watches
+# everything else could not show that it was alive.
+#
+# The state file above happens to be rewritten every run too, so its mtime is
+# an accidental heartbeat — but only accidentally. Anyone optimising that write
+# to "only if changed" would silently remove the signal, with nothing to say it
+# was load-bearing. This file exists to be that signal on purpose, and carries a
+# readable timestamp and verdict rather than requiring a stat.
+#
+# Written LAST so it attests completion, not merely invocation: a run that dies
+# in a probe leaves the old timestamp, which is the honest answer.
+mkdir -p "$(dirname "$HEARTBEAT_FILE")"
+if [ "${#KEYS[@]}" -eq 0 ]; then
+    printf '%s ok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$HEARTBEAT_FILE"
+else
+    printf '%s %d problem(s): %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "${#KEYS[@]}" "$(printf '%s,' "${KEYS[@]}" | sed 's/,$//')" > "$HEARTBEAT_FILE"
+fi
 
 [ "${#KEYS[@]}" -eq 0 ] && exit 0 || exit 1

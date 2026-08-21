@@ -41,6 +41,7 @@ class WatchdogTestCase(unittest.TestCase):
         self.log.write_text("2026-08-21 15:00:00 | INFO | [STREAM] Gold: HOLD\n")
         self.notify_file = self.tmp / "notifications.txt"
         self.state = self.tmp / "data" / ".watchdog_state"
+        self.heartbeat = self.tmp / "data" / ".watchdog_heartbeat"
 
     def _stub(self, name, body):
         p = self.tmp / "bin" / name
@@ -85,6 +86,7 @@ class WatchdogTestCase(unittest.TestCase):
             "WATCHDOG_LOG_FILE": str(self.log),
             "WATCHDOG_STATE_FILE": str(self.state),
             "WATCHDOG_NOTIFY_FILE": str(self.notify_file),
+            "WATCHDOG_HEARTBEAT_FILE": str(self.heartbeat),
         })
         for k, v in overrides.items():
             env[f"WATCHDOG_{k.upper()}"] = str(v)
@@ -108,6 +110,54 @@ class TestStaysQuietWhenHealthy(WatchdogTestCase):
         no gap over 20 min. A 19-minute-old log must NOT alert."""
         os.utime(self.log, (time.time() - 19 * 60, time.time() - 19 * 60))
         self.assertEqual(self.run_watchdog(), [])
+
+
+class TestHeartbeat(WatchdogTestCase):
+    """Proof the watchdog RAN.
+
+    A healthy run is otherwise completely invisible: it writes nothing to its
+    cron log, and `>>` with no output does not touch that file's mtime. So a
+    watchdog whose cron entry had been deleted would look identical to one
+    reporting all-clear. The thing that watches everything else could not
+    demonstrate it was alive.
+    """
+
+    def test_written_on_a_healthy_run(self):
+        self.run_watchdog()
+        self.assertTrue(self.heartbeat.exists(), "no heartbeat written on a healthy run")
+        self.assertIn("ok", self.heartbeat.read_text())
+
+    def test_written_when_problems_exist(self):
+        """The run that matters most must still leave proof it happened —
+        otherwise a broken system and a dead watchdog look the same."""
+        self.run_watchdog(running="false")
+        text = self.heartbeat.read_text()
+        self.assertIn("problem", text, text)
+        self.assertIn("container_stopped", text, text)
+
+    def test_written_even_though_the_script_exits_nonzero(self):
+        """It exits 1 when problems exist; the heartbeat must be written
+        BEFORE that exit, not skipped by it."""
+        self.run_watchdog(watcher_active=False)
+        self.assertTrue(self.heartbeat.exists())
+
+    def test_timestamp_advances_between_runs(self):
+        """mtime, not just presence — a file written once and never again
+        would satisfy an existence check forever."""
+        self.run_watchdog()
+        first = self.heartbeat.stat().st_mtime
+        time.sleep(1.1)
+        self.run_watchdog()
+        self.assertGreater(self.heartbeat.stat().st_mtime, first,
+                           "heartbeat did not advance on the second run")
+
+    def test_records_which_problems_were_seen(self):
+        """Content, not just a timestamp: reading the file should tell you what
+        the last run concluded without re-running anything."""
+        self.run_watchdog(running="false", watcher_active=False)
+        text = self.heartbeat.read_text()
+        self.assertIn("container_stopped", text)
+        self.assertIn("watcher_down", text)
 
 
 class TestProbeContract(WatchdogTestCase):
