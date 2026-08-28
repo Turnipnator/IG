@@ -1897,3 +1897,274 @@ only lever left that acts on a number we have actually established.
 **Open.** Non-price data (economic calendar, carry/rate differentials, cross-asset) is the
 only genuinely unexplored axis. No evidence behind it, and it is a large build — flagged,
 not recommended.
+
+---
+
+## 2026-08-20 — Per-market triage: enable, disable, or switch strategy?
+
+**Question.** Does the accumulated data justify disabling any instrument, enabling any,
+or switching any between momentum and breakout?
+
+**Hypotheses.**
+- H1 — Some markets are structurally untradeable (cost) and should go regardless of edge.
+- H2 — Some markets show enough edge separation to promote/demote on performance.
+- H3 — Some markets are on the wrong strategy and should switch momentum <-> breakout.
+- H4 — Nothing is decidable at this sample size and the honest answer is "no change".
+
+### Evidence 1 — cost, and a correction I nearly shipped
+
+Cost is the ONE quantity measurable at this sample size, so it is the only defensible
+basis for a per-market decision. First pass used the screener's `ATR/Spread` (logged
+6x/day + every 30 min) pooled across all sessions:
+
+| market | unweighted cost/R | verdict |
+|---|---|---|
+| Hong Kong HS50 | 0.173 | FAIL |
+| S&P 500 | 0.121 | MARGINAL |
+| Wall Street | 0.117 | MARGINAL |
+
+**That was wrong, and the error was mine.** An unweighted median samples hours the bot
+does not trade equally. Re-bucketing `ATR/Spread` by hour-of-day and weighting by the
+hour-of-day distribution of each market's REAL entries:
+
+| market | unweighted | **entry-weighted** | delta | gate |
+|---|---|---|---|---|
+| AI Index | 0.067 | **0.199** | +0.132 | FAIL (but n=2) |
+| Hong Kong HS50 | 0.173 | **0.111** | −0.062 | MARGINAL |
+| Crude Oil | 0.096 | 0.096 | 0.000 | pass |
+| Wall Street | 0.117 | **0.092** | −0.025 | pass |
+| S&P 500 | 0.121 | **0.083** | −0.038 | pass |
+| Gold | 0.067 | 0.062 | −0.005 | pass |
+| FTSE 100 | 0.079 | 0.060 | −0.019 | pass |
+| EUR/USD | 0.044 | 0.043 | — | pass |
+| GBP/USD | 0.045 | 0.042 | −0.004 | pass |
+| NASDAQ 100 | 0.046 | 0.035 | −0.011 | pass |
+| Japan 225 | 0.058 | 0.032 | −0.026 | pass |
+
+**The bot times its entries into CHEAPER hours than the session average in 10 of 11
+markets.** That is an unlooked-for positive and it reverses the S&P/Wall St verdict.
+Only AI Index goes the other way (+0.132), and at n=2 entries the weighting is not
+trustworthy — it is already `shadow_only` so nothing live depends on it.
+
+DXY is absent from the screener series (scored `[OFF]` almost always); a direct snapshot
+gives **0.400R** — spread 8.0 against a 20.0 stop. It is already `breakout-shadow`, so
+this is a reason to keep it benched, not a new action. — HIGH
+
+### Evidence 2 — edge does not separate anywhere
+
+Per-market momentum edge in R, 95% CIs (n=317 pooled). Widths are ±0.27 to ±0.78R.
+Best is NASDAQ +0.223R (n=32, CI [−0.012, +0.457]) — which is **exactly what the maximum
+of 21 noisy draws looks like** under a global null. Largest non-Gold sample is Wall
+Street, n=48, −0.051R, CI [−0.279, +0.177] — contains zero comfortably.
+
+No market separates from zero. Promoting on the best or demoting on the worst is
+selection, not inference. — HIGH
+
+### Evidence 3 — no breakout flip is supported
+
+Live-forward breakout shadow: **−0.53R/episode pooled, n=29, 10 of 11 markets negative**
+(after repairing the corrupted NASDAQ row #134, see the cd0b4a8 entry). Per-market n is
+1–6, so the per-market numbers decide nothing, but the *uniformity* is the signal: this
+is the observer doing precisely the job it was installed for, and it says no.
+
+Reverse direction (take something OFF breakout) is equally unsupported: Gold breakout
+live −0.067R (n=7) vs Gold momentum −0.033R (n=66) — both ~zero, n=7 cannot decide.
+GBP/USD breakout live −0.214R (n=6) but its 730d backtest is the book's best (PF 1.89);
+six trades must not overturn two years. — HIGH for "no flips", LOW on any per-market number
+
+### Confidence / self-critique
+
+- **H4 is the supported answer.** H1 fails once cost is measured correctly; H2 and H3
+  fail on power.
+- **What would disprove this:** a market whose entry-weighted cost exceeds ~0.15R with a
+  trustworthy n. AI Index is the only candidate and needs more entries to qualify.
+- **Simpler explanation checked:** "no change" could be laziness dressed as rigour. It is
+  not — the cost analysis was run to find disables, produced three candidates, and two of
+  them dissolved under a *better* measurement rather than a weaker one.
+- **Survivorship:** deliberately not acting on the per-market table is the whole point;
+  it is 21 markets deep and its extremes are noise.
+- **On demo, disabling destroys information.** While paper trading, a market that is not
+  structurally untradeable is worth more ON than OFF. This asymmetry flips at go-live,
+  where GO_LIVE_CRITERIA caps live markets at 3.
+
+### Conclusion
+
+**No instrument changes. No strategy switches.** Two watch items for v3:
+AI Index entry-weighted cost (needs n), Hong Kong at 0.111R (marginal, over gate).
+
+### Next steps
+
+1. Let Phase 1 tick-entry logging accumulate — it is the only live experiment running.
+2. Re-run this triage at v3 with the AI Index and HK entry counts grown.
+3. Do NOT act on the per-market momentum table at any n reachable this year.
+
+---
+
+## 2026-08-21 — Wall Street: "signals wrong, or spread, or strategy?"
+
+**Question.** Wall Street is the worst market in the book (−£149, ~5W/14L on the
+headline). Is the cause (a) bad signals, (b) cost/spread, (c) the strategy, or
+(d) none of these?
+
+**Hypotheses.** H1 cost · H2 direction asymmetry · H3 exit mechanics ·
+H4 noise at small n · H5 regime.
+
+**Evidence.**
+
+*H1 COST — REJECTED (MEDIUM).* Round-trip spread ÷ median stop actually used:
+Wall St 0.151R, S&P 0.136R, NASDAQ 0.086R, Japan 0.061R, Hong Kong 1.084R.
+Wall St is mid-pack and near-identical to S&P — yet S&P is break-even and Wall
+St is not, so cost does not separate them. Hong Kong carries by far the worst
+cost and is the second most profitable (+1.86R, PF 1.95). ⚠️ Measured ~22:00 BST
+with US/HK cash closed, so all spreads are out-of-hours inflated; the relative
+comparison is indicative, not exact. Re-measure in-session before quoting.
+
+*H2 DIRECTION — CONFOUNDED, not supported (MEDIUM).* Live split looks strong:
+BUY n=34 avgR −0.242, SELL n=16 avgR +0.252, diff +0.494R, t=2.22 (p≈0.03).
+**But the sides are not interleaved.** Monthly: 2026-07 was 10 longs, −6.31R and
+**zero shorts** — 77% of the entire long deficit sits in one month with no short
+control. Sequence shows an 18-trade run of consecutive longs. So "longs are bad"
+and "July was bad" are not separable in this sample. Prior Yahoo sweep across two
+windows found Wall St **flat both ways in both windows — no asymmetry**
+([[project-indices-direction-sweep-2026-07]]), which explicitly warns that
+single-window direction verdicts are noise. Post-gate the asymmetry does persist
+(BUY −3.04R/8, SELL +1.31R/5) but n is far too small to promote.
+
+*H3 EXIT — entangled, not independent (LOW).* "MACD histogram negative for 3
+candles" is the single biggest drag (n=15, −4.89R, avgR −0.326) — but that is the
+LONG exit, so it re-states H2 rather than adding to it.
+
+*H4 NOISE — STRONGLY SUPPORTED (HIGH).* All-time avgR −0.084 (n=50), and
+post-MACD-gate avgR −0.133 with **95% CI [−0.507, +0.240] — comfortably includes
+zero**. Wall Street is not statistically distinguishable from break-even.
+
+*H5 REGIME — supported by prior work (MEDIUM).* The 2026-07-13 investigation of
+this same question concluded "Wall St momentum broadly unprofitable across ALL
+hours → a REGIME (chop) problem, not a session-structure problem"
+([[project-wallst-session-filter-2026-07]]).
+
+**KEY FINDING (HIGH).** Bucketed by config era, the damage is almost entirely
+PRE-gate. Post-2026-07-24 the cumulative R runs:
+`+0.34 −0.26 −1.00 +1.07 −0.46 +0.00 +0.12 +0.00 +0.82 +0.37 −1.00` = **exactly
+0.00R over 11 trades**, then today's two losses take it to −1.73R over 13. Until
+today, post-gate Wall Street was dead flat. The MACD coherence gate deployed at
+the v2 review appears to have done its job, and today is a 2-trade drawdown on
+top of a flat series — not evidence of a new problem.
+
+⚠️ The headline **£** figure badly overstates recency: risk-per-trade changed on
+2026-08-20, so recent trades carry far more £ per unit R. Use R, not £.
+
+**Conclusion.** Most supported: **H4 + H5** — Wall Street is a marginal,
+regime-sensitive market that is statistically indistinguishable from break-even,
+and the alarming headline is dominated by pre-gate July. Ruled out: cost (H1).
+Not supportable on this sample: direction asymmetry (H2), which is confounded
+with time and contradicted by the prior two-window backtest.
+
+**Open questions / next steps.**
+1. Re-measure spreads IN-SESSION — the H1 rejection currently rests on
+   out-of-hours quotes.
+2. The prescribed test for H2 is the **IG candle archive walk-forward via live
+   `analyze()`** (not Yahoo) — per the direction-sweep memory. Only that can
+   separate "longs are bad" from "July was bad".
+3. Decision question, separate from the statistics: per
+   [[feedback-per-epic-profitability]], a reliably break-even market still
+   consumes a position slot and adds variance without adding expectancy. Culling
+   Wall Street is defensible on portfolio grounds even though "it is broken" is
+   NOT supported. This belongs in the v3 review (agenda item 1), not a same-day
+   reaction.
+
+### 2026-08-21 (later) — IG archive walk-forward on the Wall Street direction question
+
+**Method.** `scripts/backtest_wallst_direction_archive.py`. IG candle archive
+(14,389 native 5m bars, 2026-06-12 → 2026-08-21), driven bar-by-bar through the
+live `TradingStrategy.analyze()` and `should_close_position()`. HTF computed from
+CLOSED hourly bars only (resample → shift(1) → asof-merge) to avoid the
+`htf_series` look-ahead class. Run in `.venv-bt`, which is now byte-identical to
+the container, so no CPU load on the live bot and no validity gap.
+
+**⚠️ Two harness bugs, both caught by the POSITIVE CONTROL failing. Keep controls.**
+1. One spread (4.8) applied to every market. S&P's median stop is 8.8 points, so
+   that charged it 0.55R of pure cost per trade → S&P came out at PF 0.13. Fixed
+   to per-market spreads; S&P moved to PF 0.79, near its live break-even.
+2. Confidence gated on the STRATEGY PROFILE's `min_confidence` instead of
+   `MarketConfig.min_confidence` (`main.py:1751`).
+
+**STRUCTURAL FINDING — the direction question is largely moot (HIGH).**
+`main.py:1685` applies a GLOBAL direction gate driven by the S&P 500 HTF trend:
+regime BULLISH blocks every SELL, BEARISH blocks every BUY, NEUTRAL blocks all
+trades. **A market's live long/short mix is therefore not a free choice — it is
+dictated by what the S&P was doing at the time.** That mechanically explains why
+2026-07 was 10 Wall Street longs and zero shorts (S&P regime bullish throughout),
+which was the confound flagged earlier the same day. "Make Wall Street short-only"
+is not a coherent request: the regime gate already decides direction book-wide.
+Modelling the gate is also worth +5.89R over the window (n 87→70, −19.29R→−13.40R),
+i.e. the gate is doing real work.
+
+**RESULT — no direction asymmetry (HIGH).** Wall Street, gate on:
+| side | n | WR | sumR | avgR | PF |
+|---|---|---|---|---|---|
+| BUY | 48 | 29.2% | −10.02 | −0.209 | 0.54 |
+| SELL | 22 | 31.8% | −3.38 | −0.154 | 0.59 |
+
+Gap is **0.055R/trade** — negligible, versus the +0.494R the live journal
+suggested. Fold verdicts across 5 consecutive windows: `BUY, SELL, SELL, BUY,
+SELL` — flips. Two independent methods now agree (Yahoo two-window 2026-07;
+IG archive 2026-08): **Wall Street has no exploitable direction asymmetry.**
+The live split was the July/regime confound, confirmed.
+
+**⚠️ POWER CAVEAT (HIGH).** The S&P control did NOT reproduce its known long-only
+edge (my run: BUY PF 0.64 vs SELL PF 0.92 — shorts better). This is the documented
+behaviour, not a new bug: [[project-indices-direction-sweep-2026-07]] records that
+S&P's asymmetry appears "ONLY on the big 1h sample (BUY PF 12.3 vs SELL 0.35), not
+the thin 5m one". **So this harness can fail to find an asymmetry but cannot prove
+one absent.** The Wall Street conclusion rests on the AGREEMENT of two methods,
+not on this run alone.
+
+**Secondary (MEDIUM).** Over the same window the archive says Wall Street momentum
+is unprofitable in BOTH directions (PF 0.55, −13.40R over 70 signals) — a harsher
+read than live's post-gate flat. The replay does not model the screener, position
+caps or cooldowns, so live trades a filtered SUBSET of these signals; the gap
+between −13.40R replayed and ~0.00R realised is the value those gates add.
+
+**Next.** Re-run when the archive reaches ~180 days; at 70 days a 5m sample
+provably cannot resolve a direction structure. Nothing here justifies a config
+change.
+
+### 2026-08-21 — "Is the screener any good? Can it be improved?"
+
+**Premise check.** The screener does NOT decide whether a signal is any good — it
+decides which 11 of 13 markets get slots. By volume it is only the 4th-largest
+entry gate (all-time `rejected_signals`): Outside hours 195 · Confidence 178 ·
+Direction-restricted 137 · **Screener-inactive 99** · Pullback-expired 85 ·
+Regime NEUTRAL 84 · Regime BULLISH-blocks-SELL 63 · Regime BEARISH-blocks-BUY 35.
+The three regime gates together (182) outweigh it.
+
+**It passed Wall Street.** Today's screen had Wall Street ACTIVE at 62/100. So the
+screener is neither saving nor failing us there — it is letting it through, which
+is correct behaviour for its actual job (Wall Street's ADX/spread/vol were fine).
+
+**The cap problem was already found AND fixed.** 2026-06 measurement
+([[project-screener-veto-analysis]]): score 0–34 vetoes −0.99R (threshold correctly
+blocked losers), score 45+ "Below top 8" vetoes **+3.27R** (the cap blocked
+winners). Fix = cap 8→11 + 30-min re-screen (`cc84594`, `eaca8b2`).
+
+**NEW (HIGH): the cap no longer binds.** Of 18 vetoes since that fix, 11 are CAP
+vetoes and **all 11 are Hong Kong, all between 2026-06-12 and 2026-06-19**. There
+have been **ZERO cap vetoes in the two months since 2026-06-19**; the remaining 7
+are quality vetoes (score<40), the kind prior measurement showed correctly block
+losers. This effectively answers the overdue "re-pull in ~2wk" review trigger: the
+sample is thin *because the problem was fixed*, not because we stopped looking.
+
+**Headroom (MEDIUM).** ~60 of the 100 score points duplicate what `analyze()`
+already gates on (ADX 25, trend 20, HTF 15). The non-redundant contribution is the
+ATR/spread tradeability filter (25) — the strategy is blind to spread — plus
+portfolio allocation. So "improve the score" mostly means improving things the
+strategy already does, on a component whose measured cost has already been removed.
+
+**Conclusion.** Little measurable headroom left in the screener, and it is the
+wrong lever for the Wall Street problem anyway: the screener ranks CURRENT
+tradeability (a regime question), not "is this market ever worth trading" (a
+config question). A market that should not trade should be disabled, not
+down-scored. Conflating the two is what the question assumed.
+
+**Next.** Nothing to change. If Wall Street is to go, that is a v3 cull decision.
