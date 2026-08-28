@@ -522,6 +522,7 @@ class Backtester:
         account_size: float = 10000,
         risk_per_trade: float = 0.01,
         min_hold_candles: int = 1,
+        reentry_cooldown_mins: int = 0,
     ) -> BacktestResult:
         """
         Run backtest for a market.
@@ -694,10 +695,15 @@ class Backtester:
 
                     self.trades.append(position)
 
-                    # Set cooldown if loss
+                    # Re-entry cooldown after ANY close (reentry_cooldown_mins),
+                    # with the loss cooldown as a 60-min floor. Mirrors live: a
+                    # general post-close cooldown plus an extra hour after a loss.
+                    # Default 0 → loss-only 60-min (the engine's prior behaviour).
+                    cd = reentry_cooldown_mins
                     if position.pnl_percent < 0:
-                        # 1 hour cooldown (12 x 5min candles)
-                        cooldown_until = current_time + timedelta(hours=1)
+                        cd = max(cd, 60)
+                    if cd > 0:
+                        cooldown_until = current_time + timedelta(minutes=cd)
 
                     last_close_time = current_time
                     position = None
