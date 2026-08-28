@@ -1,5 +1,8 @@
 > **Common Patterns**: See `~/trading-bot-skill.md` for deployment, Docker, Telegram, and strategy patterns shared across all trading bots.
 
+When asked to do research or strategy analysis, first read RESEARCH.md and follow the protocol within it.
+
+When asked to implement a code change, first read the "Before Implementing (all bots)" section of `~/trading-bot-skill.md` and follow the sizing protocol within it: trivial changes just get done; anything on its "full treatment" list (order path, sizing/stops, ledger writes, broker API, live-account reach, concurrency) gets the one-screen pre-flight — goal, blocking questions, ranked assumptions, plan — then STOPS for approval before implementing.
 ---
 
 # Automated Trading Platform Guide for IG Markets

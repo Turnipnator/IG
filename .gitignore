@@ -63,3 +63,8 @@ htmlcov/
 # Backtest data
 backtest_results/
 data/
+
+# Third-party security audit. Deliberately NOT committed: this repo is
+# PUBLIC, and the report lists unfixed weaknesses at file:line across
+# seven bots (six of them other repos). Keep it local.
+security_report.md
