@@ -10,6 +10,34 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+class ConfigError(ValueError):
+    """A required environment variable is missing, unparseable, or out of range.
+
+    Raised at load time so a bad value stops the bot before it can size a trade.
+    Every message names the offending variable — a bare ValueError from float()
+    says only "could not convert string to float", which is useless at 3am.
+    """
+
+
+def _env_num(name, default, cast, *, minimum=None, maximum=None, exclusive_min=False):
+    """Read a numeric env var, bounds-checked, failing loud and named."""
+    raw = os.getenv(name, default)
+    try:
+        value = cast(raw)
+    except (TypeError, ValueError):
+        raise ConfigError(
+            f"{name}={raw!r} is not a valid {cast.__name__} (default {default!r})"
+        ) from None
+    if minimum is not None and (value <= minimum if exclusive_min else value < minimum):
+        raise ConfigError(
+            f"{name}={value} is below the minimum "
+            f"({'>' if exclusive_min else '>='} {minimum})"
+        )
+    if maximum is not None and value > maximum:
+        raise ConfigError(f"{name}={value} exceeds the maximum ({maximum})")
+    return value
+
+
 @dataclass
 class IGConfig:
     """IG Markets API configuration."""
@@ -18,11 +46,29 @@ class IGConfig:
     password: str
     acc_type: str
 
+    #: The only accepted IG_ACC_TYPE values. Anything else is a configuration
+    #: error, never a silent default — see base_url.
+    ACC_TYPES = ("DEMO", "LIVE")
+
     @property
     def base_url(self) -> str:
-        if self.acc_type.upper() == "DEMO":
+        """Broker endpoint for this account type.
+
+        This used to be `if DEMO: demo else: live`, which fails OPEN to the live
+        account: IG_ACC_TYPE="demo " (trailing space), "DEMP", or any other typo
+        silently pointed a demo-tested bot at real money. load_ig_config now
+        normalises and rejects unknown values, and this raises rather than
+        guessing if an IGConfig is ever built by hand.
+        """
+        acc = self.acc_type.strip().upper()
+        if acc == "DEMO":
             return "https://demo-api.ig.com/gateway/deal"
-        return "https://api.ig.com/gateway/deal"
+        if acc == "LIVE":
+            return "https://api.ig.com/gateway/deal"
+        raise ConfigError(
+            f"IG_ACC_TYPE={self.acc_type!r} is not one of {self.ACC_TYPES} — "
+            f"refusing to guess which account to trade"
+        )
 
 
 @dataclass
@@ -198,11 +244,19 @@ class MarketConfig:
 
 # Load configurations from environment
 def load_ig_config() -> IGConfig:
+    # Normalised and allowlisted here, not at point of use: base_url decides which
+    # account real orders go to, and a typo must never resolve to the live one.
+    acc_type = os.getenv("IG_ACC_TYPE", "DEMO").strip().upper()
+    if acc_type not in IGConfig.ACC_TYPES:
+        raise ConfigError(
+            f"IG_ACC_TYPE={os.getenv('IG_ACC_TYPE')!r} is not one of "
+            f"{IGConfig.ACC_TYPES} (case/whitespace insensitive)"
+        )
     return IGConfig(
         api_key=os.getenv("IG_API_KEY", ""),
         username=os.getenv("IG_USERNAME", ""),
         password=os.getenv("IG_PASSWORD", ""),
-        acc_type=os.getenv("IG_ACC_TYPE", "DEMO"),
+        acc_type=acc_type,
     )
 
 
@@ -215,14 +269,31 @@ def load_telegram_config() -> TelegramConfig:
 
 
 def load_trading_config() -> TradingConfig:
+    """Trading config from the environment, bounds-checked.
+
+    Every value here feeds position sizing. Unvalidated, a .env typo was silent:
+    RISK_PER_TRADE=2 is 200% instead of 2%, and MAX_POSITIONS=0 is not "trading
+    disabled" but a ZeroDivisionError at risk_manager.py:73 — raised inside a
+    daemon market thread, at the moment a signal fires, long after startup.
+
+    Bounds are deliberately wide sanity rails, NOT strategy opinion: they exist to
+    catch fat fingers, not to express a view on risk. RISK_PER_TRADE is a PORTFOLIO
+    budget divided by max_positions (risk_manager.py:73), so the 0.10 ceiling is
+    ~1.25% effective per trade across 8 slots.
+    """
     return TradingConfig(
-        risk_per_trade=float(os.getenv("RISK_PER_TRADE", "0.02")),
-        max_positions=int(os.getenv("MAX_POSITIONS", "5")),
+        risk_per_trade=_env_num("RISK_PER_TRADE", "0.02", float,
+                                minimum=0, maximum=0.10, exclusive_min=True),
+        max_positions=_env_num("MAX_POSITIONS", "5", int, minimum=1, maximum=20),
         trading_enabled=os.getenv("TRADING_ENABLED", "true").lower() == "true",
-        check_interval=int(os.getenv("CHECK_INTERVAL", "60")),  # 60 mins to conserve API allowance
-        price_data_points=int(os.getenv("PRICE_DATA_POINTS", "50")),  # 50 points (saves 50% vs 100)
-        cache_ttl_minutes=int(os.getenv("CACHE_TTL_MINUTES", "55")),  # Cache for 55 mins
-        max_risk_gbp=float(os.getenv("MAX_RISK_GBP", "45")),
+        # 60 mins to conserve API allowance
+        check_interval=_env_num("CHECK_INTERVAL", "60", int, minimum=1),
+        # 50 points (saves 50% vs 100)
+        price_data_points=_env_num("PRICE_DATA_POINTS", "50", int, minimum=1),
+        # Cache for 55 mins
+        cache_ttl_minutes=_env_num("CACHE_TTL_MINUTES", "55", int, minimum=0),
+        max_risk_gbp=_env_num("MAX_RISK_GBP", "45", float,
+                              minimum=0, maximum=1000, exclusive_min=True),
     )
 
 

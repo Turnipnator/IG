@@ -11,7 +11,9 @@ Nothing in Python's import machinery can see any of it, because as far as the
 interpreter is concerned they are all just str.
 """
 
+import contextlib
 import json
+import os
 import pathlib
 import unittest
 import warnings
@@ -204,6 +206,87 @@ class TestCorrelationGroups(unittest.TestCase):
                 f"correlation_group {name!r} has only {members} — a one-member cluster "
                 f"cannot block anything; likely a typo against another group name",
             )
+
+
+@contextlib.contextmanager
+def env(**overrides):
+    """Temporarily set/clear env vars. None clears, so defaults can be exercised."""
+    saved = {k: os.environ.get(k) for k in overrides}
+    try:
+        for k, v in overrides.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        yield
+    finally:
+        for k, v in saved.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+
+class TestTradingConfigBounds(unittest.TestCase):
+    """Every value in TradingConfig feeds position sizing, and .env is hand-edited
+    on the VPS. Unvalidated, RISK_PER_TRADE=2 is 200% risk rather than 2%, and
+    MAX_POSITIONS=0 is a ZeroDivisionError at risk_manager.py:73 raised inside a
+    daemon market thread the moment a signal fires — not at startup, where anyone
+    would see it. These are fat-finger rails, not a view on risk."""
+
+    def test_live_vps_values_load(self):
+        """The bounds must not lock the running deployment out of booting."""
+        with env(RISK_PER_TRADE="0.02", MAX_POSITIONS="8", CHECK_INTERVAL="5",
+                 MAX_RISK_GBP=None, PRICE_DATA_POINTS=None, CACHE_TTL_MINUTES=None):
+            cfg = config.load_trading_config()
+        self.assertEqual(0.02, cfg.risk_per_trade)
+        self.assertEqual(8, cfg.max_positions)
+        self.assertEqual(45.0, cfg.max_risk_gbp)
+
+    def test_defaults_load(self):
+        with env(RISK_PER_TRADE=None, MAX_POSITIONS=None, MAX_RISK_GBP=None,
+                 CHECK_INTERVAL=None, PRICE_DATA_POINTS=None, CACHE_TTL_MINUTES=None):
+            self.assertIsNotNone(config.load_trading_config())
+
+    def test_out_of_range_values_are_rejected(self):
+        cases = {
+            "RISK_PER_TRADE": ["2", "0.5", "0", "-0.01", "abc", ""],
+            "MAX_POSITIONS": ["0", "-1", "21", "eight", ""],
+            "MAX_RISK_GBP": ["0", "-45", "100000", ""],
+            "CHECK_INTERVAL": ["0", "-5"],
+            "PRICE_DATA_POINTS": ["0", "-1"],
+            "CACHE_TTL_MINUTES": ["-1"],
+        }
+        for var, bad_values in cases.items():
+            for bad in bad_values:
+                with self.subTest(var=var, value=bad):
+                    with env(**{var: bad}):
+                        with self.assertRaises(config.ConfigError) as ctx:
+                            config.load_trading_config()
+                    self.assertIn(var, str(ctx.exception),
+                                  "the error must name the offending variable")
+
+
+class TestAccountTypeCannotFailOpen(unittest.TestCase):
+    """base_url used to be `if DEMO: demo else: live`, so ANY unrecognised
+    IG_ACC_TYPE — a trailing space, a typo, an empty value — silently pointed a
+    demo-tested bot at real money. Unknown values must raise, never default."""
+
+    def test_demo_and_live_resolve_to_their_own_endpoints(self):
+        for raw, host in (("DEMO", "demo-api.ig.com"), ("LIVE", "api.ig.com"),
+                          ("demo", "demo-api.ig.com"), (" live ", "api.ig.com")):
+            with self.subTest(raw=raw), env(IG_ACC_TYPE=raw):
+                url = config.load_ig_config().base_url
+            self.assertIn(host, url)
+            if host == "api.ig.com":
+                self.assertNotIn("demo-api", url)
+
+    def test_unknown_account_type_raises_rather_than_defaulting_to_live(self):
+        for bad in ("DEMP", "", "PROD", "demo1", "TEST"):
+            with self.subTest(value=bad), env(IG_ACC_TYPE=bad):
+                with self.assertRaises(config.ConfigError):
+                    config.load_ig_config()
+
+    def test_hand_built_config_with_bad_acc_type_raises_at_use(self):
+        """Defence in depth: the property must not guess even if load_ig_config
+        is bypassed."""
+        cfg = config.IGConfig(api_key="k", username="u", password="p", acc_type="DEMP")
+        with self.assertRaises(config.ConfigError):
+            _ = cfg.base_url
 
 
 if __name__ == "__main__":

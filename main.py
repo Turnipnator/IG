@@ -39,6 +39,7 @@ HTF_STALE_AFTER = timedelta(hours=25)  # 1h slack past the daily cadence
 STREAMING_RETRY_BACKOFF = (5, 15, 30, 0)
 
 from config import (
+    ConfigError,
     load_ig_config,
     load_telegram_config,
     load_trading_config,
@@ -312,10 +313,18 @@ def initialize() -> bool:
     """Initialize all components."""
     global client, strategy, risk_manager, telegram, rate_limiter, calendar, journal, screener
 
-    # Load configs
-    ig_config = load_ig_config()
-    telegram_config = load_telegram_config()
-    trading_config = load_trading_config()
+    # Load configs. A bad env value must stop the bot HERE, loudly and by name,
+    # rather than surface later as a mis-sized order or a ZeroDivisionError inside
+    # a daemon market thread. .env is hand-edited on the VPS and is not in git, so
+    # the log line below is the only record of why the container refused to start;
+    # the cron watchdog alerts on the resulting restart loop.
+    try:
+        ig_config = load_ig_config()
+        telegram_config = load_telegram_config()
+        trading_config = load_trading_config()
+    except ConfigError as e:
+        logger.critical(f"Refusing to start — bad configuration: {e}")
+        return False
 
     # Initialize components
     client = IGClient(ig_config, cache_ttl_minutes=trading_config.cache_ttl_minutes)
