@@ -5,9 +5,11 @@ Logs entry/exit details, indicator snapshots, and exit reasons.
 Provides query methods for win rate, P&L by instrument, and more.
 """
 
+import functools
 import logging
 import os
 import sqlite3
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -18,10 +20,41 @@ DB_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
 DB_FILE = DB_DIR / "trade_journal.db"
 
 
+def _synchronized(method):
+    """Serialise one TradeJournal method against every other on the same instance.
+
+    The journal is a SINGLE sqlite3 connection opened check_same_thread=False and
+    shared by the thread-per-market fan-out (main.py:900). Python's sqlite3 caches
+    prepared statements by SQL text, so two threads running the same query with
+    different bound parameters can be handed the same underlying statement — and one
+    thread's bind/reset then clobbers the other's in-flight iteration. Observed live
+    on 2026-08-20: the resolver was handed another market's rows and stamped NASDAQ
+    episode #134 with a Gold high as its exit, booking +211.39R and flipping the
+    pooled breakout-shadow readout from -15.27R to +196.12R (main.py:2676).
+
+    Must wrap READS as well as writes: the corruption above was a SELECT, and the
+    lock has to span execute -> fetchall, not just the execute. A connection-level
+    proxy on .execute() would therefore NOT be sufficient.
+
+    RLock, not Lock: no journal method calls another today, but nesting one inside
+    another would otherwise self-deadlock rather than fail a test.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class TradeJournal:
     """SQLite trade journal for post-trade analysis."""
 
     def __init__(self):
+        # Created before the connection: every other method is @_synchronized
+        # on it, so it must exist before this instance is reachable.
+        self._lock = threading.RLock()
         DB_DIR.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(DB_FILE), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
@@ -29,6 +62,7 @@ class TradeJournal:
         self._migrate()
         logger.info(f"Trade journal initialized: {DB_FILE}")
 
+    @_synchronized
     def _migrate(self):
         """Additive column migrations. CREATE TABLE IF NOT EXISTS never alters an
         existing table, so columns added after a DB was first created must be
@@ -56,6 +90,7 @@ class TradeJournal:
             except Exception as e:
                 logger.warning(f"Journal migration failed for {table}: {e}")
 
+    @_synchronized
     def _create_tables(self):
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS trades (
@@ -136,6 +171,7 @@ class TradeJournal:
         """)
         self.db.commit()
 
+    @_synchronized
     def log_entry(
         self,
         deal_id: str,
@@ -176,6 +212,7 @@ class TradeJournal:
         except Exception as e:
             logger.warning(f"Journal: failed to log entry: {e}")
 
+    @_synchronized
     def log_exit(
         self,
         deal_id: str,
@@ -218,6 +255,7 @@ class TradeJournal:
 
     # --- Reconciliation (PROVISIONAL → CLOSED via IG transaction history) ---
 
+    @_synchronized
     def has_provisional(self) -> bool:
         """Cheap check — true if any PROVISIONAL rows exist (gates expensive API calls)."""
         try:
@@ -228,6 +266,7 @@ class TradeJournal:
         except Exception:
             return False
 
+    @_synchronized
     def get_provisional_rows(self, max_age_hours: int = 24) -> list[dict]:
         """All PROVISIONAL trades that CLOSED in the last N hours (IG txn history window).
 
@@ -247,6 +286,7 @@ class TradeJournal:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def confirm_provisional(self, deal_id: str, pnl: float, exit_price: float) -> None:
         """Promote a PROVISIONAL row to CLOSED with broker-confirmed values."""
         try:
@@ -259,6 +299,7 @@ class TradeJournal:
         except Exception as e:
             logger.warning(f"Journal: confirm_provisional failed for {deal_id}: {e}")
 
+    @_synchronized
     def mark_unmatched(self, deal_id: str) -> None:
         """Stop trying to reconcile — IG transaction never appeared (rare)."""
         try:
@@ -271,6 +312,7 @@ class TradeJournal:
         except Exception as e:
             logger.warning(f"Journal: mark_unmatched failed for {deal_id}: {e}")
 
+    @_synchronized
     def reopen_position(self, deal_id: str) -> None:
         """Revert a provisional exit back to an OPEN trade.
 
@@ -293,6 +335,7 @@ class TradeJournal:
         except Exception as e:
             logger.warning(f"Journal: reopen_position failed for {deal_id}: {e}")
 
+    @_synchronized
     def log_rejected_signal(
         self,
         epic: str,
@@ -318,6 +361,7 @@ class TradeJournal:
 
     # --- Benched-signal outcome tracking (E1 instrumentation) ---
 
+    @_synchronized
     def log_benched(
         self,
         epic: str,
@@ -346,6 +390,7 @@ class TradeJournal:
         except Exception as e:
             logger.warning(f"Journal: failed to log benched signal: {e}")
 
+    @_synchronized
     def has_open_benched(self, epic: str, direction: str, since_iso: str) -> bool:
         """True if an OPEN benched row for this epic+direction exists at/after since_iso.
         Dedup: a setup benched every candle is one opportunity, not many."""
@@ -360,6 +405,7 @@ class TradeJournal:
         except Exception:
             return False
 
+    @_synchronized
     def log_breakout_shadow(
         self,
         epic: str,
@@ -390,6 +436,7 @@ class TradeJournal:
         except Exception as e:
             logger.warning(f"Journal: failed to log breakout-shadow signal: {e}")
 
+    @_synchronized
     def has_open_breakout_shadow(self, epic: str) -> bool:
         """True while an unresolved breakout-shadow episode exists for this epic.
 
@@ -410,6 +457,7 @@ class TradeJournal:
         except Exception:
             return False
 
+    @_synchronized
     def get_open_breakout_shadow(self, epic: str) -> list[dict]:
         """Unresolved breakout-shadow episodes for an epic (normally 0 or 1)."""
         try:
@@ -422,6 +470,7 @@ class TradeJournal:
         except Exception:
             return []
 
+    @_synchronized
     def resolve_breakout_shadow(
         self, row_id: int, status: str, outcome: str,
         candles_to_resolve: int, r_multiple: float, exit_price: float,
@@ -446,6 +495,7 @@ class TradeJournal:
     # into a resolver whose exit model does not fit it.
     MOMENTUM_BENCH_TYPES = ("cap", "quality", "shadow")
 
+    @_synchronized
     def get_open_benched(self, epic: str) -> list[dict]:
         """Still-unresolved MOMENTUM benched snapshots for an epic.
 
@@ -468,6 +518,7 @@ class TradeJournal:
         except Exception:
             return []
 
+    @_synchronized
     def resolve_benched(
         self, row_id: int, status: str, outcome: str,
         candles_to_resolve: int, r_multiple: float,
@@ -485,6 +536,7 @@ class TradeJournal:
         except Exception as e:
             logger.warning(f"Journal: failed to resolve benched row {row_id}: {e}")
 
+    @_synchronized
     def get_benched_summary(self) -> list[dict]:
         """Aggregate resolved benched outcomes by status+bench_type for the review."""
         try:
@@ -499,6 +551,7 @@ class TradeJournal:
 
     # --- Query methods ---
 
+    @_synchronized
     def get_stats_by_market(self, days: int = 30) -> list[dict]:
         """Win rate and avg P&L per market over the last N days."""
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
@@ -518,6 +571,7 @@ class TradeJournal:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def get_stats_by_exit_reason(self, days: int = 30) -> list[dict]:
         """P&L breakdown by exit type."""
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
@@ -534,6 +588,7 @@ class TradeJournal:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def get_overall_stats(self, days: int = 30) -> dict:
         """Overall performance summary."""
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
@@ -553,6 +608,7 @@ class TradeJournal:
         ).fetchone()
         return dict(row) if row else {}
 
+    @_synchronized
     def get_rejected_count_by_market(self, days: int = 7) -> list[dict]:
         """Count rejected signals per market (helps assess filter strictness)."""
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
@@ -569,6 +625,7 @@ class TradeJournal:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    @_synchronized
     def get_rejected_reasons_by_market(self, days: int = 7) -> dict[str, list[tuple[str, int]]]:
         """For each market, count rejections grouped by reason category.
 
@@ -598,6 +655,7 @@ class TradeJournal:
             for market, cats in buckets.items()
         }
 
+    @_synchronized
     def get_recent_trades(self, limit: int = 10) -> list[dict]:
         """Get most recent closed trades.
 
