@@ -3544,7 +3544,12 @@ async def main_async():
                     num_points=trading_config.price_data_points,
                 )
 
-                if df is None or df.empty:
+                # Same history floor the streaming path applies before analyze()
+                # (see the len(df) < 50 check on the candle path). Without it this
+                # path could hand analyze() a frame shorter than the indicators'
+                # warm-up, where ADX is still NaN and the ranging filter silently
+                # passes. Polling is a real degraded state, not a hypothetical.
+                if df is None or len(df) < 50:
                     continue
 
                 market_info = client.get_market_info(market.epic)

@@ -3,6 +3,7 @@ Risk management for position sizing and trade validation.
 """
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
@@ -75,14 +76,19 @@ class RiskManager:
         # Calculate size (stake per point)
         # Risk = Size * Stop Distance
         # Size = Risk / Stop Distance
-        if stop_distance <= 0:
+        # `<= 0` alone does NOT catch NaN — every comparison against NaN is False,
+        # so a NaN stop reached `int(raw_size / min_size)` below and raised
+        # ValueError: cannot convert float NaN to integer, inside whichever market
+        # thread was sizing at the time. isfinite also catches inf, which would size
+        # to zero silently. Last gate before money, so it fails closed and says why.
+        if not math.isfinite(stop_distance) or stop_distance <= 0:
             return PositionSize(
                 size=0.0,
                 risk_amount=risk_amount,
                 stop_distance=stop_distance,
                 max_loss=0.0,
                 approved=False,
-                reason="Invalid stop distance",
+                reason=f"Invalid stop distance ({stop_distance})",
             )
 
         raw_size = risk_amount / stop_distance

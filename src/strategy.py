@@ -8,6 +8,7 @@ Supports multiple strategy profiles:
 """
 
 import logging
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -15,6 +16,14 @@ from typing import Optional
 import pandas as pd
 
 from src.indicators import add_all_indicators
+
+# Bars each indicator needs before it stops being NaN. add_all_indicators calls
+# calculate_adx/calculate_atr with their DEFAULT period (14) — not a strategy
+# param — so these are fixed for every profile. ADX double-smooths (dx is NaN for
+# the first period, then ewm(min_periods=period) over that), hence 2x. MACD
+# histogram needs the slow EMA plus the signal EMA.
+ADX_WARMUP_BARS = 2 * 14
+MACD_HIST_WARMUP_BARS = 26 + 9
 from config import STRATEGY_PARAMS, MarketConfig, StrategyConfig, get_strategy_for_market
 
 logger = logging.getLogger(__name__)
@@ -145,6 +154,46 @@ class TradingStrategy:
         atr = latest["atr"]
         adx = latest["adx"]
         close = latest["close"]
+
+        # NaN gate. This MUST come before every other guard below, because each of
+        # them is a comparison and every comparison against NaN is False — so a NaN
+        # does not trip a guard, it walks through all of them: `atr > max_sane` and
+        # `atr <= 0` are both False, `adx < adx_threshold` is False (reads as "trend
+        # is strong"), `stop_distance > max_stop` is False (no cap).
+        #
+        # The source is warm-up, not corruption. calculate_adx double-smooths and is
+        # NaN until ~2*period bars (first value at n=27 for period 14), but the
+        # length gate above only tests strategy.ema_slow — which is 21 for gold and
+        # 26 for all five indices_* profiles, i.e. the live momentum book. 26 bars of
+        # ordinary trending S&P data cleared that gate, skipped the ADX filter
+        # entirely, and returned BUY at 61% confidence whose own reason string read
+        # "ADX=nan", with a finite stop that would have filled normally.
+        #
+        # Streaming callers are covered by their own len(df) < 50 check; the polling
+        # path had none. Checked here rather than filled in indicators.py because NaN
+        # is the honest value for an undefined indicator, and test_golden pins the
+        # indicator output.
+        indicator_values = {
+            "ema_fast": ema_fast, "ema_medium": ema_medium, "ema_slow": ema_slow,
+            "rsi": rsi, "atr": atr, "adx": adx, "close": close,
+        }
+        not_finite = [k for k, v in indicator_values.items() if not math.isfinite(v)]
+        if not_finite:
+            logger.warning(
+                f"[{market.name}] Indicators not finite ({', '.join(not_finite)}) on "
+                f"{len(df)} bars — holding. ADX needs {ADX_WARMUP_BARS} bars; the "
+                f"length gate above only tests ema_slow={strategy.ema_slow}."
+            )
+            return TradeSignal(
+                signal=Signal.HOLD,
+                epic=market.epic,
+                market_name=market.name,
+                confidence=0.0,
+                entry_price=current_price,
+                stop_distance=market.min_stop_distance,
+                limit_distance=market.min_stop_distance,
+                reason=f"Indicators not finite: {', '.join(not_finite)}",
+            )
 
         # Sanity check: detect corrupted/stale streaming data.
         # Real corruption shows up as an ATR many multiples of price (the
@@ -681,11 +730,28 @@ def should_close_position(
     rsi = latest["rsi"]
     adx = latest["adx"]
 
+    # Each exit below is gated on ITS OWN inputs being finite, rather than on one
+    # global bar count. The indicators warm up at different rates (RSI ~8 bars, ADX
+    # 28, MACD histogram 35), and a shared floor set to the slowest would disable
+    # the RSI exit in the 8-34 bar band where it works perfectly well — reachable
+    # after a restart, since check_positions_from_stream guards only df.empty and a
+    # position can be live while candles re-accumulate.
+    #
+    # Where an input IS NaN the outcome is unchanged: every comparison against NaN
+    # was already False, i.e. "don't exit", the safe direction with the broker stop
+    # still on the book. Forcing exits on bad data would clip winners, the family of
+    # change this book has refuted repeatedly. This only makes the no-op visible.
+    def _finite(*values):
+        return all(isinstance(v, (int, float)) and math.isfinite(v) for v in values)
+
     # RSI extreme exit (always active - protects against overextended moves)
-    if direction == "BUY" and rsi > rsi_overbought:
-        return True, f"RSI overbought ({rsi:.1f})"
-    if direction == "SELL" and rsi < rsi_oversold:
-        return True, f"RSI oversold ({rsi:.1f})"
+    if _finite(rsi):
+        if direction == "BUY" and rsi > rsi_overbought:
+            return True, f"RSI overbought ({rsi:.1f})"
+        if direction == "SELL" and rsi < rsi_oversold:
+            return True, f"RSI oversold ({rsi:.1f})"
+    else:
+        logger.debug(f"RSI exit skipped on {len(df)} bars — RSI not finite")
 
     # MACD exit only if strategy uses it (indices). Suppressed during the
     # minimum-hold window (suppress_momentum_exit) so a candle committing on the
@@ -694,7 +760,12 @@ def should_close_position(
     if use_macd_exit and not suppress_momentum_exit:
         last_3_macd = [df.iloc[-i]["macd_hist"] for i in range(1, 4)]
 
-        if direction == "BUY":
+        if not _finite(*last_3_macd):
+            logger.debug(
+                f"MACD exit skipped on {len(df)} bars — histogram needs "
+                f"{MACD_HIST_WARMUP_BARS}. Broker stop unaffected."
+            )
+        elif direction == "BUY":
             if all(h < 0 for h in last_3_macd):
                 return True, "MACD histogram negative for 3 candles"
         elif direction == "SELL":
@@ -714,7 +785,12 @@ def should_close_position(
         # is NOT — a higher-timeframe flip can't race a single entry candle).
         if not suppress_momentum_exit and len(df) >= 3:
             recent_adx = [df.iloc[-i]["adx"] for i in range(1, 4)]
-            if all(a < adx_exit_threshold for a in recent_adx):
+            if not _finite(*recent_adx):
+                logger.debug(
+                    f"ADX ranging exit skipped on {len(df)} bars — ADX needs "
+                    f"{ADX_WARMUP_BARS}. Broker stop unaffected."
+                )
+            elif all(a < adx_exit_threshold for a in recent_adx):
                 return True, f"Market turned ranging (ADX {adx:.1f} < {adx_exit_threshold} for 3 candles)"
 
         # HTF reversal exit: close if higher timeframe trend reversed against us
