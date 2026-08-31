@@ -2408,3 +2408,79 @@ there are **no new breakout candidates** among the indices.
 **Next.** (1) Re-test Russell + DXY at ~90 days of archive (≈2026-10). (2) Nothing else here
 is actionable; effort is better spent on the entry fill gap (~0.143R, ≈10× the spread on
 every market measured) than on hunting new markets.
+
+---
+
+## 2026-08-31 (d) — Per-market ENTRY FILL GAP, measured
+
+**Question.** The flat cost convention charges 0.286×ATR = **0.143R**/trade. F6 already
+decomposed execution cost into three parts and put the *pooled* entry gap at **0.079×ATR
+(0.0397R, SE 0.0120, 90% CI [0.020, 0.059]R, n=1,034)** — but per market it was never
+broken out, and F5 showed the flat charge reorders the book per-market by ±0.207 PF. This
+measures the entry component per market.
+
+**Definition.** idealised backtest fill = AT the channel level; actual live fill = close of
+the CLOSED breaking bar (market order) + half spread.
+`gap = (close − level) + spread/2` for BUY, mirrored for SELL; expressed in R against
+`max(2×ATR, min_stop_distance)`.
+
+**Method.** Two independent measurements. **A** = archive replay of every bar where the
+live entry rule fires (N=55, HTF-filtered on each market's own resolution, HTF refreshed
+daily and held), n=8–145/market, ~800 total. **B** = the 157 real `Breakout-tick[log]`
+rows, which record the true `level`, paired with the archive close of the bar containing
+the tick. Script: `scripts/measure_fill_gap.py`.
+
+**⚠️ Trap found and fixed mid-measurement.** The tick rows carry a `bar=` field, and using
+it inverts the result. `bar=` is `ArmedChannel.bar_time`, the bar the channel was ARMED on
+— `arm_channel` snapshots for entry on the NEXT bar, so that bar sits INSIDE the channel by
+construction. Pairing against it produced a pooled gap of **−0.267R** (i.e. "live fills a
+quarter-R better than the backtest"), which is nonsense. Using the tick's own timestamp
+gives **+0.030R**. Sign-flipped, decision-grade error; the only reason it was caught is
+that A and B disagreed in sign and both were checked.
+
+**Result — per market (A, median R; positive = adverse):**
+
+| DXY | GBP/USD | AI | Japan | S&P | FTSE | Wall St | Russell | NASDAQ | HK | Gold | Crude | EUR |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **+0.125** | +0.069 | +0.042 | +0.036 | +0.004 | +0.002 | +0.001 | −0.016 | −0.012 | −0.020 | −0.022 | −0.023 | −0.033 |
+
+Pooled: median **+0.013R**, mean **≈+0.021R** (A) and median **+0.030R** (B, n=157).
+
+**Finding 1 — CORROBORATES F6; the flat charge over-states the entry gap by ~4–7× (HIGH).**
+A's pooled mean (+0.021R) sits at the lower edge of F6's 90% CI [0.020, 0.059]R, and B's
++0.030R sits inside it. Three independent estimates now agree the entry gap is ~0.02–0.04R,
+**not the 0.143R the convention charges.** The 0.286 figure came from an n=21 live sample
+with CI [0.0, 0.58]×ATR.
+
+**Finding 2 — the gap is ≈0 for most markets; DXY is the lone outlier (HIGH).** Nine of
+thirteen markets are within ±0.04R of zero and five are *favourable*. Only **DXY (+0.125R
+median, +0.204R mean)** is material — independently consistent with F25's "the genuinely
+under-charged market is DXY at 2.60× the flat charge".
+
+**Finding 3 — this MECHANICALLY explains why tick-entry was refuted (HIGH).** Pooled
+tick-fill gap **+0.025R** vs close-fill gap **+0.030R** — a 0.005R difference, matching the
+tick experiment's measured paired saving of −0.020R (n=39). The reason: `analyze_breakout`
+fires on the bar's **HIGH/LOW**, so the bot enters even when price poked through and closed
+back *inside* the channel — and in that case the close fill is BETTER than the level. Tick
+entry forfeits exactly those favourable retraces. The two timings are near-equivalent by
+construction, so **there is no entry-timing money to win.**
+
+**⚠️ Finding 4 — B's per-market cells must NOT be used to rank markets (HIGH).** n=2–38, and
+its ordering contradicts A (HK worst in B at +0.281 but favourable in A; DXY worst in A but
+favourable in B). Only B's *pooled* figure is usable. The per-market answer rests on A.
+
+**Conclusion.** The per-market entry fill gap is **~0.02R pooled and ≈0 for all but DXY**.
+Combined with Finding 3, the entry-timing lever is **exhausted** — the charge was ~5× too
+big and the timing choice is worth ~0.005R. This retracts my own earlier suggestion that
+effort belongs on the fill gap; it does not.
+
+**Where the per-market cost differences actually live** (from F6, unchanged by this work):
+**spread**, which ranges **51×** as a fraction of risk (NASDAQ 0.0035R → DXY 0.1789R), and
+— per the cost package's own table — **DFB overnight financing, charged by no backtest in
+this repo**, at 2.7–12.7% of 1R per calendar day, i.e. **20–60% of 1R over a typical 5-day
+breakout hold** against 14.3% for the entire one-off entry slip. That is the largest
+unmodelled cost on the book and it biases every long-hold result optimistically.
+
+**Next.** Model DFB overnight financing in the breakout engine. It is arithmetically the
+dominant unmodelled term for a strategy whose median hold is measured in days, and unlike
+the entry gap it has never been charged at all.
