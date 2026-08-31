@@ -70,9 +70,25 @@ BREAKOUT_CONFIGS: dict[str, BreakoutConfig] = {
     # VALIDATION STATUS (be honest at flip time):
     #   Gold    — GC=F 730d/1h: PF 1.28(N40)/1.22(N55)/1.38(N70), 3/4 quarters
     #             green, strengthening. The one PRE-validated candidate here.
-    #   Indices — UNTESTED as breakout. Yahoo cash proxies can't test them (no
-    #             overnight bars vs IG's ~24h sessions) — the shadow observer on
-    #             the IG archive IS the test. Do not flip live without its readout.
+    #   Indices — TESTED 2026-08-31 on the IG-native archive, and NEGATIVE.
+    #             DO NOT FLIP ANY INDEX LIVE. The readout this note asked for has
+    #             now been taken (~1,370 1h archive bars/index, live-faithful:
+    #             N55 / 2xATR / M27 trail / no TP / per-market htf_resolution /
+    #             HTF refreshed once daily at 21:30 UTC and held). At the
+    #             0.286xATR cost convention: pooled n=146, 34W/112L, -0.499R per
+    #             trade, PF 0.40; best market NASDAQ 0.68; none near 1.0. It is
+    #             NOT a cost problem — pooled FRICTIONLESS PF is 0.51, i.e. the
+    #             gross signal is negative, unlike the forex/Gold book where the
+    #             gross edge roughly equals costs. Corroborated by the live
+    #             shadow observer itself: -0.284R/trade (n=37) vs the backtest's
+    #             -0.341R/trade (n=133) over the six well-powered indices. No
+    #             index is positive in both halves of the sample.
+    #             EXCEPT: Russell 2000 and DXY are NOT tested — their archives
+    #             start 2026-07-24 and their DAY htf needs 21 daily bars of
+    #             warm-up, leaving n=2 and n=1. Retest at ~90 days (approx
+    #             2026-10). AI Index is an unsuitable instrument for a Donchian
+    #             channel (530 1h bars, EDITS_ONLY much of the day), not a
+    #             measured edge. See research_notes.md 2026-08-31(c).
     "CS.D.USCGC.TODAY.IP":    BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Gold
     "IX.D.SPTRD.DAILY.IP":    BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # S&P 500
     "IX.D.NASDAQ.CASH.IP":    BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # NASDAQ 100

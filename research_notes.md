@@ -2168,3 +2168,243 @@ config question). A market that should not trade should be disabled, not
 down-scored. Conflating the two is what the question assumed.
 
 **Next.** Nothing to change. If Wall Street is to go, that is a v3 cull decision.
+
+---
+
+## 2026-08-31 — Which MACD settings still need testing, given the hardened backtester?
+
+**Question.** After `117a4e8` (three optimism defects), `5cba8b3` (htf_series look-ahead
++ 365d window) and `b8a1114` (re-entry cooldown after ANY close), which MACD-related
+settings are (a) untested, (b) tested but with now-suspect evidence, or (c) settled?
+
+**The MACD surface (code inventory, not memory):**
+
+| Setting | Where | Status |
+|---|---|---|
+| Periods 12 / 26 / 9 | `indicators.py:249` — `calculate_macd(df["close"])` with **no args** | **NEVER tested; not reachable from config.** EMA/RSI read `params`, MACD does not. |
+| Exit confirmation length (3 bars) | `strategy.py:761` `range(1,4)`, hard-coded | Tested ONCE, Crude only, 2026-06-25 — **pre-`117a4e8`, so suspect** |
+| `use_macd_exit` on/off | `config.py`, 14 profile sites | Partially (Crude, Gold, per-EPIC WF) |
+| Entry coherence gate (2 of 3) | `strategy.py:296` `range(1,3)` | v2 `a41013e`. Primary evidence was a **journal replay of real trades**, which `117a4e8` does not touch → still sound |
+| `macd_factor` confidence weight (0.2) | `strategy.py:612` | Never swept; bimodality documented in the FTSE sweep |
+| MACD divergence as an ENTRY | strategy-screening study | **REFUTED** — ranked 11th, pooled OOS −0.260 on n=50 |
+
+**Live surface after the 2026-08-31 Wall Street demotion:** the MACD exit now governs
+exactly **four** live markets — S&P 500, NASDAQ 100, Japan 225, Hong Kong HS50 — all 5m,
+so MACD-3 = 15 minutes for every one of them. Gold/DXY/forex run `use_macd_exit=False`;
+Crude's `crude` profile has it True but Crude is breakout-shadow, so it is dormant.
+**The candle-interval half of v3 item 14 is therefore currently MOOT** (it would matter
+only if a non-5m market were promoted to momentum).
+
+**Hypotheses.**
+- **H1 — the MACD-3 per-EPIC audit is newly viable and is the high-value test.** SUPPORTED
+  (HIGH). `117a4e8` defect #1 was *specifically* exit resolution (stop/TP vs close, and
+  stop-beats-target within a bar). An exit A/B run before that fix was comparing fantasies.
+  `b8a1114` additionally lets the engine model the post-close cooldown — and MACD-3 is the
+  exit that produces the most closes, so the churn loop it drives was previously unmodellable.
+- **H2 — the periods (12/26/9) are the largest untested surface.** TRUE but LOW value
+  (MEDIUM). It is a 3-integer grid, and `project-per-epic-walkforward` already showed
+  21/21 in-sample vs 12/20 OOS for exactly this kind of per-market parameter search.
+  Adding a config knob would also be a code change on the signal path.
+- **H3 — nothing needs testing; the binding constraint is cost/market quality.** PARTLY
+  SUPPORTED (MEDIUM-HIGH) and the strongest competing view. Wall Street lost on *every*
+  exit type; Crude's best exit was still PF 0.67 after spread; per-EPIC WF says settings
+  do not port. Live post-gate MACD-3 across the four surviving markets is **−£5.31/20t**
+  — noise. So the honest prior is that exit tuning is second-order.
+
+**Evidence — post-gate MACD-3, per EPIC (the four live markets):**
+S&P +£13.16 (2t) · Hong Kong +£3.59 (4t) · NASDAQ −£4.07 (9t) · **Japan 225 −£17.99 (5t)**.
+Japan is the only clearly negative one. Samples are far too small to decide live (2–9
+trades) — which is precisely why this is a backtest question.
+
+**Finding — live/backtest MACD discrepancy (⚠️ CORRECTED 2026-08-31 — see below).**
+`src/backtest.py:642` uses `all(h < 0 for h in last_3 if not pd.isna(h))`. The NaN filter
+makes `all()` vacuously satisfied on partial warm-up, so with bars `[finite_neg, NaN, NaN]`
+the backtest fires a MACD exit on **one** bar of confirmation instead of three. Live cannot
+do this — `_finite()` (the `402484f` NaN gate) holds instead. The outer `macd_hist < 0`
+guard blocks the all-NaN case, so the exposure is only the ~2 bars at each contiguous run's
+warm-up boundary (MACD hist warm-up = 26+9 = 35). Immaterial on a 730d run; matters if the
+audit slices into many folds/segments, where every fold start hits it. **Close this before
+running the audit**, since the audit's value rests on believing the engine.
+
+> **CORRECTION (same day, before the audit ran).** The materiality above is WRONG and the
+> regression test's own premise-guard disproved it. `calculate_ema` is
+> `ewm(span=…, adjust=False)` with **no `min_periods`**, so `macd_hist` is finite from bar 0
+> and there is **no NaN warm-up at all** — and it stays finite even when a `close` is NaN,
+> because `ewm` skips NaNs. `MACD_HIST_WARMUP_BARS = 26+9` marks statistical convergence,
+> NOT a NaN boundary (contrast `calculate_rsi`, which sets `min_periods` and genuinely does
+> emit NaN). The vacuous predicate was therefore real **as code** but **unreachable through
+> `calculate_macd`**. The fix was kept as defensive hygiene and to make the engine mirror
+> live exactly, but it **changes no existing backtest number**, and it was **not** a
+> prerequisite for the audit. Confidence: HIGH (empirically verified, pinned by
+> `tests/test_indicator_nan_guards.py::TestBacktestMacdExitMatchesLive`).
+> Lesson: "live has a `_finite` gate here" does not imply "this indicator goes NaN" — check
+> the indicator's own `min_periods` before asserting a warm-up boundary exists.
+
+**Correction to my own 2026-08-31 note.** I wrote in the v2 outcome file that item 14 should
+wait until Wall Street's demotion "has data". That was over-cautious: the reason to wait was
+that the *pooled* MACD-3 figure is dominated by Wall Street, but a **per-EPIC** audit is by
+construction immune to that. It can run now, provided results are read per-market and never
+pooled, and provided Wall Street is reported separately as shadow.
+
+**Confidence.** H1 HIGH · H2 MEDIUM · H3 MEDIUM-HIGH · NaN discrepancy HIGH (existence),
+LOW (materiality) · "candle-interval question is moot" HIGH.
+
+**Next steps (ranked).**
+1. Fix the backtest NaN-filter discrepancy (~3 lines, mirrors live `_finite`).
+2. Run item 14 as a confirmation-LENGTH sweep (N = 2/3/4/5) on the four live markets, entry
+   FIXED, only the exit varying — the `scripts/backtest_crude_exit.py` method. Prior from
+   Crude is that macd5 > macd3, so N=3 is not obviously right. Charge realistic spread.
+3. Only if (2) shows a consistent cross-market direction, consider `use_macd_exit=False` for
+   Japan 225 as a single-market question.
+4. **Do NOT** grid-sweep 12/26/9, and do NOT revisit MACD divergence — both are
+   data-snooping or already refuted.
+
+---
+
+## 2026-08-31 (b) — MACD exit-LENGTH sweep, per EPIC (v3 item 14) — RESULTS
+
+**Method.** `scripts/backtest_macd_exit_length.py`. Entry pinned to each market's live
+profile; ONLY `macd_exit_bars` varies (N=2/3/4/5, plus OFF = `use_macd_exit=False`). Driven
+through the hardened `src/backtest.py` so `117a4e8` applies (intrabar stop/TP on low/high,
+gap-through fills at the open, stop beats target in-bar, no HTF look-ahead). 80 days of
+IG-NATIVE 5m archive (from 2026-06-12), not Yahoo. `force_profile_stop=True`.
+
+**Three engine gaps found and closed while building this — all pre-existing:**
+1. **The engine charged NO costs whatsoever.** Fatal for this question specifically: a
+   shorter window exits more often, so an uncosted sweep flatters short N. Added
+   `cost_points`, charged once per closed trade (default 0.0 → prior runs unchanged).
+2. **`stop_atr_multiplier` was silently overridden by the regime value**, which live never
+   applies. Added an explicit `force_profile_stop` flag rather than relying on memory.
+3. `macd_exit_bars` did not exist — the window was hard-coded `range(1, 4)`.
+
+**⚠️ Spread measurement — the error that nearly produced a false verdict.** Spot snapshots
+taken at ~14:00 BST are worthless for markets whose session is elsewhere. Hong Kong's
+ATR/Spread runs 5–9x inside its 02:00–04:00 BST window and collapses to **0.1–0.6x**
+outside it; the midday snapshot gave **30pt against a true trading-hours 7.11pt — a 4.2x
+over-charge** that made HK look uneconomic (PF 0.21–0.36) and would have been reported as
+a finding. Japan was under-charged (7.0 vs 9.63). Correct method, now in the script:
+median(archive ATR in hour h) / median(logged ATR-Spread ratio in hour h), over the
+market's OWN `trading_start..trading_end` (converted UTC→BST to match archive stamps).
+Verified spreads: S&P **0.61** · NASDAQ **2.28** · Japan **9.63** · HK **7.11**.
+
+**PF at each market's real spread:**
+
+| Market | N=2 | N=3 LIVE | N=4 | N=5 | OFF |
+|---|---|---|---|---|---|
+| S&P 500 | 0.29 | **0.18** | 0.25 | 0.54 | **0.96** |
+| NASDAQ 100 | 0.90 | **0.75** | 0.67 | **0.91** | 0.84 |
+| Japan 225 | 1.01 | **1.11** | **1.38** | 1.27 | 1.14 |
+| Hong Kong | 0.66 | **0.72** | 0.77 | **0.85** | 0.64 |
+
+**Finding 1 — N=3 is never the best arm, in any market, at any cost level (HIGH,
+in-sample).** N=5 beats N=3 in **12/12** cells (4 markets × frictionless/real/2x). Not a
+per-market cherry-pick, and it independently reproduces the 2026-06-25 Crude result that
+macd5 > macd3 at every cost level — five markets, two unrelated studies, same direction.
+
+**Finding 2 — the MACD exit IS the exit, not a safety net (HIGH, directly measured).**
+Share of trades terminated by MACD at N=3: **S&P 96.9% · NASDAQ 95.1% · Japan 76.3% ·
+HK 65.4%.** On S&P, 31 of 32 trades exit on MACD, one hits the stop, and **none ever reach
+the 2R target** — `reward_risk=2.0` is unreachable there. This, not the N value, is the
+structural story.
+
+**Finding 3 — the mechanism is TAIL-CLIPPING (MEDIUM-HIGH).** Going N=3→N=5 trades more
+stop-outs for more take-profits: Japan TP 8→10 (+3.50%→+5.17%) with stops 10→15; HK TP 5→7
+with stops 13→16; NASDAQ MACD-exit P&L −0.91%→+1.29%. So MACD-3 is **the same class of
+intervention as breakout profit-protection, the ADX-ceiling, the leg-filter and
+swing-proximity — all REFUTED for clipping the tail the edge lives on.** That this lands in
+an already-established pattern raises confidence in the direction.
+
+**Finding 4 — exit tuning does not rescue a bad market (HIGH).** Only **Japan 225** is
+profitable at real cost (1.38 at N=4). Best arms elsewhere: S&P 0.96, NASDAQ 0.91, HK 0.85
+— all sub-1.0. N=3→N=5 on S&P moves 0.18→0.54, i.e. between two LOSING configs. Hypothesis
+H3 from the earlier note is SUPPORTED: the binding constraint is market quality and cost.
+
+**⚠️ Open discrepancy (LOW confidence on cause).** S&P backtests at PF 0.18 but lives at
+roughly breakeven (−£2.52/12t post-gate). Candidates: `long_only=True` over a falling
+80-day window, and the unmodelled global S&P-HTF direction gate (`main.py:1685`). Until
+understood, **S&P's numbers here are the least trustworthy in the table.**
+
+**Deliberate omissions** (all entry-side, identical across arms, so they do not bias the
+N-comparison — but they do make ABSOLUTE PFs unreliable): the global direction gate,
+NASDAQ's armed-pullback entry, calendar/hours/cluster filters, regime min_confidence floor.
+
+**Conclusion.** Most-supported: **N=3 is too twitchy on all four markets, and longer is
+uniformly better in-sample — but changing it is not warranted on this evidence**, because
+the only market where the change is between two PROFITABLE configs is Japan 225. Ruled out:
+"sweep the 12/26/9 periods" (still unreachable from config, and pure data-snooping);
+"turn the MACD exit OFF globally" (best on S&P, second-worst on HK — no portable answer).
+
+**Next.** (1) Walk-forward N=3 vs N=5 on **Japan 225 only** — the single actionable case.
+(2) Resolve the S&P backtest-vs-live gap before trusting any S&P conclusion. (3) Do NOT
+change live N on one 80-day in-sample read: per-EPIC WF went 21/21 in-sample → 12/20 OOS.
+
+---
+
+## 2026-08-31 (c) — Index breakout on IG-NATIVE data: TESTED, and NEGATIVE
+
+**Question.** `src/breakout.py` carries eight index breakout configs marked *"Indices —
+UNTESTED as breakout. Yahoo cash proxies can't test them… the shadow observer on the IG
+archive IS the test."* The cost-vs-edge study likewise **STRUCK** the seven index rows
+rather than refuting them (Yahoo sees 43–89% of the bars in the bot's trading window; 42.6%
+of IG-native breakout entries fire in hours Yahoo cannot see, and those are *worse*). The
+archive now holds ~1,370 1h bars per index — the data that strike called for.
+
+**Method.** `scripts/backtest_index_breakout_ignative.py`, faithful to the live path:
+N=55 entry channel on the prior CLOSED bars, 2.0×ATR stop floored at `min_stop_distance`,
+**no take-profit**, Donchian M=27 trail as the only exit, `117a4e8` gap-adjusted fills on
+entry/stop/trail with stop taking precedence in-bar. **HTF uses each market's OWN
+`htf_resolution`** (7 indices HOUR, Russell DAY) and is **refreshed once daily at 21:30 UTC
+from 30 closed bars and held**, mirroring the live scheduler — recomputing per bar would be
+a look-ahead the bot never enjoys.
+
+**Result — at the live cost convention (0.286×ATR = 0.143R at a 2×ATR stop):**
+
+| Market | n | W/L | totR | R/trade | PF |
+|---|---|---|---|---|---|
+| NASDAQ 100 | 22 | 6/16 | −5.39 | −0.245 | 0.68 |
+| S&P 500 | 21 | 5/16 | −9.54 | −0.454 | 0.42 |
+| Hong Kong | 23 | 6/17 | −11.96 | −0.520 | 0.38 |
+| Wall Street | 23 | 5/18 | −12.34 | −0.537 | 0.37 |
+| FTSE 100 | 23 | 6/17 | −12.49 | −0.543 | 0.33 |
+| Japan 225 | 21 | 3/18 | −12.62 | −0.601 | 0.34 |
+| AI Index | 10 | 1/9 | −9.93 | −0.993 | 0.01 |
+| **POOLED** | **146** | **34/112** | **−72.85** | **−0.499** | **0.40** |
+
+**Finding 1 — every index is negative, and the best is PF 0.68 (HIGH).** Nothing is close
+to 1.0.
+
+**Finding 2 — this is NOT a cost problem (HIGH).** Pooled **frictionless** PF is **0.51**
+(−0.356R/trade). The GROSS signal is negative, which distinguishes indices sharply from the
+forex/Gold book, where the corpus found a real gross edge roughly equal to costs. No cost
+reduction rescues a negative gross edge.
+
+**Finding 3 — independently corroborated by the LIVE shadow observer (HIGH).** Over the six
+well-powered indices, the forward-running observer records **−0.284R/trade (n=37)** against
+the archive backtest's **−0.341R/trade (n=133)**. Two independent measurements — one live,
+one replayed — land in the same place, so the verdict is not a backtest artefact. Per-market
+sign agreement is 4/6, with the disagreements confined to the smallest samples (NASDAQ n=4,
+Japan n=5 live).
+
+**Finding 4 — not one index is positive in BOTH halves (HIGH).** Split-half at live cost:
+S&P, NASDAQ and Wall Street flip sign (strongly negative H1 → mildly positive H2); FTSE,
+AI, Japan and Hong Kong are negative in both. Zero markets are stable-positive.
+
+**⚠️ Finding 5 — Russell 2000 and DXY are NOT tested; do not read their rows.** Both
+archives begin **2026-07-24** (641/646 1h bars) and both use a **DAY** HTF, which needs 21
+daily bars of EMA warm-up before it can emit any signal — leaving ~2 tradeable weeks. They
+produce n=2 and n=1 respectively. Those rows are an artefact of archive depth, not evidence.
+Re-run once each has ~90 days.
+
+**Caveat.** AI Index (n=10) has only 530 1h bars over three months because it runs limited
+hours and sits `EDITS_ONLY` much of the day; a Donchian channel across large session gaps is
+poorly behaved, so its PF 0.01 should be read as "unsuitable instrument", not "measured edge".
+
+**Conclusion.** The eight-index breakout question is **CLOSED: negative on the instrument's
+own data.** No index should be promoted to live breakout, and the "UNTESTED" note in
+`src/breakout.py` is now out of date. The breakout book stays **Gold (+ GBP/USD)**, which
+remains the corpus's standing recommendation. Answering the motivating question directly:
+there are **no new breakout candidates** among the indices.
+
+**Next.** (1) Re-test Russell + DXY at ~90 days of archive (≈2026-10). (2) Nothing else here
+is actionable; effort is better spent on the entry fill gap (~0.143R, ≈10× the spread on
+every market measured) than on hunting new markets.
