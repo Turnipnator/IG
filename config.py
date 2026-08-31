@@ -791,6 +791,25 @@ MARKETS = [
         epic="IX.D.DOW.DAILY.IP",
         name="Wall Street",
         sector="Indices",
+        shadow_only=True,  # 2026-08-31 review: DEMOTED to shadow, executing the
+                           # PRE-COMMITTED rule in v3 agenda item 1 ("still
+                           # net-negative after the MACD coherence gate → demote").
+                           # Post-gate (>=2026-07-24 a41013e) 18t 7W/8L −£36.44:
+                           # the gate did NOT fix it, and Wall St is the ONLY
+                           # material post-gate loser in a book that is otherwise
+                           # +£124 over the same window. The earlier "5t −£3.97"
+                           # read was a 5-trade sample; it has since tripled.
+                           # It loses on EVERY exit type — MACD-3 −£21.38 (9t)
+                           # AND stop/limit −£51.30 (7t) — so this is a MARKET
+                           # problem, not an exit-tuning problem; do not "fix" it
+                           # by swapping the exit. Long/short asymmetry is
+                           # separately REFUTED (archive walk-forward, fold
+                           # verdicts alternate) and is incoherent here anyway:
+                           # main.py:1685 applies a GLOBAL direction gate off the
+                           # S&P HTF trend, so a market does not choose its own
+                           # long/short mix. Signals keep logging + resolving via
+                           # benched_outcomes; re-promote only if the shadow
+                           # record turns clearly positive.
         min_stop_distance=4.0,
         default_size=0.1,
         min_confidence=0.55,
