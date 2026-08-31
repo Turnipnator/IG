@@ -208,6 +208,69 @@ class TestExitPathToleratesShortFrames(unittest.TestCase):
                                          f"{market.name} n={n}: closed on a NaN reason")
 
 
+class TestBacktestMacdExitMatchesLive(unittest.TestCase):
+    """src/backtest.py must not fire a MACD exit that live would hold.
+
+    It used `all(h < 0 for h in last_3 if not pd.isna(h))`. The NaN filter drops
+    bars from the generator, so on [finite_neg, NaN, NaN] all() is satisfied by
+    ONE element -- one bar of confirmation instead of three. Live cannot: it
+    gates the same window on _finite() (402484f) and holds.
+
+    IMPORTANT (verified 2026-08-31, after an initial claim that this was firing
+    at every warm-up boundary): the idiom was vacuous but UNREACHABLE through
+    calculate_macd. calculate_ema is `ewm(span=..., adjust=False)` with no
+    min_periods, so macd_hist is finite from bar 0 -- and stays finite even when
+    a close is NaN, because ewm skips NaNs. MACD_HIST_WARMUP_BARS (26+9) marks
+    statistical convergence, NOT a NaN boundary; contrast calculate_rsi, which
+    sets min_periods and genuinely does emit NaN.
+
+    So the fix changed no backtest result. These tests pin both halves: that
+    macd_hist really has no NaN warm-up (so nobody re-derives the wrong
+    materiality), and that the predicate now holds rather than firing if a NaN
+    ever does reach it from another source.
+    """
+
+    def test_macd_hist_has_no_nan_warmup_so_the_old_bug_was_unreachable(self):
+        from src.indicators import calculate_macd, calculate_rsi
+
+        for seed in (1, 3, 7):
+            df = frame(120, seed=seed)
+            _, _, hist = calculate_macd(df["close"])
+            self.assertEqual(int(hist.isna().sum()), 0,
+                             "macd_hist gained a NaN warm-up — the backtest "
+                             "materiality note in this file must be revisited")
+
+        # A NaN close does not propagate either (ewm skips it).
+        s = frame(120, seed=2)["close"].copy()
+        s.iloc[50] = float("nan")
+        _, _, hist = calculate_macd(s)
+        self.assertEqual(int(hist.isna().sum()), 0)
+
+        # Contrast: RSI *does* have a real NaN warm-up (min_periods is set).
+        self.assertGreater(int(calculate_rsi(frame(120, seed=1)["close"], 7).isna().sum()), 0)
+
+    def test_predicate_holds_on_nan_and_still_exits_when_fully_aligned(self):
+        """The shipped expression from src/backtest.py."""
+        def fires(window):
+            return (all(np.isfinite(h) for h in window)
+                    and all(h < 0 for h in window))
+
+        self.assertFalse(fires([-1.0, float("nan"), float("nan")]))
+        self.assertFalse(fires([float("nan")] * 3))
+        self.assertFalse(fires([-1.0, -1.0, float("nan")]))
+        self.assertFalse(fires([-1.0, -1.0, 1.0]))   # not 3 consecutive
+        self.assertTrue(fires([-1.0, -2.0, -0.5]))   # fully warm and aligned
+
+        # The old idiom fired on the first of those -- that was the defect.
+        self.assertTrue(all(h < 0 for h in [-1.0, float("nan"), float("nan")]
+                            if not pd.isna(h)))
+
+    def test_backtest_source_no_longer_filters_nan_out_of_the_window(self):
+        src = (Path(__file__).resolve().parents[1] / "src" / "backtest.py").read_text()
+        self.assertNotIn("for h in last_3 if not pd.isna(h)", src)
+        self.assertIn("all(np.isfinite(h) for h in last_3)", src)
+
+
 def _nan(v):
     try:
         return math.isnan(float(v))

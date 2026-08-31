@@ -96,6 +96,24 @@ DEFAULT_PARAMS = {
     "atr_period": 14,
     "stop_atr_multiplier": 1.5,
     "reward_risk_ratio": 2.0,
+    # Consecutive opposing MACD-histogram bars required to close a position.
+    # 3 mirrors live (strategy.py `range(1, 4)`). Exposed so the exit's
+    # sensitivity can be A/B'd without editing the engine — a shorter window
+    # exits more often, which is exactly why `cost_points` must be set too.
+    "macd_exit_bars": 3,
+    # ROUND-TRIP cost in PRICE POINTS, charged once per closed trade (spread,
+    # plus any slippage you want to model). The engine charged NOTHING before
+    # 2026-08-31, which silently flattered every arm that trades more often —
+    # the precise failure mode that matters when comparing exit sensitivities.
+    # Leave 0.0 only for a deliberately frictionless read.
+    "cost_points": 0.0,
+    # Regime detection overrides stop_atr_multiplier with the regime's own value
+    # (see the assignment guarded by `if regime_params`). LIVE NEVER DOES THIS —
+    # it applies the profile's stop — so a sweep that leaves this False is
+    # measuring a stop width the bot does not trade. Set True to pin the stop to
+    # the profile value. Regime still governs min_confidence and size, both of
+    # which live DOES apply.
+    "force_profile_stop": False,
     # RSI extreme cooldown: tighten entry rules after recent extreme RSI.
     # 0 = disabled. Otherwise look back N prior candles; if any candle's RSI
     # was outside [rsi_extreme_low, rsi_extreme_high] on the *opposite* side
@@ -211,6 +229,19 @@ class Backtester:
 
         self.params = params or DEFAULT_PARAMS.copy()
         self.trades: list[Trade] = []
+
+    def _cost_pct(self, entry_price: float) -> float:
+        """Round-trip cost for one trade, as a percentage of entry price.
+
+        Charged once per CLOSED trade, matching how a spread is actually paid
+        (crossed on the way in, and the exit price already sits on the far side
+        of the book). Returns 0.0 when cost_points is unset, so existing
+        frictionless runs are unchanged.
+        """
+        cost_points = float(self.params.get("cost_points", 0.0) or 0.0)
+        if cost_points <= 0 or not entry_price:
+            return 0.0
+        return cost_points / abs(entry_price) * 100
 
     def fetch_data(
         self,
@@ -634,18 +665,29 @@ class Backtester:
 
                 # Check MACD exit (unless disabled for this market)
                 if not exit_reason and momentum_hold_ok and market not in DISABLE_MACD_EXIT:
-                    macd_hist = row["macd_hist"]
-                    if position.direction == "BUY" and macd_hist < 0:
-                        # Check 3 consecutive negative
-                        if i >= 3:
-                            last_3 = [df.iloc[i-j]["macd_hist"] for j in range(3)]
-                            if all(h < 0 for h in last_3 if not pd.isna(h)):
+                    macd_bars = int(self.params.get("macd_exit_bars", 3))
+                    if i >= macd_bars:
+                        last_3 = [df.iloc[i - j]["macd_hist"] for j in range(macd_bars)]
+                        # DEFENSIVE, not a live-result fix (2026-08-31). The old
+                        # `if not pd.isna(h)` filter dropped NaN bars from the
+                        # generator, so all() went vacuously true on
+                        # [finite_neg, NaN, NaN] — one bar of confirmation instead
+                        # of three, which live cannot do (strategy.py gates the
+                        # same window on _finite(), 402484f). But it was
+                        # UNREACHABLE via calculate_macd: calculate_ema is
+                        # ewm(span=…, adjust=False) with NO min_periods, so
+                        # macd_hist is finite from bar 0 and stays finite even
+                        # when a close is NaN (ewm skips NaNs). MACD_HIST_WARMUP_BARS
+                        # is a statistical-convergence constant, NOT a NaN boundary.
+                        # So this changes no existing backtest number; it removes a
+                        # vacuous predicate that would bite the moment macd_hist
+                        # arrived from anywhere that CAN emit NaN. See
+                        # tests/test_indicator_nan_guards.py.
+                        if all(np.isfinite(h) for h in last_3):
+                            if position.direction == "BUY" and all(h < 0 for h in last_3):
                                 exit_reason = "MACD bearish"
                                 exit_price = close
-                    elif position.direction == "SELL" and macd_hist > 0:
-                        if i >= 3:
-                            last_3 = [df.iloc[i-j]["macd_hist"] for j in range(3)]
-                            if all(h > 0 for h in last_3 if not pd.isna(h)):
+                            elif position.direction == "SELL" and all(h > 0 for h in last_3):
                                 exit_reason = "MACD bullish"
                                 exit_price = close
 
@@ -689,6 +731,7 @@ class Backtester:
                         position.pnl_percent = (exit_price - position.entry_price) / position.entry_price * 100
                     else:
                         position.pnl_percent = (position.entry_price - exit_price) / position.entry_price * 100
+                    position.pnl_percent -= self._cost_pct(position.entry_price)
 
                     position.pnl = position.pnl_percent * position.size
                     equity += position.pnl * account_size / 100
@@ -786,7 +829,7 @@ class Backtester:
 
                 # Get ATR multiplier (regime-adjusted if available)
                 stop_atr_mult = self.params["stop_atr_multiplier"]
-                if regime_params:
+                if regime_params and not self.params.get("force_profile_stop", False):
                     stop_atr_mult = regime_params.stop_atr_multiplier
 
                 # Calculate ATR-based stop, but respect minimum stop distance from config
@@ -837,6 +880,7 @@ class Backtester:
                 position.pnl_percent = (position.exit_price - position.entry_price) / position.entry_price * 100
             else:
                 position.pnl_percent = (position.entry_price - position.exit_price) / position.entry_price * 100
+            position.pnl_percent -= self._cost_pct(position.entry_price)
             position.pnl = position.pnl_percent * position.size
             self.trades.append(position)
 
