@@ -2708,3 +2708,67 @@ this alone — `allowed_direction` is an ENTRY GATE ⇒ full pre-flight, and the
 go-live discipline wants ≥30 IG-native trades on the exact pair plus no trustworthy-
 backtest veto; the Yahoo sweep is currently that veto and must be reconciled, not ignored.
 (4) FTSE and AI Index: no action.
+
+---
+
+## 2026-09-01 (b) — BE/trail modelled: the S&P short edge SURVIVES but is 40% of the headline
+
+**Supersedes the headline of 2026-09-01 above.** That entry flagged break-even stop and
+ATR trail as the largest unmodelled term and guessed "+5.74R is likely optimistic". The
+guess was right and the size is now measured: **the edge is real, sign-consistent, and
+roughly 40% of what it first looked.**
+
+**Method.** `scripts/resolve_direction_restricted.py --be-trail` now models live's BE and
+ATR trail (`main.py:778-890`) exactly: BE fires when profit >= `breakeven_trigger_pct`
+(0.7) × the ORIGINAL stop distance, moving the stop to entry + `breakeven_lock_pct` (0.0
+⇒ exact entry); only after BE does the ATR trail ratchet at `atr_trail_mult` (1.5) × the
+bar's ATR, one-way, with live's 20% minimum-move throttle.
+
+Two conservatisms, both stated in the harness docstring: live runs per TICK, this runs per
+BAR, so (a) the stop is tested against the level as it stood at the START of the bar,
+meaning BE cannot rescue a loss in the same bar it triggers — the case where BE helps most
+— and (b) the trail ratchets at most once per bar. **Both understate BE/trail, so the
+measured drag is an upper bound on the true drag.**
+
+Mechanism validated, not assumed: the 8 `be-trail` exits resolve to `[0.0 ×6, +0.332,
++0.455]` — six flat at entry exactly as `lock_pct=0` requires, two positive where the
+trail ratcheted into profit — and all-trade R stays bounded −1.00..+2.00. The no-BE path
+reproduces the prior run bit-for-bit (+5.74R, 20W/15L), so the flag is genuinely additive.
+
+**S&P 500, cost 0.05R, the full ladder:**
+
+| config | n | W/L | totR | PF |
+|---|---|---|---|---|
+| MACD-3, no BE — *the first headline* | 35 | 20W/15L | +5.74 | 1.62 |
+| MACD-3, +BE/trail | 35 | 16W/19L | +2.93 | 1.36 |
+| MACD-5, no BE | 34 | 14W/20L | +3.34 | 1.28 |
+| **MACD-5, +BE/trail — THE CONFIG LIVE RUNS TODAY** | **34** | **12W/22L** | **+2.24** | **1.22** |
+
+Split-half on that live config: **H1 +1.25 (PF 1.24), H2 +0.93 (PF 1.19)** — both positive
+and near-identical, MORE consistent than the MACD-3+BE version (1.70 vs 1.14). So the
+robustness improved even as the magnitude fell.
+
+At S&P's real trading-hours cost (~0.03R: 0.021 for a 2×ATR breakout stop, scaled to the
+1.5×ATR momentum stop) the live-config figure is ≈**+2.9R over 34, PF ≈1.28**.
+
+**Other two markets, for consistency:** FTSE is UNCHANGED by BE/trail (−0.34R, identical
+W/L) — BE never triggered, because its shorts die on fast MACD exits before reaching 0.7R.
+AI Index improves −1.40R → −0.69R (BE rescues some losers) but stays clearly negative:
+**BE could not save shorts even in a 7.5% decline**, which strengthens that long-only call.
+
+**Confidence: S&P long-only costs something, but NOT enough to act on — downgraded from
+"costing money" to "marginal".** What changed: the headline more than halved; win rate
+falls to 35.3%; and at 0.10R cost PF is 1.05, i.e. the edge is cost-fragile and dies inside
+the plausible spread band. What held up: positive at every cost level tested and in both
+disjoint halves, still earned while the index ROSE.
+
+⚠️ **n=34 does NOT satisfy the go-live gate.** `GO_LIVE_CRITERIA.md` §requires ≥30 IG-NATIVE
+TRADES on the exact strategy-market pair. These are 34 *counterfactual resolutions* of
+signals that were never executed — not trades. They cannot qualify anything, and reading
+"n=34 ≥ 30" as clearing that gate would be exactly the gate-weakening §7 forbids.
+
+**Next.** (1) No config change. The case for lifting S&P's restriction is weaker after
+faithful modelling, not stronger. (2) Let the row count grow — it accrues free and n is
+still the binding constraint. (3) The Yahoo sweep (BUY PF 12.3 vs SELL 0.35) remains
+unreconciled and is a standing veto; at PF 1.22 the IG read no longer has the weight to
+overturn it. (4) FTSE, AI Index: closed, no action.

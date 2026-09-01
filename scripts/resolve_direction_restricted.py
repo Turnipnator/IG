@@ -83,14 +83,32 @@ def utc_hour_of(ts: pd.Timestamp) -> int:
 
 
 def resolve(mc, strat, rows, ind, macd_bars, cost_r, use_pullback, use_hours,
-            dedupe):
-    """Walk each rejected signal forward. Returns (trades, drops)."""
+            dedupe, be_trail=False):
+    """Walk each rejected signal forward. Returns (trades, drops).
+
+    be_trail=True additionally models the live break-even stop and ATR trail
+    (main.py:778-890), which the benched resolver omits. Live runs both PER TICK;
+    this replay is per BAR, so it is a conservative approximation:
+
+      * stop is tested against the level as it stood at the START of the bar,
+        BEFORE this bar's BE/trail update. Within one bar OHLC cannot say whether
+        the 0.7R profit spike or the adverse reversal came first, so we assume the
+        adverse one did -- the same stop-first tie rule _resolve_benched uses.
+        This UNDERSTATES the benefit of BE in exactly the spike-then-reverse case
+        where BE helps most, so a BE gain measured here is a floor, not a ceiling.
+      * live trails on every tick and can ratchet several times inside a 5m bar;
+        here it ratchets at most once per bar, off that bar's extreme. Understates
+        the trail slightly in fast moves.
+    """
     ob, os_ = strat.rsi_overbought, strat.rsi_oversold
     adx_exit = strat.adx_threshold - 10
     use_macd = getattr(strat, "use_macd_exit", True)
     pb_frac = getattr(strat, "pullback_entry_atr_frac", 0.0) or 0.0
     pb_win = getattr(strat, "pullback_entry_window", 0) or 0
     pullback_on = use_pullback and pb_frac > 0 and pb_win > 0
+    be_pct = getattr(strat, "breakeven_trigger_pct", 0.0) or 0.0
+    lock_pct = getattr(strat, "breakeven_lock_pct", 0.0) or 0.0
+    trail_mult = getattr(strat, "atr_trail_mult", 0.0) or 0.0
     MAX_FWD = 96  # ~8h at 5m -- matches _resolve_benched's EXPIRED horizon
 
     dates = ind["date"].values
@@ -149,6 +167,10 @@ def resolve(mc, strat, rows, ind, macd_bars, cost_r, use_pullback, use_hours,
         mh = fwd["macd_hist"].values if "macd_hist" in fwd else None
         rs = fwd["rsi"].values if "rsi" in fwd else None
         ax = fwd["adx"].values if "adx" in fwd else None
+        aa = fwd["atr"].values if "atr" in fwd else None
+        # Absolute stop level, which BE/trail ratchet. Starts at the broker stop.
+        stop_lvl = (entry - stop) if is_buy else (entry + stop)
+        be_done = False
 
         status = outcome = None
         rmult = None
@@ -156,15 +178,36 @@ def resolve(mc, strat, rows, ind, macd_bars, cost_r, use_pullback, use_hours,
         for i in range(len(fwd)):
             n = i + 1
             if is_buy:
-                if ll[i] <= entry - stop:
-                    status, outcome, rmult = "LOSS", "stop", -1.0; break
+                if ll[i] <= stop_lvl:
+                    d = (stop_lvl - entry) / stop
+                    status, outcome = ("WIN" if d > 0 else "LOSS"), ("stop" if not be_done else "be-trail")
+                    rmult = d; break
                 if hh[i] >= entry + lim:
                     status, outcome, rmult = "WIN", "limit", lim / stop; break
             else:
-                if hh[i] >= entry + stop:
-                    status, outcome, rmult = "LOSS", "stop", -1.0; break
+                if hh[i] >= stop_lvl:
+                    d = (entry - stop_lvl) / stop
+                    status, outcome = ("WIN" if d > 0 else "LOSS"), ("stop" if not be_done else "be-trail")
+                    rmult = d; break
                 if ll[i] <= entry - lim:
                     status, outcome, rmult = "WIN", "limit", lim / stop; break
+
+            # BE / ATR trail, applied AFTER this bar's stop test (see docstring).
+            if be_trail:
+                if not be_done and be_pct > 0:
+                    prof = (hh[i] - entry) if is_buy else (entry - ll[i])
+                    if prof >= stop * be_pct:
+                        off = stop * lock_pct
+                        stop_lvl = (entry + off) if is_buy else (entry - off)
+                        be_done = True
+                        # live does BE then `continue` -- no trail on the same pass
+                elif be_done and trail_mult > 0 and aa is not None and aa[i] > 0:
+                    td = aa[i] * trail_mult
+                    nt = (hh[i] - td) if is_buy else (ll[i] + td)
+                    better = (nt > stop_lvl) if is_buy else (nt < stop_lvl)
+                    # 20% minimum-move throttle, as live (main.py:869)
+                    if better and abs(nt - stop_lvl) >= td * 0.2:
+                        stop_lvl = nt
             if rs is not None:
                 if is_buy and rs[i] > ob:
                     d = (cc[i] - entry) / stop
@@ -228,6 +271,9 @@ def main():
                          "a historical replay; pass 5 to ask the forward question.")
     ap.add_argument("--naive", action="store_true",
                     help="disable hours/pullback/dedupe -- the OVERSTATED read")
+    ap.add_argument("--be-trail", action="store_true",
+                    help="also model the live break-even stop + ATR trail "
+                         "(main.py:778-890), which benched_outcomes omits")
     args = ap.parse_args()
 
     mc = next((m for m in MARKETS
@@ -286,14 +332,14 @@ def main():
         sys.exit(1)
 
     faithful = not args.naive
-    print(f"\n--- outcomes ({'FAITHFUL: hours+pullback+one-at-a-time' if faithful else 'NAIVE: no gates'}) ---")
+    print(f"\n--- outcomes ({'FAITHFUL: hours+pullback+one-at-a-time' if faithful else 'NAIVE: no gates'}{' +BE/TRAIL' if args.be_trail else ''}) ---")
     for cost in (0.0, 0.02, 0.05, 0.10):
         tr, dp = resolve(mc, strat, rows, ind, args.macd_bars, cost,
-                         faithful, faithful, faithful)
+                         faithful, faithful, faithful, args.be_trail)
         report(tr, dp, f"cost={cost:.2f}R")
 
     tr, dp = resolve(mc, strat, rows, ind, args.macd_bars, 0.0,
-                     faithful, faithful, faithful)
+                     faithful, faithful, faithful, args.be_trail)
     from collections import Counter
     print(f"\n  dropped {len(dp)}: {dict(Counter(d[1] for d in dp))}")
     if tr:
