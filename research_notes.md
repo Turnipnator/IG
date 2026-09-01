@@ -2629,3 +2629,82 @@ the exact per-market pick that went 21/21 in-sample → 12/20 OOS.
 market whose trading window is narrower than 24h — re-run rather than cite. (2) Explain the
 live-vs-backtest dispersion gap (sdR 0.86 vs 0.36). (3) The S&P tuning ideas are unblocked,
 but note S&P's own numbers barely moved under the gate.
+
+---
+
+## 2026-09-01 — Direction restrictions replayed on IG-native data: S&P long-only is COSTING money, AI Index long-only is CONFIRMED
+
+**Question.** v3 agenda item 18: is `MarketConfig.allowed_direction` still earning its
+place? Three markets carry it (S&P 500, FTSE 100, AI Index). `rejected_signals` holds
+160 `Direction-restricted (BUY-only)` rows — signals that passed EVERY strategy gate and
+were discarded solely for their side. Never resolved to outcomes until now.
+
+**Hypotheses.** (H1) The restrictions are all still right — shorts lose everywhere.
+(H2) They are stale — the June evidence was thin/Yahoo-based and shorts now pay.
+(H3) It is market-specific — right on some, wrong on others.
+
+**Method.** New harness `scripts/resolve_direction_restricted.py`. Rebuilds each blocked
+signal from the IG candle archive (rows carry adx/rsi but no entry/stop/limit), then
+walks it forward on the SAME exit ladder as `main._resolve_benched` (barriers stop-first
+on a tie, RSI extreme, MACD-N, ADX-ranging) so numbers are comparable to
+`benched_outcomes`. Costs SWEPT (0 / 0.02 / 0.05 / 0.10R) rather than assumed. MACD-3
+(the window in force across the whole sample; `9e2dd0c` moved it to 5 on 2026-09-01,
+after every row).
+
+Models the three gates the direction check pre-empts: **trading hours**, **pullback-entry
+arm/expiry**, and **one-position-at-a-time**. This matters enormously — naive replay of
+the FTSE rows gives n=49 / +6.82R, the gated replay gives **n=11 / +0.21R**. Most blocked
+signals were never going to become trades.
+
+⚠️ **A look-ahead bug was found and fixed mid-analysis, and it changed the verdict.**
+Joining on `bar.date <= signal.timestamp` selects the bar that OPENED at the signal time,
+not the one that CLOSED there. FTSE read +2.00R before the fix and +0.21R after. The join
+is now VERIFIED every run, not assumed: at the correct offset the archive reproduces
+live's logged RSI to **0.000** (median and p90) and ADX to 0.093, versus 5.388 RSI at the
+naive offset. Same class as [[project-htf-series-lookahead-2026-08]] — suspect the
+timestamp join first.
+
+**Evidence** (faithful gating, cost 0.05R, MACD-3):
+
+| market | rows | trades | W/L | totR | PF | H1 | H2 | window drift |
+|---|---|---|---|---|---|---|---|---|
+| **S&P 500** | 80 | **35** | 20W/15L | **+5.74** | **1.62** | +2.09 (1.40) | +4.04 (2.00) | **+1.69% UP** |
+| FTSE 100 | 49 | 11 | 4W/7L | −0.34 | 0.85 | +0.22 | −0.72 | +3.80% UP |
+| AI Index | 21 | 11 | 5W/6L | −1.40 | 0.67 | +0.83 | −2.24 | −7.48% DOWN |
+
+S&P is positive across the ENTIRE cost band (+7.49R at zero, **+3.99R even at 0.10R**)
+and **positive in both disjoint halves** — the only one of the three that is sign-consistent.
+
+**The obvious confound is inverted, not present.** "Shorts won because it was a downtrend"
+fails on the data: S&P's shorts made +5.74R while the index ROSE 1.69%, and AI Index's
+shorts LOST 1.40R while it FELL 7.48%. The market that fell is the one where shorts lost.
+That is the opposite of a regime artifact and materially strengthens the S&P read.
+
+**Confidence.**
+- **AI Index long-only correct — HIGH.** Shorts lost through a 7.5% decline; sign-flips
+  across halves. Restriction confirmed. Do not revisit.
+- **FTSE long-only harmless — MEDIUM.** ≈0R, sign-flips (+0.22 / −0.72) = noise, matching
+  the config's own "Yahoo says shorts are +EV (PF 1.71) but doesn't survive IG spread".
+  Note its stated revisit trigger — "revisit if FTSE enters a sustained downtrend" — was
+  **never met**; FTSE rose 3.8%. Leave alone.
+- **S&P long-only is costing money — MEDIUM, not yet HIGH.** Robust in sign, cost band and
+  both halves, and earned against the index direction. Held back from HIGH by: n=35 on one
+  2.5-month window; break-even stop and ATR trail NOT modelled (BE at 0.7R would convert
+  some winners toward 0R, so +5.74R is likely optimistic); and it CONTRADICTS the
+  2026-07-01 sweep (Yahoo 1h/725d: BUY PF 12.3 vs SELL 0.35). That contradiction is
+  expected rather than disqualifying — `^GSPC` is a Yahoo CASH index with no out-of-hours
+  bars, and [[project-indices-direction-sweep-2026-07]] itself prescribes the IG archive
+  as the definitive source. This IS that test. But one IG window beating one Yahoo window
+  is not yet a promotion case.
+
+**Not modelled** (shared with the live benched resolver, so comparable): BE stop, ATR
+trail, price-relative stop ceiling, correlation-cluster filter, re-entry cooldown,
+screener activity, risk-manager position cap.
+
+**Next.** (1) Re-run S&P with BE/trail modelled — that is the single largest unmodelled
+term and the one most likely to shrink +5.74R. (2) Let the S&P row count keep growing; it
+accrues for free and n=35 is the binding constraint. (3) Do NOT lift S&P's restriction on
+this alone — `allowed_direction` is an ENTRY GATE ⇒ full pre-flight, and the pre-committed
+go-live discipline wants ≥30 IG-native trades on the exact pair plus no trustworthy-
+backtest veto; the Yahoo sweep is currently that veto and must be reconciled, not ignored.
+(4) FTSE and AI Index: no action.
