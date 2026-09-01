@@ -98,6 +98,10 @@ def run(epic, mk, cost_atr_frac, lo=None, hi=None):
     df["htf"] = htf.values
 
     N, M, k = cfg.n, cfg.m, cfg.stop_atr_mult
+    # Live refuses breakout entries outside the market's hours (main.py:933). Archive
+    # stamps are Europe/London and this window is entirely BST, so live UTC hours are
+    # +1 frame-local. Entries only -- an open position is managed round the clock.
+    h_lo, h_hi = (mk.trading_start + 1) % 24, (mk.trading_end + 1) % 24
     trades = []
     i = N + 1
     n = len(df)
@@ -114,6 +118,9 @@ def run(epic, mk, cost_atr_frac, lo=None, hi=None):
         elif r["low"] <= lower and r["htf"] == "BEARISH":
             direction, level = "SELL", lower
         if direction is None:
+            i += 1; continue
+        hh = r["date"].hour
+        if (hh < h_lo or hh >= h_hi) if h_lo < h_hi else (h_hi <= hh < h_lo):
             i += 1; continue
 
         # entry fill: adverse side of (open, level) — a bar that gapped through the

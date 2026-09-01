@@ -42,7 +42,20 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import MARKETS as _ALL_MARKETS
 from src.backtest import Backtester, DEFAULT_PARAMS, DISABLE_MACD_EXIT
+
+# Archive timestamps are Europe/London; this window (Jun-Aug 2026) is entirely BST,
+# so live's UTC trading hours are +1 in frame-local terms. Explicit, because a run
+# spanning a DST boundary would need real tz conversion rather than this constant.
+_BST_OFFSET = 1
+_MKCFG = {m.name: m for m in _ALL_MARKETS}
+
+
+def live_entry_hours(market):
+    """(lo, hi) frame-local entry window mirroring main.py's live hours gate."""
+    m = _MKCFG[market]
+    return ((m.trading_start + _BST_OFFSET) % 24, (m.trading_end + _BST_OFFSET) % 24)
 
 ARCHIVE = Path(os.environ.get("IG_ARCHIVE_DIR", "data/candle_archive"))
 
@@ -100,6 +113,10 @@ def arm_params(market, n, cost):
     p.update(BASE)
     p.update(MARKETS[market][1])
     p["cost_points"] = cost
+    # Live REFUSES entries outside the market's hours (main.py:1780). Without this the
+    # sweep trades thin overnight sessions the bot never touches -- worth 0.91->1.52 PF
+    # on NASDAQ and 1.27->0.98 on Japan, i.e. it can flip a market's verdict outright.
+    p["entry_hours"] = live_entry_hours(market)
     if n is not None:
         p["macd_exit_bars"] = n
     return p

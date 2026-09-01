@@ -2544,3 +2544,88 @@ wins; max risk/trade unchanged").
 `strategy.py:761` (`range(1, 4)`), so changing it is a signal-path edit and needs the
 pre-flight; it is not a config flip. Expected effect at full-sample real cost:
 S&P 0.18→0.54 · NASDAQ 0.75→0.91 · Japan 1.11→1.27 · HK 0.72→0.85.
+
+---
+
+## 2026-09-01 — The S&P "discrepancy" dissolves, and the engine was trading hours the bot cannot
+
+**Question.** S&P backtested at PF 0.18 but lived at ~breakeven. Resolve before tuning
+anything on S&P.
+
+### Finding 1 — there was never a discrepancy (HIGH). My earlier claim was wrong.
+
+|  | n | meanR | sdR | PF |
+|---|---|---|---|---|
+| Backtest (N=5, hours-gated) | 24 | −0.069 | 0.36 | 0.54 |
+| Live (same archive window) | 27 | −0.017 | 0.86 | 1.03 |
+
+Difference **+0.052R, SE 0.181, t = +0.29**, 95% CI [−0.303, +0.407]. **Not significant.**
+
+I asserted "the discrepancy is real, not a small-sample artefact" on the strength of
+PF 1.03 vs 0.18. **That was a methodological error of exactly the kind this file keeps
+warning about**: PF is a ratio and wildly unstable at n≈25, and I compared point estimates
+without error bars. The underlying means differ by 0.05R. **Lesson: never compare PFs at
+n<50 without an SE; compare mean R.**
+
+One real modelling difference does survive: **live sdR 0.86 vs backtest 0.36.** The means
+agree, the *shape* does not — the backtest's outcomes are far less dispersed, consistent
+with MACD terminating 95%+ of trades at small uniform amounts while live sees bigger tails.
+Unexplained; worth a look before trusting any tail-sensitive statistic from the engine.
+
+### Finding 2 — `src/backtest.py` had NO trading-hours gate (HIGH). Real bug, now fixed.
+
+Live refuses entries outside `trading_start..trading_end` (`main.py:1780` momentum, `:933`
+breakout). The engine had no equivalent, so **every backtest in this repo was free to enter
+in hours the bot never trades** — for an index, the thin gappy overnight session. Fixed via
+a new `entry_hours` param (frame-local, so the caller does the tz conversion; entries only,
+since live manages open positions round the clock).
+
+**It is large and market-specific — it can flip a verdict outright:**
+
+| | S&P | NASDAQ | Japan | HK |
+|---|---|---|---|---|
+| ungated PF | 0.54 | 0.91 | 1.27 | 0.85 |
+| **hours-gated PF** | **0.54** | **1.52** | **0.98** | **0.84** |
+| n | 30→24 | 61→39 | **76→28** | 52→25 |
+
+**Japan was taking two-thirds of its trades outside its own 00–08 UTC window.**
+
+### Finding 3 — two earlier claims are RETRACTED.
+
+- ~~"Japan 225 is the only market profitable at real cost"~~ — **false.** Hours-gated Japan
+  is 0.98. **NASDAQ is the best market** (1.52 at N=5, 1.66 at N=2) and the only one clearly
+  above 1.0.
+- ~~"N=5 beats N=3 in 12/12 cells"~~ — hours-gated it is **3 of 4 markets**, and
+  **Hong Kong genuinely reverses** (N=3 1.01 vs N=5 0.84).
+
+### Finding 4 — index breakout verdict UNCHANGED and slightly stronger (HIGH).
+
+Hours-gated pooled **−0.542R/trade, PF 0.35** (was −0.499 / 0.40); frictionless 0.45 (was
+0.51). Every index still negative, none near 1.0. Expected: the live shadow observer that
+corroborated it already runs under the live hours gate. **The 2026-08-31(c) conclusion
+stands.**
+
+### Finding 5 — the N=3 vs N=5 walk-forward WEAKENS under the gate (MEDIUM).
+
+| | halves | p | folds | p |
+|---|---|---|---|---|
+| pre-gate | 8/8 | 0.004 | 10/12 | 0.019 |
+| **hours-gated** | **7/8** | **0.035** | **7/12** | **0.387** |
+
+The fold result is now **indistinguishable from chance** (7/11 excluding the degenerate HK
+fold where both arms had zero winners: p=0.274). A material part of the 8/8 / 10/12 that
+justified deploying N=5 was powered by overnight trades the bot never takes.
+
+**Decision (user's, 2026-09-01): KEEP N=5.** Rationale recorded so it can be revisited
+honestly: S&P is the strongest and most consistent case (3/3 folds, both halves,
+0.19→0.54); 7/8 halves overall; 3/4 markets full-sample; independent Crude corroboration
+which the hours gate does not touch; a mechanism with four prior refutations behind it; and
+**max risk/trade is unchanged either way**, so the downside is bounded. Against: folds at
+chance, HK a genuine reversal, NASDAQ incoherent between halves (2/2) and folds (1/3).
+**Deliberately NOT made per-market** — exempting HK would rest on 25 trades and one half,
+the exact per-market pick that went 21/21 in-sample → 12/20 OOS.
+
+**Next.** (1) Every absolute PF quoted from this repo before 2026-09-01 is suspect for any
+market whose trading window is narrower than 24h — re-run rather than cite. (2) Explain the
+live-vs-backtest dispersion gap (sdR 0.86 vs 0.36). (3) The S&P tuning ideas are unblocked,
+but note S&P's own numbers barely moved under the gate.

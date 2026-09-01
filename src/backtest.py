@@ -114,6 +114,17 @@ DEFAULT_PARAMS = {
     # the profile value. Regime still governs min_confidence and size, both of
     # which live DOES apply.
     "force_profile_stop": False,
+    # (lo, hi) entry hours in the FRAME's OWN local time, half-open [lo, hi); None
+    # disables the gate. LIVE refuses entries outside MarketConfig.trading_start..
+    # trading_end (main.py:1780 for momentum, :933 for breakout) and the engine had
+    # NO equivalent, so every backtest in this repo has been free to enter in hours
+    # the bot never trades -- for an index that means thin, gappy overnight sessions.
+    # Hours are frame-local, NOT UTC, so the caller does the conversion and the engine
+    # embeds no timezone assumption: the IG archive is stamped Europe/London, so S&P's
+    # live 4-20 UTC is passed as (5, 21) in summer. Exits are deliberately NOT gated --
+    # live keeps managing an open position around the clock, and the broker stop is
+    # always live.
+    "entry_hours": None,
     # RSI extreme cooldown: tighten entry rules after recent extreme RSI.
     # 0 = disabled. Otherwise look back N prior candles; if any candle's RSI
     # was outside [rsi_extreme_low, rsi_extreme_high] on the *opposite* side
@@ -765,6 +776,16 @@ class Backtester:
             direction, confidence, reason = self.check_entry_signal(
                 row, htf_trend, require_htf_alignment
             )
+
+            # Trading-hours gate — mirrors the live entry refusal. Applied to ENTRIES
+            # only; an open position is still managed outside hours, as live does.
+            hours = self.params.get("entry_hours")
+            if direction and hours:
+                lo, hi = hours
+                h = current_time.hour
+                outside = (h < lo or h >= hi) if lo < hi else (hi <= h < lo)
+                if outside:
+                    direction = None
 
             # Classify market regime (need at least 20 candles for ATR median)
             regime = None
