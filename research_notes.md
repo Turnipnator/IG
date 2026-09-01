@@ -2772,3 +2772,77 @@ faithful modelling, not stronger. (2) Let the row count grow — it accrues free
 still the binding constraint. (3) The Yahoo sweep (BUY PF 12.3 vs SELL 0.35) remains
 unreconciled and is a standing veto; at PF 1.22 the IG read no longer has the weight to
 overturn it. (4) FTSE, AI Index: closed, no action.
+
+---
+
+## 2026-09-01 (c) — PFO cycle windows, Phase 1: Gold supports the idea, S&P CONTRADICTS it
+
+**Question.** A paid Market Timing Report publishes monthly "PFO timing point" dates —
+crosses (candidate daily trend-change days) and red bands (strong weekly cycles), with a
+stated ±1 day tolerance. Hypothesis from the reader: run breakout inside those windows and
+momentum outside. Phase 1 measures it; it changes NOTHING about trading.
+
+**Method.** June–September sheets transcribed to `cycles/*.json` (committed, not in the
+gitignored `data/`, because they are source evidence). `src/cycles.py` is a pure
+(epic, date) → `CycleState` lookup — no runtime logging and no journal schema change were
+needed, because cycle state is *derivable*, so any historical trade can be tagged
+retroactively. `scripts/analyze_cycle_windows.py` splits existing realised trades and
+existing breakout counterfactuals by that state. "US Equities" = **S&P 500 only**
+(confirmed by the report's reader). 13 unit tests on the lookup.
+
+**⚠️ Base rate first.** With ±1 tolerance one cross marks three days, so **50–59% of all
+covered days are already "in-window"**. And trades split 46/38 in/out = 55%, matching the
+day base rate exactly — **there is no concentration of trades in windows**. Everything
+below is a difference in P&L *per trade*, not in trade frequency.
+
+**Evidence — pooled realised P&L, tolerance swept:**
+
+| tolerance | IN n | IN avg | OUT n | OUT avg | in-window share |
+|---|---|---|---|---|---|
+| **±0d** | 34 | **+7.39** | 50 | −3.51 | 34% |
+| ±1d (as stated) | 46 | +3.66 | 38 | −2.43 | 56% |
+| ±2d | 66 | +0.18 | 18 | **+3.54** | 75% |
+
+The effect **decays monotonically as tolerance widens and inverts at ±2**. That ordering is
+what a real, date-specific effect should look like — precision helps, noise days dilute.
+(±2's inversion is weak on its own: OUT n=18.)
+
+**Per-EPIC gap (avg IN − avg OUT), ±1d — this is the finding:**
+
+| market | IN n / avg | OUT n / avg | gap |
+|---|---|---|---|
+| **Gold** | 21 / **+9.56** | 17 / −4.84 | **+14.40** |
+| EUR/USD | 2 / +13.44 | 4 / −1.92 | +15.36 *(n=2, noise)* |
+| Crude Oil | 2 / −5.02 | 3 / −17.52 | +12.50 *(n=2, noise)* |
+| **S&P 500** | 16 / −2.81 | 14 / **+3.57** | **−6.38** |
+
+**Gold is the only market with a usable sample and it supports the hypothesis. S&P — the
+one instrument the reader specifically confirmed — CONTRADICTS it**, doing *worse* in its
+own cycle windows on n=16/14. That is the opposite of the proposed "US Equities → breakout
+in-window" rule, and it is not a small margin.
+
+**⚠️ Tail check — the in-window POSITIVE is one trade.** Dropping the single largest
+absolute trade (Gold 2026-08-19, **+£160.56**, on a "strong" day) collapses in-window
+average from +3.66 to **+0.17** — i.e. break-even. The *gap* survives (+2.61 to +6.43 as
+more tails are dropped) but only because out-of-window is broadly bad, not because
+in-window is good. This is precisely the known Gold tail problem ([[MEMORY]]: 84% of two
+years' Gold profit is three trades).
+
+Breakout counterfactuals pooled: IN +0.13R (n=18) vs OUT −5.41R (n=8) — breakout is *less
+bad* in-window, not good. n far too small.
+
+**Confidence.**
+- **Gold cycle effect — LOW/MEDIUM.** Best sample on the book, right tolerance ordering,
+  and it corroborates the reader's own "1 July Gold worked well". But one trade carries the
+  positive side and n=21/17 over three months cannot separate that from luck.
+- **S&P cycle effect — LOW, and NEGATIVE.** Points the wrong way for the proposed rule.
+  Enough to say "do not implement the S&P half of this", not enough to say the reverse.
+- **The whole read is IN-SAMPLE.** I hold all four sheets and looked at three. Nothing here
+  is out-of-sample and it must not be treated as validation.
+
+**Next — September is a genuine forward test and it is already running.** The 2026-09 sheet
+is transcribed and the month is barely started, so a criterion pre-committed NOW is a real
+OOS test rather than a fit. Proposed and pre-committed before looking:
+*Gold in-window avg > out-of-window avg over September, with n≥8 per bucket, and the result
+surviving removal of the single largest trade.* If that fails, the Gold effect is not real.
+No config change on anything in the meantime.
