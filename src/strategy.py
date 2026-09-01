@@ -341,7 +341,10 @@ class TradingStrategy:
                     entry_price=current_price,
                     stop_distance=round(stop_distance, 2),
                     limit_distance=round(limit_distance, 2),
-                    reason=f"MACD already bearish (3-candle exit armed — would fire next candle)",
+                    reason=(
+                        f"MACD already bearish for {len(last_2_macd)} bars, "
+                        f"exit fires at {MACD_EXIT_BARS}"
+                    ),
                 )
 
             # Multi-timeframe filter: check based on strategy requirement
@@ -413,7 +416,10 @@ class TradingStrategy:
                     entry_price=current_price,
                     stop_distance=round(stop_distance, 2),
                     limit_distance=round(limit_distance, 2),
-                    reason=f"MACD already bullish (3-candle exit armed — would fire next candle)",
+                    reason=(
+                        f"MACD already bullish for {len(last_2_macd)} bars, "
+                        f"exit fires at {MACD_EXIT_BARS}"
+                    ),
                 )
 
             # Multi-timeframe filter: check based on strategy requirement
@@ -805,9 +811,12 @@ def should_close_position(
     if not use_macd_exit:
         # ADX ranging exit: require 3 consecutive candles below threshold.
         # Single-candle wobble was bleeding ~£14/trade on Gold (8 trades, -£99)
-        # by exiting whipsaws within 15-90 min. 3-candle confirmation matches
-        # the MACD-exit pattern and improved WR on Gold (44->47%) and USD/JPY
-        # (23->39%) in 60d backtest with neutral aggregate P&L.
+        # by exiting whipsaws within 15-90 min. The 3 rests on its own evidence:
+        # it improved WR on Gold (44->47%) and USD/JPY (23->39%) in 60d backtest
+        # with neutral aggregate P&L. It ALSO used to match the MACD exit; that
+        # stopped being true at 9e2dd0c (MACD_EXIT_BARS -> 5). The two windows are
+        # independent by design -- do not re-couple them without re-running that
+        # backtest, and note this exit only runs when use_macd_exit is False.
         adx_exit_threshold = adx_threshold - 10  # e.g., 35 -> 25
         # Ranging-3 exit also gated by the minimum-hold window (HTF reversal below
         # is NOT — a higher-timeframe flip can't race a single entry candle).
