@@ -2846,3 +2846,60 @@ OOS test rather than a fit. Proposed and pre-committed before looking:
 *Gold in-window avg > out-of-window avg over September, with n≥8 per bucket, and the result
 surviving removal of the single largest trade.* If that fails, the Gold effect is not real.
 No config change on anything in the meantime.
+
+---
+
+## 2026-09-01 (d) — Does a cross INSIDE a red week beat a cross outside one? NO.
+
+**Question.** The report's own headline claim: "look for an important trend change when a
+daily PFO date aligns with a weekly cycle." Tested directly — `strong` (cross ∧ red band)
+vs `cross-only` (cross, no band), on realised P&L and on breakout counterfactuals.
+
+**Answer: no. On this data the aligned dates are the same or WORSE.** Four independent cuts
+agree, and the single cut that appears to support the claim is one trade.
+
+| cut | strong | cross-only | verdict |
+|---|---|---|---|
+| ±0d (exact dates) | **−3.59** (n=3) | **+7.43** (n=10) | strong WORSE |
+| ±1d headline | +10.47 (n=9) | −0.39 (n=22) | strong better ← *one trade* |
+| ±1d, biggest trade removed | **−8.30** (n=8) | −0.39 (n=22) | strong WORSE |
+| breakout counterfactuals (R) | **−0.78R** (n=4, **0W/4L**) | +0.86R (n=7, 4W/3L) | strong WORSE |
+
+**The supporting cut is a single trade, and it isn't even on a cross date.** The `strong`
+bucket at ±1d is `[160.56, 12.3, 3.12, 2.45, −11.48, −11.6, −14.2, −22.6, −24.36]` — sum
++94.19, but **−66.37 across the other eight**. Remove that one trade and strong's average
+goes +10.47 → −8.30 and the gap **inverts** from +10.86 to −7.91.
+
+**And that trade migrates between buckets with tolerance, which is the cleanest possible
+demonstration that the structure is noise.** Gold 2026-08-19 (+£160.56): Gold's August
+crosses are 5, 11, 12, 13, 20, 21, 22, 29 and its red band is 18–22. **The 19th is in the
+band but is NOT a cross.** At ±0 the trade is `week`; at ±1 the 20 Aug cross reaches back
+and reclassifies it `strong`. So the ±0 "week-only = +187.70" and the ±1 "strong = +94.19"
+are the *same trade* wearing two labels, and every bucket total reshuffles around it.
+
+**Per-EPIC (±1d), strong vs cross-only** — only Gold favours alignment, and that is the
+bucket holding the tail trade:
+
+| market | strong | cross-only |
+|---|---|---|
+| Gold | +41.57 (n=3) | +4.52 (n=8) |
+| S&P 500 | −2.59 (n=4) | −3.25 (n=9) *(identical)* |
+| EUR/USD | +2.45 (n=1) | +24.43 (n=1) *(strong worse)* |
+| DXY | −22.60 (n=1) | −14.96 (n=2) *(strong worse)* |
+
+The breakout counterfactuals are the most striking cut because they are independent of the
+realised book and unaffected by that one trade: **every single `strong` breakout episode
+lost (0W/4L)**, while cross-only went 4W/3L.
+
+**Confidence: MEDIUM that alignment confers NO extra edge.** Four cuts agree and the lone
+dissenting cut is explained. Held below HIGH purely on sample: strong is n=3 at ±0 and n=9
+at ±1. This is "no evidence for the claim", not "proof against it".
+
+**What this does NOT overturn.** The broader in-window vs out-of-window split (2026-09-01
+(c)) is unaffected — `none` remains the worst bucket at both tolerances (−3.51 and −2.43).
+The finding is narrower: *being in a window* may matter, but *cross-plus-band* does not
+beat *cross alone*, so there is no case for weighting aligned dates more heavily.
+
+**Next.** Do not build any "strong dates only" filter — it would be fitted to one Gold
+trade. The September OOS test already pre-committed in (c) stands unchanged; add a second
+pre-committed check: *strong avg > cross-only avg over September, n≥5 in each bucket.*
