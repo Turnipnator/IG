@@ -97,10 +97,10 @@ DEFAULT_PARAMS = {
     "stop_atr_multiplier": 1.5,
     "reward_risk_ratio": 2.0,
     # Consecutive opposing MACD-histogram bars required to close a position.
-    # 3 mirrors live (strategy.py `range(1, 4)`). Exposed so the exit's
+    # Mirrors live: src/strategy.py MACD_EXIT_BARS (5 since 2026-09-01). Exposed so the exit's
     # sensitivity can be A/B'd without editing the engine — a shorter window
     # exits more often, which is exactly why `cost_points` must be set too.
-    "macd_exit_bars": 3,
+    "macd_exit_bars": 5,
     # ROUND-TRIP cost in PRICE POINTS, charged once per closed trade (spread,
     # plus any slippage you want to model). The engine charged NOTHING before
     # 2026-08-31, which silently flattered every arm that trades more often —

@@ -2338,6 +2338,9 @@ the only market where the change is between two PROFITABLE configs is Japan 225.
 (2) Resolve the S&P backtest-vs-live gap before trusting any S&P conclusion. (3) Do NOT
 change live N on one 80-day in-sample read: per-EPIC WF went 21/21 in-sample → 12/20 OOS.
 
+> **SUPERSEDED same day — the walk-forward was run on all four markets and N=5 SURVIVED.
+> See 2026-08-31(e). Recommendation (3) above is withdrawn.**
+
 ---
 
 ## 2026-08-31 (c) — Index breakout on IG-NATIVE data: TESTED, and NEGATIVE
@@ -2484,3 +2487,60 @@ unmodelled cost on the book and it biases every long-hold result optimistically.
 **Next.** Model DFB overnight financing in the breakout engine. It is arithmetically the
 dominant unmodelled term for a strategy whose median hold is measured in days, and unlike
 the entry gap it has never been charged at all.
+
+---
+
+## 2026-08-31 (e) — N=3 vs N=5 walk-forward: the objection does not survive
+
+**Why this was run.** The 2026-08-31(b) conclusion was "do not change N on one in-sample
+read". Challenged on it, two of the three stated reasons did not hold up:
+(i) *"improving a losing config is pointless"* — wrong; it is less money lost, and the fact
+those markets lose argues for demoting THEM, not for keeping a worse exit;
+(ii) *"the best arm differs per market"* — irrelevant to N=3 vs N=5, since N=5 wins
+everywhere regardless of which arm is best.
+The headline was also overstated: **"12/12 cells" counted three cost levels that re-charge
+the SAME trades**, so they are not independent. Four markets over one shared regime, with
+S&P/NASDAQ and Japan/HK correlated, is ~2–3 effective observations, not 12. Only the
+out-of-sample objection was load-bearing, and it is testable.
+
+**Method.** Disjoint time slices of the 5m archive (a `Sliced` subclass restricting the
+frame, so folds share no bars), each market at its own real spread, N=3 vs N=5:
+split-half, then rolling thirds.
+
+**Result.**
+
+| Market | H1 | H2 | folds |
+|---|---|---|---|
+| S&P 500 | 0.26 → **0.91** | 0.11 → **0.26** | **3/3** |
+| NASDAQ 100 | 1.43 → **1.73** | 0.34 → **0.42** | 2/3 |
+| Japan 225 | 1.18 → **1.37** | 1.05 → **1.24** | 2/3 |
+| Hong Kong | 0.70 → **0.91** | 0.63 → **0.65** | 3/3 |
+
+**N=5 beats N=3 in 8/8 disjoint halves and 10/12 disjoint time-folds** (binomial p≈0.019 on
+the folds under a naive independence null — which overstates the case, since the four
+markets share a period). The two losses are small-margin: NASDAQ fold2 (0.83 vs 0.72) and
+Japan fold1 (0.95 vs 0.91). This corroborates the independent 2026-06-25 Crude result
+(macd5 > macd3 at every cost level) on four more markets.
+
+**Finding — the out-of-sample objection is SPENT (MEDIUM-HIGH).** N=5 held on time-disjoint
+folds, so this is no longer a single in-sample read. MEDIUM rather than HIGH only because
+all folds sit inside one 80-day window and therefore share a regime; a genuinely different
+regime is untested.
+
+**⚠️ What this does NOT establish.** N=5 rescues nothing. **Japan 225 is the only market
+profitable in BOTH halves — and it is profitable at N=3 too** (1.18/1.05), so N=5 is a
+refinement, not a fix. S&P stays deeply unprofitable in every fold; Hong Kong stays below
+1.0 in both halves; NASDAQ flips profitability by period at BOTH settings, so its edge is
+regime, not exit. **The question of whether to trade S&P/NASDAQ/HK at all is untouched by
+this and remains the bigger lever.**
+
+**Risk note.** `macd_exit_bars` touches no entry, stop or sizing logic, so **max risk per
+trade is unchanged**. It reshapes the distribution — more full-stop losses, more
+take-profits (Japan stops 10→15 and TPs 8→10; HK stops 13→16, TPs 5→7) — the same
+trade-off accepted for the breakout trail in `0057aa9` ("bigger avg losses AND bigger avg
+wins; max risk/trade unchanged").
+
+**Conclusion.** The change is now **justified on the evidence**. Live N is hard-coded at
+`strategy.py:761` (`range(1, 4)`), so changing it is a signal-path edit and needs the
+pre-flight; it is not a config flip. Expected effect at full-sample real cost:
+S&P 0.18→0.54 · NASDAQ 0.75→0.91 · Japan 1.11→1.27 · HK 0.72→0.85.

@@ -24,6 +24,24 @@ from src.indicators import add_all_indicators
 # histogram needs the slow EMA plus the signal EMA.
 ADX_WARMUP_BARS = 2 * 14
 MACD_HIST_WARMUP_BARS = 26 + 9
+
+# Consecutive opposing MACD-histogram bars required to close a momentum position.
+# 2026-09-01: 3 -> 5. The 3-bar window was a tail-clipper of the same class as the
+# ADX-ceiling / leg-filter / swing-proximity / breakout-profit-protection ideas this
+# repo has refuted before: it fires on noise and truncates the winners the edge lives
+# on. Measured on 80d of IG-native 5m archive at each market's REAL trading-hours
+# spread, entry held fixed and only this value varied:
+#   full sample PF   S&P 0.18->0.54   NASDAQ 0.75->0.91   Japan 1.11->1.27   HK 0.72->0.85
+#   walk-forward     N=5 beat N=3 in 8/8 disjoint halves and 10/12 disjoint time-folds
+# Independently corroborated by the 2026-06-25 Crude exit study (macd5 > macd3 at every
+# cost level). Max risk/trade is UNCHANGED — the broker stop is untouched; what changes
+# is the distribution (more full-stop losses, more take-profits), the same trade-off
+# accepted for the breakout trail in 0057aa9.
+# CAVEAT recorded so it is not lost: this does NOT rescue any market. Japan 225 is the
+# only one profitable in both halves and it was profitable at N=3 too; S&P stays deeply
+# unprofitable and NASDAQ flips by regime at BOTH settings. All folds sit inside one
+# 80-day window, so a different regime is untested. See research_notes.md 2026-08-31(e).
+MACD_EXIT_BARS = 5
 from config import STRATEGY_PARAMS, MarketConfig, StrategyConfig, get_strategy_for_market
 
 logger = logging.getLogger(__name__)
@@ -757,20 +775,30 @@ def should_close_position(
     # minimum-hold window (suppress_momentum_exit) so a candle committing on the
     # entry boundary can't fire an open-then-instant-close (FTSE #205). Stop/limit
     # (broker) and RSI-extreme (above) stay active throughout the hold.
-    if use_macd_exit and not suppress_momentum_exit:
-        last_3_macd = [df.iloc[-i]["macd_hist"] for i in range(1, 4)]
+    if use_macd_exit and not suppress_momentum_exit and len(df) >= MACD_EXIT_BARS:
+        # The length guard is load-bearing, not defensive tidiness: df.iloc[-i] raises
+        # IndexError once i exceeds the frame, so widening MACD_EXIT_BARS without it
+        # crashes the exit path on any frame shorter than the window — i.e. exactly on
+        # a cold start or restart. Caught by
+        # tests/test_indicator_nan_guards.py::TestExitPathToleratesShortFrames.
+        # A frame too short to evaluate must HOLD, matching the _finite gate below;
+        # the broker stop is unaffected either way.
+        last_macd = [df.iloc[-i]["macd_hist"] for i in range(1, MACD_EXIT_BARS + 1)]
 
-        if not _finite(*last_3_macd):
+        if not _finite(*last_macd):
             logger.debug(
                 f"MACD exit skipped on {len(df)} bars — histogram needs "
                 f"{MACD_HIST_WARMUP_BARS}. Broker stop unaffected."
             )
         elif direction == "BUY":
-            if all(h < 0 for h in last_3_macd):
-                return True, "MACD histogram negative for 3 candles"
+            if all(h < 0 for h in last_macd):
+                # The bar count is interpolated, not hard-coded, so the journal
+                # records WHICH window each trade closed under and the era split
+                # stays legible after any future change to MACD_EXIT_BARS.
+                return True, f"MACD histogram negative for {MACD_EXIT_BARS} candles"
         elif direction == "SELL":
-            if all(h > 0 for h in last_3_macd):
-                return True, "MACD histogram positive for 3 candles"
+            if all(h > 0 for h in last_macd):
+                return True, f"MACD histogram positive for {MACD_EXIT_BARS} candles"
 
     # Dynamic exit for non-MACD strategies (Gold, Forex, etc.)
     # These strategies need protection when market conditions change
