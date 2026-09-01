@@ -1333,6 +1333,52 @@ MARKETS = [
     #                                # long PF 1.26 vs short PF 0.63; both-sides was a
     #                                # net loser only because shorts dragged it down.
     # ),
+    # ------------------------------------------------------------------
+    # Bitcoin — SHADOW OBSERVER, added 2026-09-01. Never trades; it exists to
+    # build an IG-native candle archive so the market can be evaluated later.
+    # It has NO history here (no archive, and no Yahoo proxy is wired), so it
+    # cannot qualify for anything under GO_LIVE_CRITERIA.md today — that needs
+    # >=30 IG-native trades on the exact pair. Streaming is free; this is the
+    # cheapest way to start the clock.
+    #
+    # ⚠️ BEFORE ANY LIVE USE: the FCA bars crypto derivatives for UK RETAIL
+    # clients. This account is DEMO, and demo routinely exposes instruments a
+    # live retail account will refuse. Verify on the live account first — if it
+    # is barred there, this stays an observer permanently.
+    #
+    # sector="Crypto", NOT "Forex": the string "Forex" routes into the /forex
+    # path and, at main.py:1875, would EXCLUDE it from shadow benched-logging —
+    # i.e. silently defeat the whole point. Same trap that made DXY sector
+    # "Indices" deliberately (bef0ebe). Arbitrary sector strings are safe:
+    # screener.py already emits "Rates"/"Other", and risk_manager only buckets
+    # exposure by the string.
+    #
+    # Streaming safety: CFD-only EPICs kill the ENTIRE Lightstreamer
+    # subscription with "Invalid account type" (2026-01-22, CC.D.* outage).
+    # Checked before adding — CS.D.BITCOIN.TODAY.IP IS present in
+    # data/spreadbet_universe.json, which was scanned on the spreadbet account
+    # and EXCLUDES CC.D.CL.UNC.IP, the exact EPIC that caused that outage.
+    #
+    # 24/7 market, so hours are 0-24 (the gate is start <= h < end) and the
+    # archive will harvest weekends. Strategy profile is "indices" as a
+    # PLACEHOLDER — it is untuned for crypto volatility and its signals are
+    # observational only. Do not read shadow P&L here as a tuned result.
+    MarketConfig(
+        epic="CS.D.BITCOIN.TODAY.IP",
+        name="Bitcoin",
+        sector="Crypto",
+        shadow_only=True,
+        min_stop_distance=1.0,     # IG dealingRules minNormalStopOrLimitDistance
+        default_size=0.01,         # IG minDealSize
+        candle_interval=5,         # finest useful resolution; resample up later
+        min_confidence=0.55,
+        strategy="indices",        # PLACEHOLDER, untuned for crypto
+        # No correlation_group: BTC has no correlated peer in this book, and a
+        # singleton group silently disables the cluster filter for it rather
+        # than doing nothing (tests/test_config_coherence guards exactly this).
+        trading_start=0,           # 24/7
+        trading_end=24,
+    ),
 ]
 
 
