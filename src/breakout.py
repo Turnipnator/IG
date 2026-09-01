@@ -99,6 +99,29 @@ BREAKOUT_CONFIGS: dict[str, BreakoutConfig] = {
     "IX.D.NIKKEI.DAILY.IP":   BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Japan 225
     "IX.D.HANGSENG.DAILY.IP": BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Hong Kong
     "CO.D.DX.Month1.IP":      BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Dollar Index — UNTESTED
+
+    # Bitcoin (2026-09-01) — OBSERVER ONLY, and UNTESTED in the strongest sense:
+    # this market has NO history in the repo at all (added as a shadow observer
+    # the same day, 1d3f654), so unlike every other entry here there is not even
+    # a Yahoo-proxy read behind it. The parameters are the house default, chosen
+    # deliberately over a guess: every other EPIC in this dict runs N55/2.0xATR/
+    # HTF, so BTC's shadow numbers stay directly comparable to the rest of the
+    # book. They are NOT a claim that 55 is right for crypto.
+    #
+    # Safe because the always-on observer (main._observe_breakout_shadow, gated
+    # on has_breakout_config) runs live=False UNCONDITIONALLY — it cannot place
+    # an order even with BREAKOUT_TICK_ENTRY=live. Bitcoin's MarketConfig is
+    # shadow_only, so its mode is "shadow" and it reaches that observer at
+    # main.py:1493 rather than the /mode breakout path.
+    #
+    # Expect NOTHING for ~2.5 days: the observer needs >=60 closed 1h bars and
+    # the archive started from zero on 2026-09-01.
+    #
+    # htf_resolution stays the inherited default HOUR. DAY beat HOUR on 8/9
+    # markets (v3 item 15b) and Gold/DXY were moved for that reason, but there
+    # is no BTC data to justify either, and HOUR keeps it comparable to the
+    # eight indices. Revisit once the archive has depth.
+    "CS.D.BITCOIN.TODAY.IP":  BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Bitcoin — NO HISTORY, observer only
 }
 
 
