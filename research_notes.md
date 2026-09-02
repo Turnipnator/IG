@@ -2903,3 +2903,103 @@ beat *cross alone*, so there is no case for weighting aligned dates more heavily
 **Next.** Do not build any "strong dates only" filter — it would be fitted to one Gold
 trade. The September OOS test already pre-committed in (c) stands unchanged; add a second
 pre-committed check: *strong avg > cross-only avg over September, n≥5 in each bucket.*
+
+---
+
+## 2026-09-02 — PFO cross dates tested against PRICE, not the bot: NO trend-change information. Pre-commit FAILED.
+
+**Question.** Phase 1 (c)/(d) tagged the bot's own trades by cycle state — that measures the
+bot *inside* the windows, not the dates. This tests the dates directly: is a cross date a
+turning point on daily bars more often than a random day? It also answers the reader's three
+questions: (1) Phase 1 did NOT use daily candles — it tagged 5-min momentum entries and 1h
+breakout counterfactuals by entry *date*; (2) the prior trend was not measured, now it is;
+(3) D−1 / D / D+1 were pooled at ±1, now they are split.
+
+**Method.** `scripts/cycle_event_study.py`. Daily bars from Yahoo (`GC=F`, `^GSPC`, 2022→)
+and, as an IG-native cross-check, the 5-min archive resampled to London calendar days (from
+2026-06-12; Sunday stubs <50 bars dropped). For each cross D and offset o ∈ {−1, 0, +1}, at
+t = D+o:
+- `rev5` — the 5-bar move into t and the 5-bar move out of t have opposite sign (t is a
+  5-bar turning point);
+- `piv5` — close[t] is the extreme close within ±5 bars (strict pivot);
+- `mag5` — |5-bar move out of t| / ATR14 (the volatility claim).
+
+Baselines: (a) every trading day 2022 → Aug 2026; (b) Jun–Aug 2026 trading days not within
+±1 of a cross. Permutation p: per month, redraw the same number of days at random, 10k reps.
+A cross on a non-trading day (S&P Jun 29, Aug 16/17; Gold Aug 22/29) is NA at that offset,
+not shifted. Horizon sensitivity swept at 3/5/10.
+
+**Pre-committed before running:** `rev5` on cross dates ≥ baseline(b) + 15 points at the
+same offset, on BOTH Gold and S&P, Jun–Aug.
+
+**Result: FAILED.** Gold — the market Phase 1 said "supports" — is the clearest miss.
+
+| Gold `rev5` | n | cross | base (b) | gap | perm p |
+|---|---|---|---|---|---|
+| Yahoo D−1 | 15 | 0.667 | 0.679 | −0.01 | 0.23 |
+| Yahoo D+0 | 18 | **0.444** | 0.679 | **−0.23** | 0.96 |
+| Yahoo D+1 | 13 | 0.538 | 0.679 | −0.14 | 0.72 |
+| IG D−1 | 14 | 0.571 | 0.727 | −0.16 | 0.58 |
+| IG D+0 | 15 | 0.533 | 0.727 | −0.19 | 0.80 |
+| IG D+1 | 11 | 0.545 | 0.727 | −0.18 | 0.71 |
+
+Every Gold cell is below baseline on both sources. Strict pivots: cross dates 6–13% vs 21–23%
+baseline; "a pivot anywhere within ±1 day" 21% (Yahoo) / 31% (IG) vs **34% / 41% for a
+random 3-day window**. Horizon sweep: negative at every horizon on Yahoo (−0.11 / −0.23 /
+−0.05); on IG only h=10 is positive (+0.15, n=12).
+
+**S&P: one cell meets the pre-commit and it is fragile.** Yahoo D−1: 0.800 vs 0.607, +0.19,
+p=0.051. It does NOT replicate on IG bars (0.583 vs 0.500, +0.08, p=0.51), and the per-date
+drill-down shows why: 3 of the 12 hits are early-June dates the IG archive predates; two more
+(Jun 22, Jun 30) are Yahoo post-moves of −32 and −17 points that IG scores as non-reversals;
+and three of the rest are the Aug 13–18 cluster — five *consecutive* crosses whose D−1 cells
+are consecutive days across ONE top (Aug 14). Counted as events rather than cells it is ~10
+independent observations, and one cell at p≈0.05 among 36 tested (2 markets × 2 sources ×
+3 stats × 3 offsets, expected ≈1.8 by chance) is what noise produces. S&P D+0 / D+1: −0.01 /
+−0.15 (Yahoo), +0.08 / −0.06 (IG). Strict pivots ≈ baseline everywhere.
+
+**The one statistically notable cell points the OTHER way.** Gold cross dates are followed by
+*quieter* price action, not a turn: `mag5` at D+0 = **1.08 ATR vs 2.19 baseline** (Yahoo,
+observed in the bottom 0.3% of the permutation null), replicated on IG **0.87 vs 1.56**
+(bottom 2.4%). Not one cluster — Jun 8 (0.10), Jun 12 (0.31), Jul 1 (0.61), Jul 16/17
+(0.76/0.69), Jul 27 (0.62), Aug 11 (0.24) all sit well under the non-cross median 1.32.
+Red-week days are quieter too, on both markets (Gold 1.41 vs 1.92; S&P 1.11 vs 1.37).
+Caveat: 36 cells, so a single 0.003 does not survive Bonferroni (0.0014). MEDIUM-LOW,
+in-sample — but it is the opposite of "trend change".
+
+**Prior-trend split (tops or bottoms?)** — too small to read. Gold after a 5-day rise reverses
+3/8; after a fall 5/10 (Yahoo) / 5/7 (IG). S&P after a rise 4/5 (Yahoo) / 4/4 (IG); after a
+fall 5/10 / 3/8. The S&P "tops" cells are n=4–5 and include the Aug 14 cluster. Recorded,
+not weighed.
+
+**Data-source note.** Yahoo `^GSPC` is the cash close (21:00 London); IG's resampled day runs
+00:00–23:55 London, so its close is ~3h after cash. The two disagree on 2 of 12 shared S&P
+D−1 cells, both marginal moves. For anything the bot would act on the IG bars are the ones
+that matter — and IG shows nothing on either market.
+
+**Confidence: MEDIUM that the cross dates carry no usable trend-change information at the
+daily scale on Gold or S&P over Jun–Aug 2026.** Two markets × two independent price sources
+× three statistics × three offsets agree, bar one fragile cell. Not HIGH: n=11–18 per cell,
+three months, in-sample. This is "no evidence for", with the point estimate the wrong way; it
+cannot say "anti-informative".
+
+**What this does to Phase 1 (c).** Its "Gold supports" was one trade (+£160.56) on the bot's
+own P&L. With the price-level test negative on Gold at every cut, the simplest explanation
+for (c) is the known Gold tail, not the dates. Both September criteria from (c) and (d) stand
+— they cost nothing — but the prior on them passing is now low.
+
+**On pitchforks and channels (the reader's point).** Agreed the bot cannot place a pitchfork
+— there is no pivot detection in `src/` (only the rejected `backtest_swing_proximity.py`).
+It does have a channel: Donchian N55 *is* the breakout strategy, and Phase 1 already tested
+date × channel-break (Gold-maybe-one-trade, S&P-no). So the unconditional test (this) and
+the channel-conditioned test (Phase 1) are both negative. A date filter can only add value on
+top of price structure if the dates carry information the structure does not; on this data
+they carry none that is measurable.
+
+**Next.** Nothing to build. Third pre-committed September check, **on IG bars**: *cross-date
+`rev5` ≥ non-cross baseline + 15 points at the same offset on BOTH markets* — run
+`scripts/cycle_event_study.py --lo 2026-09-01 --hi 2026-09-30 --archive-dir <vps copy>`
+once Sept 30 + 5 bars exist (≈ Oct 7). The "quiet after crosses" observation is falsifiable
+the same way (Gold cross-date `mag5` < September non-cross median). If the reader has sheets
+from BEFORE June, those are true out-of-sample for the dates themselves and are worth more
+than any further re-cut of Jun–Aug.
