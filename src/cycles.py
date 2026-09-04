@@ -39,9 +39,9 @@ CYCLES_DIR = Path(__file__).resolve().parent.parent / "cycles"
 # would silently multiply the sample with markets the sheet does not cover.
 INSTRUMENT_EPICS: dict[str, tuple[str, ...]] = {
     "US Equities":  ("IX.D.SPTRD.DAILY.IP",),
-    "Crude Oil":    ("EN.D.CL.Month1.IP",),
+    "Crude Oil":    ("CC.D.CL.USS.IP",),
     "Gold":         ("CS.D.USCGC.TODAY.IP",),
-    "Dollar Index": ("CO.D.DX.Month1.IP",),
+    "Dollar Index": ("CC.D.DX.USS.IP",),
     "EUR/USD":      ("CS.D.EURUSD.TODAY.IP",),
     "Bitcoin":      ("CS.D.BITCOIN.TODAY.IP",),
 }

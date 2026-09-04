@@ -15,6 +15,7 @@ import contextlib
 import json
 import os
 import pathlib
+import re
 import unittest
 import warnings
 
@@ -187,6 +188,23 @@ class TestMarketFields(unittest.TestCase):
             self.assertIn(m.strategy, config.STRATEGY_PROFILES,
                           f"{m.name}: strategy {m.strategy!r} is not in STRATEGY_PROFILES")
 
+
+    def test_no_market_uses_a_rotating_futures_slot(self):
+        """IG's MonthN epics (EN.D.CL.Month1.IP, CO.D.DX.Month1.IP, ...) are
+        rotating SLOTS, not the front month: when the contract expires IG
+        re-points the SAME epic to a far contract, which it may leave OFFLINE
+        for weeks. The stream keeps ticking, so the screener, HTF refresh and
+        archive all look alive while analyze_forex_breakout returns silently
+        on non-TRADEABLE. Crude sat dead like that 2026-08-19 -> 09-04 and
+        skipped eight consecutive breaks. Use the undated DFB epic; allow-list
+        a slot epic here ONLY with a written roll procedure."""
+        allowed: set[str] = set()
+        for m in MARKETS:
+            self.assertFalse(
+                re.search(r"\.Month\d\.IP$", m.epic) and m.epic not in allowed,
+                f"{m.name} uses rotating futures slot {m.epic!r} — use the DFB "
+                f"epic, or allow-list it here with a roll procedure",
+            )
 
 class TestCorrelationGroups(unittest.TestCase):
     """The cluster filter blocks a second same-direction entry within a

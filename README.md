@@ -187,8 +187,8 @@ All must be true:
 | NASDAQ 100 | IX.D.NASDAQ.CASH.IP | Momentum | 5 min |
 | Gold | CS.D.USCGC.TODAY.IP | Big Winners | 5 min |
 | EUR/USD | CS.D.EURUSD.TODAY.IP | Big Winners | 15 min |
-| Dollar Index | CO.D.DX.Month1.IP | Big Winners | 15 min |
-| Crude Oil | EN.D.CL.Month1.IP | Big Winners | 15 min |
+| Dollar Index | CC.D.DX.USS.IP | Big Winners | 15 min |
+| Crude Oil | CC.D.CL.USS.IP | Big Winners | 15 min |
 
 > **Note**: EPICs are for spread betting accounts. CFD accounts use different EPICs (CC.D.* prefix) which don't support Lightstreamer streaming on spread bet accounts.
 

@@ -60,7 +60,7 @@ BREAKOUT_CONFIGS: dict[str, BreakoutConfig] = {
     # permanently on. Default mode is breakout-shadow (MarketConfig.default_mode);
     # /mode oil breakout is the user's deliberate, informed act. N=55 kept for
     # consistency with the validated GBP/USD shape rather than snooping N=40.
-    "EN.D.CL.Month1.IP": BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),
+    "CC.D.CL.USS.IP": BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),
 
     # 2026-07-24 (user request): every non-forex EPIC gets a breakout config so the
     # ALWAYS-ON shadow observer (main._observe_breakout_shadow) can log 1h Donchian
@@ -98,7 +98,7 @@ BREAKOUT_CONFIGS: dict[str, BreakoutConfig] = {
     "IX.D.RUSSELL.DAILY.IP":  BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Russell 2000
     "IX.D.NIKKEI.DAILY.IP":   BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Japan 225
     "IX.D.HANGSENG.DAILY.IP": BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Hong Kong
-    "CO.D.DX.Month1.IP":      BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Dollar Index — UNTESTED
+    "CC.D.DX.USS.IP":         BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Dollar Index — UNTESTED
 
     # Bitcoin (2026-09-01) — OBSERVER ONLY, and UNTESTED in the strongest sense:
     # this market has NO history in the repo at all (added as a shadow observer

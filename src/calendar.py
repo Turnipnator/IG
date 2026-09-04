@@ -23,8 +23,8 @@ CURRENCY_EPIC_MAP = {
         "IX.D.NASDAQ.CASH.IP",   # NASDAQ
         "CS.D.EURUSD.TODAY.IP",  # EUR/USD (USD side)
         "CS.D.USCGC.TODAY.IP",   # Gold (USD-denominated)
-        "EN.D.CL.Month1.IP",    # Crude Oil (USD-denominated)
-        "CO.D.DX.Month1.IP",    # Dollar Index
+        "CC.D.CL.USS.IP",       # Crude Oil (USD-denominated)
+        "CC.D.DX.USS.IP",       # Dollar Index
     ],
     "EUR": [
         "CS.D.EURUSD.TODAY.IP",  # EUR/USD (EUR side)
@@ -33,7 +33,7 @@ CURRENCY_EPIC_MAP = {
     "JPY": [],
     "AUD": [],
     "CAD": [
-        "EN.D.CL.Month1.IP",    # Crude Oil (Canada is major producer)
+        "CC.D.CL.USS.IP",       # Crude Oil (Canada is major producer)
     ],
     "CHF": [],
     "NZD": [],

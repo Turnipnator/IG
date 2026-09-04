@@ -963,13 +963,17 @@ MARKETS = [
     # tip-driven usage: on when informed, shadow otherwise. Runs 1h candles to
     # match the validated forex breakout shape (N55 ≈ 55h channel).
     MarketConfig(
-        epic="EN.D.CL.Month1.IP",
+        epic="CC.D.CL.USS.IP",  # Undated DFB (2026-09-04). Was EN.D.CL.Month1.IP: IG's
+                                # "MonthN" suffix is a rotating SLOT, not the front month.
+                                # At the SEP-26 expiry (08-19 19:56) the slot re-pointed to
+                                # DEC-26, which IG left OFFLINE, and the bot skipped every
+                                # break for 16 days with no log (analyze_forex_breakout
+                                # returns silently on non-TRADEABLE). A DFB never rolls.
         name="Crude Oil",
         sector="Commodities",
-        min_stop_distance=12.0,
+        min_stop_distance=12.0,  # = IG minNormalStopOrLimitDistance on the DFB (verified 09-04)
         default_size=0.1,
-        expiry="SEP-26",       # fallback only — breakout orders use the instrument's
-                               # live expiry from market info (Month1 rolls monthly)
+        expiry="DFB",
         candle_interval=60,    # 1h for the Donchian channel (was 15m in the momentum era)
         htf_resolution="DAY",  # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
@@ -1193,23 +1197,28 @@ MARKETS = [
     # sector deliberately "Indices" not "Forex": DXY is a currency INDEX, and
     # the "Forex" sector string routes through the /forex pair gate which would
     # bypass the /mode system (and, in breakout mode, could place LIVE orders).
-    # NB "DFB" is IG's Daily Funded Bet contract type, not an EPIC — this
-    # Month1 future (fallback expiry below; live orders use the instrument's
-    # current expiry) is the USD instrument.
+    # 2026-09-04: moved from the CO.D.DX.Month1.IP future to the undated DFB.
+    # The Month1 slot (SEP-26) stops dealing 2026-09-11; at expiry IG re-points
+    # the SAME epic to a far contract (Crude's went OFFLINE for weeks) — see the
+    # Crude Oil comment above. DFB trade-offs, measured 09-04: spread 5.0 vs 8.0,
+    # but IG min stop 20 (≈3.6× the current 1h ATR, so the 2×ATR stop is clamped)
+    # and overnight financing ≈8% of 1R per night at the £45 cap — hence
+    # default_mode "breakout-shadow": observe the DFB's real cost first; a live
+    # flip is a deliberate /mode act.
     MarketConfig(
-        epic="CO.D.DX.Month1.IP",
+        epic="CC.D.DX.USS.IP",
         name="Dollar Index (DXY)",
         sector="Indices",
-        min_stop_distance=20.0,
+        min_stop_distance=20.0,  # = IG minNormalStopOrLimitDistance on the DFB (verified 09-04)
         default_size=1.0,
-        expiry="SEP-26",
+        expiry="DFB",
         candle_interval=15,
         htf_resolution="DAY",  # 2026-08-13: same change and same evidence as Gold above —
                                # PF HOUR 1.01 → HOUR_4 1.15 → DAY 1.35 (trades 223 → 126).
                                # At the inherited HOUR default DXY was running at break-even.
         min_confidence=0.55,
         strategy="default",
-        default_mode="shadow",
+        default_mode="breakout-shadow",
         trading_start=23,
         trading_end=21,
     ),

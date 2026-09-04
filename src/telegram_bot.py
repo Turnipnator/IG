@@ -851,11 +851,11 @@ class TelegramBot:
         warn = ""
         if mode_arg == "breakout":
             warn = "\n⚠️ Breakout trading *LIVE* — real orders on the next channel break."
-            if m.epic == "EN.D.CL.Month1.IP":
+            if m.epic == "CC.D.CL.USS.IP":
                 warn += ("\n📊 Reminder: oil breakout is NOT a validated standing edge "
                          "(full-period PF 0.87) — it pays only in trending regimes. "
                          "Flip back to `breakout-shadow` when the trend view expires.")
-        elif mode_arg == "momentum" and m.epic == "EN.D.CL.Month1.IP":
+        elif mode_arg == "momentum" and m.epic == "CC.D.CL.USS.IP":
             warn = "\n⚠️ Crude momentum was disabled for cause (live PF 0.38, costs eat the edge)."
         await update.message.reply_text(
             f"🎛 *{m.name} → `{mode_arg}`* (was `{prev}`){warn}", parse_mode='Markdown')
