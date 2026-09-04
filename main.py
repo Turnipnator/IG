@@ -142,6 +142,21 @@ STREAM_DISCONNECT_GRACE = timedelta(minutes=2)
 STREAM_STALE_GRACE = timedelta(minutes=3)
 STREAM_POST_RECOVERY_GRACE = timedelta(seconds=60)
 
+# Dead-market guard (see _dead_market_guard). A market whose stream state is not
+# TRADEABLE while ticks keep arriving, inside its own trading window, for longer
+# than DEAD_MARKET_GRACE. This is the Crude 2026-08-19 -> 09-04 failure: the
+# MonthN futures slot re-pointed to an OFFLINE contract, indicative ticks kept
+# flowing, so archive/screener/HTF all looked alive while analyze_forex_breakout
+# skipped every bar in silence. Log + Telegram only; touches nothing else.
+DEAD_MARKET_GRACE = timedelta(minutes=60)        # sustained before the first alert
+DEAD_MARKET_TICK_WINDOW = timedelta(minutes=15)  # "ticks flowing" = an update this recent
+DEAD_MARKET_REMINDER = timedelta(hours=24)       # re-alert cadence while it persists
+# EDITS_ONLY is a legitimate multi-hour state (AI Index sits there with live
+# ticks inside the default window), so it is NOT a dead state.
+DEAD_MARKET_STATES = frozenset({"OFFLINE", "SUSPENDED", "CLOSED", "UNKNOWN"})
+_dead_market_since: dict[str, datetime] = {}       # epic -> first seen dead
+_dead_market_alerted_at: dict[str, datetime] = {}  # epic -> last alert sent
+
 # Higher timeframe trend per market (updated hourly from 1H candles)
 htf_trends: dict[str, str] = {}  # epic -> "BULLISH"/"BEARISH"/"NEUTRAL"
 
@@ -3146,6 +3161,90 @@ def _htf_staleness_guard() -> None:
         logger.warning(f"HTF staleness guard failed: {e}")
 
 
+def _dead_market_guard(now: Optional[datetime] = None) -> None:
+    """Alert when an analysed market is stuck non-TRADEABLE while ticks flow.
+
+    Every consumer of the stream (archive harvester, screener, HTF refresh,
+    /mode) keeps reporting a market as alive as long as ticks arrive; only the
+    entry paths check MARKET_STATE, and they return silently. So a market can be
+    dead for weeks with every dashboard green — Crude was, 2026-08-19 -> 09-04.
+
+    Trips when, for a market whose mode is not "off": state is in
+    DEAD_MARKET_STATES, the last stream update is younger than
+    DEAD_MARKET_TICK_WINDOW (a CLOSED market with a frozen quote has no recent
+    update and is ignored, which also covers weekends), the UTC hour is inside
+    the market's own trading window, and all of that has held for
+    DEAD_MARKET_GRACE. Edge-triggered: one alert per episode, a reminder every
+    DEAD_MARKET_REMINDER while it persists, one recovery notice when it clears.
+    `now` is injectable for tests; production passes nothing.
+    """
+    if not stream_service:
+        return
+    now = now or datetime.now()
+    try:
+        h = utc_hour()
+        for market_config in MARKETS:
+            epic = market_config.epic
+            ms = stream_service.markets.get(epic)
+            if ms is None or _market_mode(market_config) == "off":
+                _dead_market_since.pop(epic, None)
+                continue
+            ts, te = market_config.trading_start, market_config.trading_end
+            outside = (h < ts or h >= te) if ts < te else (te <= h < ts)
+            ticks_flowing = (
+                ms.last_update is not None
+                and (now - ms.last_update) < DEAD_MARKET_TICK_WINDOW
+            )
+            dead = (
+                ms.market_state in DEAD_MARKET_STATES
+                and ticks_flowing
+                and not outside
+            )
+            if not dead:
+                if epic in _dead_market_since:
+                    since = _dead_market_since.pop(epic)
+                    if epic in _dead_market_alerted_at:
+                        _dead_market_alerted_at.pop(epic, None)
+                        msg = (
+                            f"✅ {market_config.name} TRADEABLE again "
+                            f"(state {ms.market_state}) after {now - since}"
+                        )
+                        logger.info(f"Dead-market guard: {msg}")
+                        _dead_market_notify(msg)
+                continue
+            since = _dead_market_since.setdefault(epic, now)
+            if now - since < DEAD_MARKET_GRACE:
+                continue
+            last = _dead_market_alerted_at.get(epic)
+            if last is not None and now - last < DEAD_MARKET_REMINDER:
+                continue
+            _dead_market_alerted_at[epic] = now
+            mode = _market_mode(market_config)
+            msg = (
+                f"⚠️ <b>{market_config.name}</b> ({epic}) has been "
+                f"<b>{ms.market_state}</b> for {now - since} while ticks keep arriving, "
+                f"inside its {ts:02d}-{te:02d} UTC window. Mode <b>{mode}</b>: "
+                f"{'no entries can fire' if mode in ('momentum', 'breakout') else 'observer is recording nothing'}. "
+                f"Check get_market_info(expiry/status) — a dated contract that rolled?"
+            )
+            logger.warning(f"Dead-market guard: {msg}")
+            _dead_market_notify(msg)
+    except Exception as e:
+        logger.warning(f"Dead-market guard failed: {e}")
+
+
+def _dead_market_notify(msg: str) -> None:
+    """Telegram send from the scheduler thread; silent no-op without Telegram."""
+    if telegram is None or telegram_loop is None:
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(
+            telegram.send_notification(msg, parse_mode="HTML"), telegram_loop
+        )
+    except Exception as e:
+        logger.debug(f"Dead-market guard: notify failed: {e}")
+
+
 def periodic_tasks() -> None:
     """Run periodic tasks (position checks, etc.)."""
     while running:
@@ -3164,6 +3263,9 @@ def periodic_tasks() -> None:
 
             # Catch a wall-clock HTF refresh the process slept through
             _htf_staleness_guard()
+
+            # Alert on a market stuck non-TRADEABLE while ticks flow (Crude 08-19)
+            _dead_market_guard()
 
             # Log-only: archive-derived HTF vs the live REST value (never writes
             # htf_trends — see _observe_archive_htf)
