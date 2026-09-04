@@ -20,4 +20,4 @@ aiohttp>=3.9.0
 typing-extensions>=4.8.0
 
 # Backtesting (optional - for local testing)
-yfinance>=0.2.0
+yfinance>=1.7.0
