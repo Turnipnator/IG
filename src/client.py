@@ -442,39 +442,54 @@ class IGClient:
         )
         return default
 
-    def _is_cache_valid(self, epic: str) -> bool:
-        """Check if cached data for an epic is still valid."""
-        if epic not in self._price_cache:
+    @staticmethod
+    def _cache_key(epic: str, resolution: str) -> str:
+        """Price cache key: (epic, resolution), NOT the bare epic.
+
+        Until 2026-09-04 the key was the epic alone, so a DAY request served
+        within the TTL of a HOUR fetch got the HOUR bars back. At boot the
+        candle seed fetched 50 HOUR bars for Crude; the daily HTF refresh 24s
+        later asked for DAY, received those hourly bars, and ran the EMA9/21
+        rule on intraday closes — HTF BEARISH while the real daily series was
+        BULLISH. Any market seeded from REST at startup (a new epic, or a cold
+        start with a >6h-stale candle cache) was exposed."""
+        return f"{epic}|{resolution}"
+
+    def _is_cache_valid(self, key: str) -> bool:
+        """Check if the cached data under this (epic|resolution) key is still valid."""
+        if key not in self._price_cache:
             return False
-        cached = self._price_cache[epic]
+        cached = self._price_cache[key]
         age = datetime.now() - cached.fetched_at
         return age < self._cache_ttl
 
-    def _get_cached_prices(self, epic: str) -> Optional[pd.DataFrame]:
-        """Get cached price data if valid."""
-        if self._is_cache_valid(epic):
-            cached = self._price_cache[epic]
+    def _get_cached_prices(self, epic: str, resolution: str) -> Optional[pd.DataFrame]:
+        """Get cached price data for this epic AT THIS RESOLUTION, if valid."""
+        key = self._cache_key(epic, resolution)
+        if self._is_cache_valid(key):
+            cached = self._price_cache[key]
             age_mins = (datetime.now() - cached.fetched_at).total_seconds() / 60
-            logger.debug(f"Using cached data for {epic} (age: {age_mins:.1f} mins)")
+            logger.debug(f"Using cached data for {key} (age: {age_mins:.1f} mins)")
             return cached.data.copy()
         return None
 
-    def _cache_prices(self, epic: str, df: pd.DataFrame) -> None:
-        """Store price data in cache (memory + disk)."""
-        self._price_cache[epic] = CachedPriceData(
+    def _cache_prices(self, epic: str, df: pd.DataFrame, resolution: str) -> None:
+        """Store price data in cache (memory + disk) under (epic, resolution)."""
+        self._price_cache[self._cache_key(epic, resolution)] = CachedPriceData(
             data=df.copy(),
             fetched_at=datetime.now(),
             epic=epic
         )
-        logger.debug(f"Cached price data for {epic}")
+        logger.debug(f"Cached price data for {epic} ({resolution})")
 
         # Persist to disk for surviving restarts
         self._save_disk_cache()
 
     def clear_cache(self, epic: Optional[str] = None) -> None:
-        """Clear price cache for a specific epic or all."""
+        """Clear price cache for a specific epic (every resolution) or all."""
         if epic:
-            self._price_cache.pop(epic, None)
+            for key in [k for k in self._price_cache if k.split("|", 1)[0] == epic]:
+                self._price_cache.pop(key, None)
             logger.info(f"Cleared cache for {epic}")
         else:
             self._price_cache.clear()
@@ -502,7 +517,12 @@ class IGClient:
                 cache_data = json.load(f)
 
             loaded_count = 0
-            for epic, item in cache_data.items():
+            for key, item in cache_data.items():
+                if "|" not in key:
+                    # Legacy epic-only key (pre-2026-09-04): its resolution is
+                    # unknown, so it cannot safely serve any request. Skip it;
+                    # the next fetch rewrites the entry under the new key.
+                    continue
                 fetched_at = datetime.fromisoformat(item["fetched_at"])
                 age = datetime.now() - fetched_at
 
@@ -512,10 +532,10 @@ class IGClient:
                     # Convert date column back to datetime
                     if "date" in df.columns:
                         df["date"] = pd.to_datetime(df["date"])
-                    self._price_cache[epic] = CachedPriceData(
+                    self._price_cache[key] = CachedPriceData(
                         data=df,
                         fetched_at=fetched_at,
-                        epic=epic
+                        epic=key.split("|", 1)[0]
                     )
                     loaded_count += 1
 
@@ -531,12 +551,12 @@ class IGClient:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
             cache_data = {}
-            for epic, cached in self._price_cache.items():
+            for key, cached in self._price_cache.items():
                 # Convert DataFrame to JSON-serializable format
                 df_dict = cached.data.copy()
                 if "date" in df_dict.columns:
                     df_dict["date"] = df_dict["date"].astype(str)
-                cache_data[epic] = {
+                cache_data[key] = {
                     "fetched_at": cached.fetched_at.isoformat(),
                     "data": df_dict.to_dict(orient="records")
                 }
@@ -584,16 +604,17 @@ class IGClient:
             return None
 
         # Check cache first
+        cache_key = self._cache_key(epic, resolution)
         if use_cache:
-            cached_df = self._get_cached_prices(epic)
+            cached_df = self._get_cached_prices(epic, resolution)
             if cached_df is not None:
                 return cached_df
 
         # Skip API call on weekends to save allowance
         if self.is_weekend():
             logger.info(f"Weekend - skipping API call for {epic}, using stale cache if available")
-            if epic in self._price_cache:
-                return self._price_cache[epic].data.copy()
+            if cache_key in self._price_cache:
+                return self._price_cache[cache_key].data.copy()
             return None
 
         try:
@@ -641,7 +662,7 @@ class IGClient:
                 df = df.sort_values("date").reset_index(drop=True)
 
                 # Cache the result
-                self._cache_prices(epic, df)
+                self._cache_prices(epic, df, resolution)
                 self._api_calls_today += 1
                 logger.info(f"Fetched {len(df)} price points for {epic} (API calls today: {self._api_calls_today})")
 
@@ -651,8 +672,8 @@ class IGClient:
                 error_msg = response.text
                 if "exceeded-account-historical-data-allowance" in error_msg:
                     logger.error(f"Historical data allowance exceeded! Using stale cache for {epic}")
-                    if epic in self._price_cache:
-                        return self._price_cache[epic].data.copy()
+                    if cache_key in self._price_cache:
+                        return self._price_cache[cache_key].data.copy()
                 else:
                     logger.error(f"Failed to get prices for {epic}: {error_msg}")
                 return None

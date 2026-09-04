@@ -462,10 +462,18 @@ def initialize_streaming(preserved_candles: dict = None) -> bool:
             # 3. Fall back to API (costs data points)
             rate_limiter.wait_if_needed()
             resolution = interval_to_resolution(market.candle_interval)
+            # Native-1h breakout markets evaluate the Donchian channel on this
+            # very deque (no archive frame), and analyze_breakout needs n+2 = 57
+            # bars. A 50-bar seed left Crude unable to signal for ~7h after its
+            # epic change on 2026-09-04 — it missed a 55-bar low break at 14:00.
+            # 60 keeps a small buffer; costs +10 points on three markets, once.
+            num_points = trading_config.price_data_points
+            if market.candle_interval >= 60 and breakout.has_breakout_config(market.epic):
+                num_points = max(num_points, breakout.BREAKOUT_CONFIGS[market.epic].n + 5)
             df = client.get_historical_prices(
                 market.epic,
                 resolution=resolution,
-                num_points=trading_config.price_data_points,
+                num_points=num_points,
                 use_cache=True,  # Use price cache if fresh
             )
             if df is not None and not df.empty:
