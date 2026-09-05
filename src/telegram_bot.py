@@ -263,7 +263,7 @@ class TelegramBot:
         user_id = update.effective_user.id
 
         if not self.is_authorized(user_id):
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 "⛔ Unauthorized access. Your user ID has been logged."
             )
             logger.warning(f"Unauthorized access attempt from user {user_id}")
@@ -281,7 +281,7 @@ class TelegramBot:
             "📊 Real-time trade notifications enabled!"
         )
 
-        await update.message.reply_text(welcome_message, parse_mode='Markdown')
+        await update.effective_message.reply_text(welcome_message, parse_mode='Markdown')
         self.commands_executed += 1
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -312,7 +312,7 @@ class TelegramBot:
             f"Your ID: `{update.effective_user.id}`"
         )
 
-        await update.message.reply_text(help_text, parse_mode='Markdown')
+        await update.effective_message.reply_text(help_text, parse_mode='Markdown')
         self.commands_executed += 1
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -322,7 +322,7 @@ class TelegramBot:
 
         try:
             if not self.ig_client or not self.ig_client.is_logged_in:
-                await update.message.reply_text("⚠️ IG client not connected")
+                await update.effective_message.reply_text("⚠️ IG client not connected")
                 return
 
             # Get account info
@@ -352,12 +352,12 @@ class TelegramBot:
                 f"*Markets:* {len(MARKETS)} configured"
             )
 
-            await update.message.reply_text(message, parse_mode='Markdown')
+            await update.effective_message.reply_text(message, parse_mode='Markdown')
             self.commands_executed += 1
 
         except Exception as e:
             logger.error(f"Error in status command: {e}")
-            await update.message.reply_text(f"❌ Error getting status: {str(e)}")
+            await update.effective_message.reply_text(f"❌ Error getting status: {str(e)}")
 
     async def balance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /balance command."""
@@ -366,7 +366,7 @@ class TelegramBot:
 
         try:
             if not self.ig_client or not self.ig_client.is_logged_in:
-                await update.message.reply_text("⚠️ IG client not connected")
+                await update.effective_message.reply_text("⚠️ IG client not connected")
                 return
 
             account_info = self.ig_client.get_account_info()
@@ -385,12 +385,12 @@ class TelegramBot:
                 f"*Account ID:* {self.ig_client.account_id}"
             )
 
-            await update.message.reply_text(message, parse_mode='Markdown')
+            await update.effective_message.reply_text(message, parse_mode='Markdown')
             self.commands_executed += 1
 
         except Exception as e:
             logger.error(f"Error in balance command: {e}")
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await update.effective_message.reply_text(f"❌ Error: {str(e)}")
 
     async def positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /positions command."""
@@ -399,13 +399,13 @@ class TelegramBot:
 
         try:
             if not self.ig_client or not self.ig_client.is_logged_in:
-                await update.message.reply_text("⚠️ IG client not connected")
+                await update.effective_message.reply_text("⚠️ IG client not connected")
                 return
 
             positions = self.ig_client.get_positions()
 
             if not positions:
-                await update.message.reply_text("📭 No open positions")
+                await update.effective_message.reply_text("📭 No open positions")
                 return
 
             message = "📊 *OPEN POSITIONS*\n\n"
@@ -439,12 +439,12 @@ class TelegramBot:
             total_pnl = sum(p.profit_loss for p in positions)
             message += f"*Total Unrealized P&L:* {format_pnl(total_pnl)}"
 
-            await update.message.reply_text(message, parse_mode='Markdown')
+            await update.effective_message.reply_text(message, parse_mode='Markdown')
             self.commands_executed += 1
 
         except Exception as e:
             logger.error(f"Error in positions command: {e}")
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await update.effective_message.reply_text(f"❌ Error: {str(e)}")
 
     async def markets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /markets command."""
@@ -453,7 +453,7 @@ class TelegramBot:
 
         try:
             if not self.ig_client or not self.ig_client.is_logged_in:
-                await update.message.reply_text("⚠️ IG client not connected")
+                await update.effective_message.reply_text("⚠️ IG client not connected")
                 return
 
             message = "📈 <b>MARKET STATUS</b>\n\n"
@@ -473,12 +473,12 @@ class TelegramBot:
                 else:
                     message += f"<b>{market.name}</b>\n⚠️ Unable to fetch\n\n"
 
-            await update.message.reply_text(message, parse_mode='HTML')
+            await update.effective_message.reply_text(message, parse_mode='HTML')
             self.commands_executed += 1
 
         except Exception as e:
             logger.error(f"Error in markets command: {e}")
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await update.effective_message.reply_text(f"❌ Error: {str(e)}")
 
     async def pnl_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /pnl command."""
@@ -487,7 +487,7 @@ class TelegramBot:
 
         try:
             if not self.ig_client or not self.ig_client.is_logged_in:
-                await update.message.reply_text("⚠️ IG client not connected")
+                await update.effective_message.reply_text("⚠️ IG client not connected")
                 return
 
             positions = self.ig_client.get_positions()
@@ -504,12 +504,12 @@ class TelegramBot:
                 f"📍 Open Positions: {len(positions)}"
             )
 
-            await update.message.reply_text(message, parse_mode='Markdown')
+            await update.effective_message.reply_text(message, parse_mode='Markdown')
             self.commands_executed += 1
 
         except Exception as e:
             logger.error(f"Error in pnl command: {e}")
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await update.effective_message.reply_text(f"❌ Error: {str(e)}")
 
     async def journal_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /journal command — trade journal stats."""
@@ -518,7 +518,7 @@ class TelegramBot:
 
         try:
             if not self.journal:
-                await update.message.reply_text("⚠️ Trade journal not available")
+                await update.effective_message.reply_text("⚠️ Trade journal not available")
                 return
 
             days = 30
@@ -530,7 +530,7 @@ class TelegramBot:
 
             total = overall.get("total", 0) or 0
             if total == 0:
-                await update.message.reply_text(
+                await update.effective_message.reply_text(
                     "📓 <b>TRADE JOURNAL</b>\n\nNo closed trades recorded yet.",
                     parse_mode="HTML",
                 )
@@ -585,12 +585,12 @@ class TelegramBot:
                         top = [f"{html.escape(cat)}: {n}" for cat, n in reasons[:3]]
                         msg += f"    └ {', '.join(top)}\n"
 
-            await update.message.reply_text(msg, parse_mode="HTML")
+            await update.effective_message.reply_text(msg, parse_mode="HTML")
             self.commands_executed += 1
 
         except Exception as e:
             logger.error(f"Error in journal command: {e}")
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await update.effective_message.reply_text(f"❌ Error: {str(e)}")
 
     async def screener_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /screener command — show market scores."""
@@ -599,20 +599,20 @@ class TelegramBot:
 
         try:
             if not self.screener:
-                await update.message.reply_text("⚠️ Screener not available")
+                await update.effective_message.reply_text("⚠️ Screener not available")
                 return
 
             text = self.screener.get_scores_text()
             if not text or "No scores" in text:
-                await update.message.reply_text("⚠️ No scores yet. Screener runs daily at 04:00 UTC.")
+                await update.effective_message.reply_text("⚠️ No scores yet. Screener runs daily at 04:00 UTC.")
                 return
 
-            await update.message.reply_text(text, parse_mode="HTML")
+            await update.effective_message.reply_text(text, parse_mode="HTML")
             self.commands_executed += 1
 
         except Exception as e:
             logger.error(f"Error in screener command: {e}")
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await update.effective_message.reply_text(f"❌ Error: {str(e)}")
 
     async def health_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /health command - quick health check."""
@@ -663,12 +663,12 @@ class TelegramBot:
 
             message += "\n👍 *Everything looks good!*" if self.ig_client and self.ig_client.is_logged_in else "\n⚠️ *Issues detected*"
 
-            await update.message.reply_text(message, parse_mode='Markdown')
+            await update.effective_message.reply_text(message, parse_mode='Markdown')
             self.commands_executed += 1
 
         except Exception as e:
             logger.error(f"Error in health command: {e}")
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+            await update.effective_message.reply_text(f"❌ Error: {str(e)}")
 
     async def stop_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /stop command - pause trading."""
@@ -683,7 +683,7 @@ class TelegramBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "⚠️ *PAUSE TRADING?*\n\n"
             "This will:\n"
             "• Stop opening new positions\n"
@@ -701,10 +701,10 @@ class TelegramBot:
 
         if not self.trading_enabled:
             self.trading_enabled = True
-            await update.message.reply_text("✅ *Bot resumed!* Trading will continue.")
+            await update.effective_message.reply_text("✅ *Bot resumed!* Trading will continue.")
             await self.send_notification("🟢 *Bot Resumed*\nTrading operations continuing.")
         else:
-            await update.message.reply_text("ℹ️ Bot is already running")
+            await update.effective_message.reply_text("ℹ️ Bot is already running")
 
     async def forex_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /forex - toggle the forex trading mode (off|momentum|shadow|breakout).
@@ -723,7 +723,7 @@ class TelegramBot:
 
         arg = (context.args[0].lower() if context.args else "").strip()
         if not arg:
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 f"🌐 *Forex mode:* `{self.forex_mode}`\n\n"
                 "Usage: `/forex off | momentum | shadow | breakout`\n"
                 "• *off* — no forex trading (default)\n"
@@ -735,14 +735,14 @@ class TelegramBot:
             return
 
         if arg not in FOREX_MODES:
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 f"❌ Unknown mode `{arg}`. Use: off | shadow | breakout",
                 parse_mode='Markdown'
             )
             return
 
         if arg == self.forex_mode:
-            await update.message.reply_text(f"ℹ️ Forex already `{arg}`", parse_mode='Markdown')
+            await update.effective_message.reply_text(f"ℹ️ Forex already `{arg}`", parse_mode='Markdown')
             return
 
         prev, self.forex_mode = self.forex_mode, arg
@@ -755,7 +755,7 @@ class TelegramBot:
             "shadow": "Breakout runs *observational* — logs signals, places NO real orders.",
             "breakout": "⚠️ Breakout trading *LIVE* on forex.",
         }[arg]
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             f"{emoji} *Forex mode → `{arg}`* (was `{prev}`)\n{note}",
             parse_mode='Markdown'
         )
@@ -799,11 +799,11 @@ class TelegramBot:
             lines.append("\nUsage: `/mode <market> off|momentum|shadow|breakout|breakout-shadow`"
                          "\n`/mode <market> default` clears the override."
                          "\n👻 shadow = momentum observed; 🟡 breakout-shadow = breakout observed.")
-            await update.message.reply_text("\n".join(lines), parse_mode='Markdown')
+            await update.effective_message.reply_text("\n".join(lines), parse_mode='Markdown')
             return
 
         if len(args) < 2:
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 "Usage: `/mode <market> <off|momentum|shadow|breakout|breakout-shadow|default>`",
                 parse_mode='Markdown')
             return
@@ -813,15 +813,15 @@ class TelegramBot:
         query = " ".join(args[:-1])
         matches = [m for m in MARKETS if query in m.name.lower()]
         if not matches:
-            await update.message.reply_text(f"❌ No market matches `{query}`", parse_mode='Markdown')
+            await update.effective_message.reply_text(f"❌ No market matches `{query}`", parse_mode='Markdown')
             return
         if len(matches) > 1:
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 "❌ Ambiguous: " + ", ".join(m.name for m in matches), parse_mode='Markdown')
             return
         m = matches[0]
         if m.sector == "Forex":
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 f"ℹ️ {m.name} is forex — use `/forex` (per-pair shadow is a config flag).",
                 parse_mode='Markdown')
             return
@@ -829,17 +829,17 @@ class TelegramBot:
         if mode_arg == "default":
             prev = self.market_modes.pop(m.epic, None)
             self.save_market_modes()
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 f"↩️ {m.name}: override cleared (was `{prev}`) — config default "
                 f"`{self._effective_mode(m)}` resumes.", parse_mode='Markdown')
             return
         if mode_arg not in MARKET_MODES:
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 f"❌ Unknown mode `{mode_arg}`. Use: off | momentum | shadow | "
                 f"breakout | breakout-shadow | default", parse_mode='Markdown')
             return
         if mode_arg in ("breakout", "breakout-shadow") and not has_breakout_config(m.epic):
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 f"❌ {m.name} has no breakout config (src/breakout.py BREAKOUT_CONFIGS) — "
                 f"backtest and add one first.", parse_mode='Markdown')
             return
@@ -857,7 +857,7 @@ class TelegramBot:
                          "Flip back to `breakout-shadow` when the trend view expires.")
         elif mode_arg == "momentum" and m.epic == "CC.D.CL.USS.IP":
             warn = "\n⚠️ Crude momentum was disabled for cause (live PF 0.38, costs eat the edge)."
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             f"🎛 *{m.name} → `{mode_arg}`* (was `{prev}`){warn}", parse_mode='Markdown')
 
     async def emergency_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -875,7 +875,7 @@ class TelegramBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "🚨 *EMERGENCY STOP*\n\n"
             "⚠️ WARNING: This will:\n"
             "• Close ALL open positions immediately\n"
@@ -902,7 +902,7 @@ class TelegramBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "🔄 *REBUILD & RESTART*\n\n"
             "This will:\n"
             "• Pull latest code from GitHub\n"
