@@ -32,6 +32,10 @@ HTF_REFRESH_COOLDOWN = timedelta(hours=6)  # On startup, skip HTF fetch if one r
 # screener, so each trading session runs on a trend built from its own opening data.
 HTF_REFRESH_TIME = "21:30"
 HTF_STALE_AFTER = timedelta(hours=25)  # 1h slack past the daily cadence
+# The staleness guard runs from the 60s main loop; this bounds how often it may FORCE a
+# refresh, so a refresh that cannot succeed (weekend skip, allowance exhausted) is
+# retried hourly, not every tick — 474 fires on 2026-09-05.
+HTF_GUARD_RETRY = timedelta(hours=1)
 # Streaming connect is retried before falling back to polling. `streaming_enabled`
 # is decided ONCE at boot and never re-evaluated, so a transient Lightstreamer
 # error strands the bot in the degraded branch until someone restarts it.
@@ -504,6 +508,27 @@ def initialize_streaming(preserved_candles: dict = None) -> bool:
         return False
 
 
+def _restore_htf_from_disk(only_missing: bool = False) -> int:
+    """Load the last persisted HTF labels into htf_trends; returns how many were applied.
+
+    only_missing=True leaves any label the current pass already set untouched, so a
+    partial fetch keeps its fresh values and only the gaps are back-filled."""
+    try:
+        if not HTF_TRENDS_FILE.exists():
+            return 0
+        cached = json.loads(HTF_TRENDS_FILE.read_text())
+    except Exception as e:
+        logger.warning(f"Could not read {HTF_TRENDS_FILE.name}: {e}")
+        return 0
+    applied = 0
+    for epic, label in cached.items():
+        if only_missing and epic in htf_trends:
+            continue
+        htf_trends[epic] = label
+        applied += 1
+    return applied
+
+
 def update_htf_trends(force: bool = False) -> None:
     """
     Fetch 1H candles and determine higher timeframe trend for each market.
@@ -544,6 +569,7 @@ def update_htf_trends(force: bool = False) -> None:
 
     logger.info("Updating higher timeframe trends...")
 
+    labelled = 0  # markets given a label BY THIS PASS (not merely present in the dict)
     for market in MARKETS:
         try:
             rate_limiter.wait_if_needed()
@@ -574,6 +600,7 @@ def update_htf_trends(force: bool = False) -> None:
                 htf_trends[market.epic] = "BEARISH"
             else:
                 htf_trends[market.epic] = "NEUTRAL"
+            labelled += 1
 
             logger.info(f"  {market.name}: HTF trend = {htf_trends[market.epic]}")
 
@@ -589,6 +616,20 @@ def update_htf_trends(force: bool = False) -> None:
         except Exception as e:
             logger.warning(f"Failed to get HTF trend for {market.name}: {e}")
             # Don't set a value - leave it unset so we know fetch failed
+
+    # Fallback (2026-09-05): if this pass labelled nothing useful — every fetch was
+    # weekend-skipped, or the API failed at boot with a marker too old for the cooldown
+    # branch — reload the last persisted labels rather than run on an empty dict, which
+    # left the regime "BULLISH unconfirmed" against a real BEARISH S&P. Only gaps are
+    # filled, so a partial fetch keeps its fresh values.
+    half = max(1, len(MARKETS) // 2)
+    if labelled < half:
+        restored = _restore_htf_from_disk(only_missing=True)
+        if restored:
+            logger.info(
+                f"HTF refresh labelled {labelled}/{len(MARKETS)} markets — restored "
+                f"{restored} from {HTF_TRENDS_FILE.name}"
+            )
 
     # Update market regime based on S&P 500 trend
     sp500_trend = htf_trends.get(SP500_EPIC, None)
@@ -608,12 +649,16 @@ def update_htf_trends(force: bool = False) -> None:
             else:
                 logger.info("Market regime: Defaulting to BULLISH (S&P 500 data unavailable - possible API issue)")
 
-    # Record successful refresh so startup calls can skip if recent. We mark
-    # the refresh as "successful" if at least half the markets returned data —
-    # avoids treating a full-allowance-exhausted run as a real refresh that
-    # blocks the next attempt.
-    fresh_count = sum(1 for epic in (m.epic for m in MARKETS) if epic in htf_trends)
-    if fresh_count >= len(MARKETS) // 2:
+    # Record a successful refresh so startup calls can skip if recent. "Successful"
+    # means at least half the markets were LABELLED THIS PASS — a disk restore on a
+    # weekday does not count, so a real API failure leaves the marker stale and the
+    # staleness guard keeps retrying (hourly, see HTF_GUARD_RETRY). On a weekend the
+    # persisted labels ARE the freshest the market can supply (Friday's close), so a
+    # populated dict counts: without this a weekend boot with an old marker never
+    # rewrote it and the guard re-fired every 60s until Monday (2026-09-05).
+    present = sum(1 for m in MARKETS if m.epic in htf_trends)
+    weekend = bool(client and client.is_weekend())
+    if labelled >= half or (weekend and present >= half):
         try:
             LAST_HTF_REFRESH_FILE.parent.mkdir(parents=True, exist_ok=True)
             LAST_HTF_REFRESH_FILE.write_text(datetime.now().isoformat())
@@ -625,9 +670,11 @@ def update_htf_trends(force: bool = False) -> None:
     # sample compares archive-now against a REST value that may be many hours old, so
     # on its own it conflates two different things — the archive computing something
     # different, and the daily snapshot having gone stale. Those imply opposite fixes.
-    # Only fires on the path where a fetch actually completed (the startup-cooldown
-    # path returns before here), so this is genuinely fresh-vs-fresh.
-    _observe_archive_htf(force=True, tag="at-refresh")
+    # Only fires when this pass actually labelled something (the startup-cooldown path
+    # returns before here, and a weekend-skipped pass restores STALE labels — sampling
+    # those as "at-refresh" would mislabel a stale-vs-archive comparison as fresh-vs-fresh).
+    if labelled:
+        _observe_archive_htf(force=True, tag="at-refresh")
 
 
 def _auto_roll_contract(market_config: 'MarketConfig') -> None:
@@ -3132,6 +3179,9 @@ def _observe_archive_htf(force: bool = False, tag: str = "drift") -> None:
         logger.debug(f"HTF archive x-check failed: {e}")
 
 
+_htf_guard_last_attempt: Optional[datetime] = None
+
+
 def _htf_staleness_guard() -> None:
     """Force an HTF refresh if the daily wall-clock one was missed.
 
@@ -3143,14 +3193,23 @@ def _htf_staleness_guard() -> None:
 
     Reads the same LAST_HTF_REFRESH_FILE that update_htf_trends writes on success,
     so it is correct across restarts with no extra state. Costs nothing in the
-    normal case — the file is younger than HTF_STALE_AFTER every time."""
+    normal case — the file is younger than HTF_STALE_AFTER every time.
+
+    Bounded to one forced attempt per HTF_GUARD_RETRY: the main loop calls this every
+    60s, and a refresh that cannot succeed would otherwise re-run the 14-market loop
+    on every tick (474 fires, 2026-09-05)."""
+    global _htf_guard_last_attempt
     try:
         if not LAST_HTF_REFRESH_FILE.exists():
             return
         last = datetime.fromisoformat(LAST_HTF_REFRESH_FILE.read_text().strip())
-        age = datetime.now() - last
+        now = datetime.now()
+        age = now - last
         if age < HTF_STALE_AFTER:
             return
+        if _htf_guard_last_attempt and (now - _htf_guard_last_attempt) < HTF_GUARD_RETRY:
+            return
+        _htf_guard_last_attempt = now
         logger.warning(
             f"HTF trends {age.total_seconds()/3600:.1f}h old (> "
             f"{HTF_STALE_AFTER.total_seconds()/3600:.0f}h) — the {HTF_REFRESH_TIME} UTC "
