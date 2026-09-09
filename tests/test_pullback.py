@@ -99,6 +99,15 @@ class TestParityWithTheSweep(unittest.TestCase):
         self.assertEqual(full.action, via_series.action)
         self.assertAlmostEqual(full.sma, via_series.sma, places=6)
         self.assertEqual(evaluate(short, cfg, in_position=False).action, "WAIT")   # no SMA -> WAIT
+        # Sunday stub rows in an IG DAY series must not enter the SMA
+        sundays = pd.date_range("2015-01-04", df["date"].iloc[-1], freq="W-SUN")
+        polluted = pd.concat([closes, pd.Series(1e-6, index=sundays)]).sort_index()
+        self.assertAlmostEqual(evaluate(short, cfg, in_position=False, sma_closes=polluted).sma, full.sma, places=6)
+
+    def test_store_rows_needed_covers_sunday_stubs(self):
+        import main
+        self.assertGreaterEqual(int(PullbackConfig().sma_n * 7 / 5) + 15, 295)
+        self.assertIn("rows_needed = int(pullback.get_pullback_config(m.epic).sma_n * 7 / 5) + 15", (REPO / "main.py").read_text())
 
 
 class TestSessionBars(unittest.TestCase):

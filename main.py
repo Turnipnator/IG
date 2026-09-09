@@ -1661,7 +1661,11 @@ def _daily_store_targets() -> list:
     for m in _daily_trend_markets():
         need[m.epic] = (m, max(need.get(m.epic, (m, 0))[1], daily_trend.get_daily_trend_config(m.epic).min_bars))
     for m in _pullback_markets():
-        need[m.epic] = (m, max(need.get(m.epic, (m, 0))[1], pullback.get_pullback_config(m.epic).sma_n + 10))
+        # IG's US index DAY series carries a SUNDAY stub row (~1 in 6 rows): 230 rows held
+        # only 192 weekday closes (verified 2026-09-09). Size the store in ROWS so the
+        # SMA has sma_n WEEKDAY closes plus headroom.
+        rows_needed = int(pullback.get_pullback_config(m.epic).sma_n * 7 / 5) + 15
+        need[m.epic] = (m, max(need.get(m.epic, (m, 0))[1], rows_needed))
     return list(need.values())
 
 

@@ -103,6 +103,7 @@ def add_levels(df: pd.DataFrame, cfg: PullbackConfig, sma_closes: Optional[pd.Se
     else:
         s = pd.Series(sma_closes).copy()
         s.index = pd.to_datetime(s.index).normalize()
+        s = s[s.index.weekday < 5]          # IG DAY series carry Sunday stub rows; the SMA is a weekday SMA
         sess = pd.Series(d["close"].values, index=d["date"].values)
         merged = pd.concat([s[~s.index.isin(sess.index)], sess]).sort_index()
         merged = merged[~merged.index.duplicated(keep="last")]
