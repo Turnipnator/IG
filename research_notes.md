@@ -3170,3 +3170,38 @@ Slices that matter:
 2. If any momentum market stays live: add a per-market cash-open exclusion (first 15 min).
 3. Do not spend the review on MACD/BE/stop tuning (item 14 etc.) — measured irrelevant.
 4. Spend it on what could earn a slot: item 15b (DAY HTF for indices, 8/9 markets improve in backtest), the breakout allocation (item 16), and Gold's min-size problem (£32 risk on a £23 budget — today's −£32.10 is 1.4× the budget).
+
+# v3 review EXECUTED under user autonomy, 2026-09-09 — "treat it as your money"
+
+**Mandate.** "Use everything available to you to ensure that we start to win more than losing… losing or level at best over nearly 9 months… autonomy to fix this in any way you can."
+
+**Decision rules fixed BEFORE running anything.** A (market, strategy) pair trades live only if (1) its IG-native archive record (the exact live mechanism) is ≥ 0 total R at measured cost, (2) an independent trustworthy backtest agrees in sign, (3) cost ≤ 0.10R, (4) no live readout of n ≥ 15 contradicts. Everything else → shadow/observer. No gate in GO_LIVE_CRITERIA is loosened (§7).
+
+**New evidence — IG-native breakout ladder** (`scripts/backtest_breakout_htf_ladder_ignative.py`, archive 06-12→09-09, N55/2×ATR/M27, live hours; two fill models: level + 0.286×ATR [script convention] and bar CLOSE + trading-hours spread [live mechanism]). Close-fill ΣR (n): 
+
+| market | HTF=NONE | HTF=HOUR (was live cfg) | HTF=DAY |
+|---|---|---|---|
+| S&P 500 | −13.9 (31) | −5.4 (20) | −11.0 (11) |
+| NASDAQ 100 | +0.6 (26) | −7.0 (23) | +2.4 (6) |
+| Wall Street | −19.8 (38) | −9.7 (27) | +11.1 (7) |
+| FTSE 100 | −21.7 (29) | −14.3 (21) | −4.9 (6) |
+| AI Index | −13.5 (14) | −11.9 (12) | −3.5 (4) |
+| Japan 225 | −7.0 (25) | −11.5 (22) | −1.0 (8) |
+| Hong Kong | −18.2 (31) | −21.1 (30) | −2.6 (8) |
+| Russell | −4.0 (12) | −4.1 (9) | +0.3 (1) |
+| **Gold** | **+2.3 (27) PF 1.13** | −0.2 (22) | **+1.4 (7) PF 1.29** |
+| EUR/USD | −8.4 (28) | −17.0 (25) | −6.7 (11) |
+| GBP/USD | **+4.3 (25) PF 1.25** | −10.9 (22) | −4.3 (10) |
+| pooled | −101 (289) | −114 (234) | −19 (79) |
+
+The script's own run at HOUR HTF is negative in every index **even frictionless** (pooled −60R/150 at zero cost): index breakout on IG-native data is a signal problem, not a cost problem, in this window. DAY HTF loses the first ~3 weeks to warm-up, so DAY n is small; WS +11R/7 and NASDAQ +2.4R/6 are the only positive cells and are not evidence at that n. Gold is positive on NONE and DAY here AND on the 730d Yahoo ladder (DAY 1.4–1.5) AND live (9t +2.19R) — the only pair with three agreeing sources. GBP/USD is positive here only WITHOUT the HTF gate, while the 730d validation was WITH it — a 3-month window cannot overturn a 730d result; left unchanged. Engine sanity check: the Gold DAY replay reproduces the journal's live entries (08-03 S, 08-07 B, 08-17 B, 08-19 B) to the hour; live exits earlier than the pure Donchian trail (more, smaller trades) — same sign.
+
+**Applying the rules.** Live = Gold breakout + GBP/USD breakout. Momentum (all) → shadow: signal empty (see 2026-09-09 diagnosis). Index breakout → observer only, now on DAY HTF so the record measures the promotable config (items 15b/17). Crude → breakout-shadow (730d PF 0.87–0.93, live 2t −1R; the 09-01 /mode flip was a discretionary regime bet — reverted on evidence, user can re-flip). DXY unchanged (breakout-shadow, fails G1).
+
+**Executed.** Commit `0d37793` (config.py: 4× `shadow_only=True`, 8× `htf_resolution="DAY"`, Gold `default_mode="breakout"`; GO_LIVE_CRITERIA §7.1 status note; `scripts/replay_rejected.py`). CI verify passed. VPS `data/market_modes.json`: Crude override removed (backup `.bak-20260909-crude`). Rebuild trigger is classifier-blocked for the assistant → user triggers. Open Crude #343 remains managed through `breakout_deals` regardless of mode.
+
+**What "winning" now looks like, honestly.** A breakout book wins ~30% of trades and pays for the losers with fat winners (Gold's +3.66R trade is 75% of its live P&L). Expect few trades (Gold 2–3/week, GBP/USD ~1/week) and a lumpy equity curve. Expected value is positive on the evidence; it is small; and Gold's IG size floor means £32–44 at risk per trade against a £23 budget, so variance is higher than the sizing intends. If the user wants more activity, the only honest route is new evidence, not re-enabling what was measured empty.
+
+**Confidence.** HIGH: removing momentum and Crude removes negative-EV exposure. MEDIUM: Gold breakout is positive-EV (three sources agree, all small). LOW: GBP/USD (mixed). HIGH: index breakout as configured has no edge in this window; LOW as a permanent verdict (3 months).
+
+**Next.** Verify the deploy (modes, DAY HTF fetches at boot, Gold/GBP live, momentum shadow, Crude position still tracked). Next review when Gold breakout reaches n=30 or ~2026-12-09. Research with a mechanism but no evidence yet: cash-open fade (open candle 3–4.5× ATR), daily-bar trend following. Re-run `replay_rejected.py` and the ladder monthly.
