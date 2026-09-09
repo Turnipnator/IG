@@ -31,22 +31,25 @@ logger = logging.getLogger(__name__)
 
 STATS_DIR = Path("/app/data") if os.path.exists("/app") else Path("data")
 STATS_FILE = STATS_DIR / "daily_stats.json"
-# Forex trading mode, toggled live via /forex (off|momentum|shadow|breakout).
-# Persisted so a deliberate "breakout window" survives a session refresh; defaults
-# to the SAFE "off" if the file is missing/corrupt. The momentum forex profiles are
-# retired-by-default (net-losing) but remain re-enablable on demand via /forex
-# momentum; the validated path is the breakout strategy, and only when toggled.
-FOREX_MODE_FILE = STATS_DIR / "forex_mode.json"
-# off = no forex trading; momentum = the original (retired, net-losing) momentum
-# profiles; shadow = breakout observed only; breakout = breakout live.
-FOREX_MODES = ("off", "momentum", "shadow", "breakout")
-
-# Per-market strategy modes for NON-forex markets, toggled via /mode (2026-07-24).
-# {epic: mode}; a market absent from the dict uses its config default
-# (MarketConfig.default_mode, else shadow_only-derived, else momentum) — so this
-# file only ever holds deliberate user overrides. Read by main._market_mode.
+# Per-market strategy modes, toggled via /mode (2026-07-24; forex pairs included
+# since 2026-09-09). {epic: mode}; a market absent from the dict uses its config
+# default (MarketConfig.default_mode, else shadow_only-derived, else momentum) — so
+# this file only ever holds deliberate user overrides. Read by main._market_mode.
 MARKET_MODES_FILE = STATS_DIR / "market_modes.json"
 MARKET_MODES = ("off", "momentum", "shadow", "breakout", "breakout-shadow")
+
+# RETIRED 2026-09-09. Until then the forex pairs were governed by ONE global toggle
+# (/forex, persisted here) with its own four-mode vocabulary, in which "shadow"
+# meant BREAKOUT observed — a second control surface that made the /mode board
+# misleading and, on 2026-09-09, let a stray `/forex momentum` put both pairs on
+# the retired momentum pipeline for an hour. Folded into /mode. The file is
+# translated into per-pair /mode overrides ONCE at boot (migrate_legacy_forex_mode)
+# and renamed *.migrated so it can never re-apply.
+LEGACY_FOREX_MODE_FILE = STATS_DIR / "forex_mode.json"
+# Legacy /forex mode → /mode vocabulary. "breakout" is deliberately absent: it
+# meant "as live as this pair's per-pair veto allows", which is exactly the pair's
+# config default_mode now — so it translates to "no override".
+LEGACY_FOREX_MODE_MAP = {"off": "off", "momentum": "momentum", "shadow": "breakout-shadow"}
 
 # The daily stats reset at the 21:00 UTC trading-session boundary
 # (send_daily_summary -> reset_daily_stats, scheduled at 21:00 UTC). Persistence
@@ -130,14 +133,14 @@ class TelegramBot:
         self.ig_client: Optional['IGClient'] = None
         self.trading_enabled = True
         self.is_running = False
-        # Forex runtime mode (off|momentum|shadow|breakout). Loaded from disk below; default
-        # safe-off. See FOREX_MODE_FILE. Read by main.py's forex gate.
-        self.forex_mode = "off"
-        self.load_forex_mode()
-        # Per-market /mode overrides for non-forex markets ({epic: mode}).
+        # Per-market /mode overrides ({epic: mode}), forex pairs included.
         # Read cross-thread by main._market_mode; absent epic = config default.
         self.market_modes: dict = {}
         self.load_market_modes()
+        # Human-readable record of the one-shot /forex → /mode translation when the
+        # legacy file was found at this boot (surfaced on the startup banner and the
+        # /mode board). None = nothing to migrate.
+        self.mode_migration_notice: Optional[str] = self.migrate_legacy_forex_mode()
 
         # Statistics
         self.start_time = datetime.now()
@@ -202,32 +205,8 @@ class TelegramBot:
         except Exception as e:
             logger.warning(f"Failed to load daily stats: {e}")
 
-    def save_forex_mode(self) -> None:
-        """Persist the forex mode so a 'breakout window' survives a session refresh."""
-        try:
-            STATS_DIR.mkdir(parents=True, exist_ok=True)
-            FOREX_MODE_FILE.write_text(json.dumps({
-                "forex_mode": self.forex_mode,
-                "saved_at": datetime.now().isoformat(),
-            }))
-        except Exception as e:
-            logger.warning(f"Failed to save forex mode: {e}")
-
-    def load_forex_mode(self) -> None:
-        """Restore the forex mode from disk; fall back to safe 'off' on any problem."""
-        try:
-            if not FOREX_MODE_FILE.exists():
-                return
-            mode = json.loads(FOREX_MODE_FILE.read_text()).get("forex_mode", "off")
-            self.forex_mode = mode if mode in FOREX_MODES else "off"
-            if self.forex_mode != "off":
-                logger.info(f"Restored forex mode: {self.forex_mode}")
-        except Exception as e:
-            logger.warning(f"Failed to load forex mode (defaulting to off): {e}")
-            self.forex_mode = "off"
-
     def save_market_modes(self) -> None:
-        """Persist per-market /mode overrides (non-forex) across restarts."""
+        """Persist per-market /mode overrides across restarts."""
         try:
             STATS_DIR.mkdir(parents=True, exist_ok=True)
             MARKET_MODES_FILE.write_text(json.dumps({
@@ -251,6 +230,61 @@ class TelegramBot:
         except Exception as e:
             logger.warning(f"Failed to load market modes (using config defaults): {e}")
             self.market_modes = {}
+
+    def migrate_legacy_forex_mode(self) -> Optional[str]:
+        """One-shot translation of the retired global /forex toggle into per-pair
+        /mode overrides. Returns a notice string when the legacy file was found
+        (whether or not anything had to be written), else None.
+
+        Legacy mode → per-pair /mode:
+          off      → off                momentum → momentum
+          shadow   → breakout-shadow    (legacy "shadow" meant BREAKOUT observed)
+          breakout → the pair's config default. The global 'breakout' went live only
+                     on pairs NOT vetoed by breakout_shadow_only, and that veto is
+                     now expressed as default_mode="breakout-shadow" — so the
+                     translation is whatever the config already says.
+          anything else (corrupt file) → off, as the legacy loader did.
+        A pair that already has a /mode override is left alone. An override is
+        written only where the translation differs from the pair's config default,
+        so deploying the fold never by itself changes what trades. The legacy file
+        is then renamed *.migrated, so this cannot re-run; if the rename fails the
+        re-run is a no-op because the overrides are now present."""
+        try:
+            if not LEGACY_FOREX_MODE_FILE.exists():
+                return None
+            try:
+                legacy = json.loads(LEGACY_FOREX_MODE_FILE.read_text()).get("forex_mode", "off")
+            except Exception as e:
+                logger.warning(f"Legacy forex_mode.json unreadable ({e}); treating as 'off'")
+                legacy = "off"
+            written: dict = {}
+            untouched: list = []
+            for m in MARKETS:
+                if m.sector != "Forex":
+                    continue
+                if m.epic in self.market_modes:
+                    untouched.append(f"{m.name} (existing override `{self.market_modes[m.epic]}`)")
+                    continue
+                default = self._effective_mode(m)  # no override present → config default
+                target = default if legacy == "breakout" else LEGACY_FOREX_MODE_MAP.get(legacy, "off")
+                if target != default:
+                    self.market_modes[m.epic] = target
+                    written[m.epic] = target
+                else:
+                    untouched.append(f"{m.name} (config default `{default}`)")
+            if written:
+                self.save_market_modes()
+            LEGACY_FOREX_MODE_FILE.replace(LEGACY_FOREX_MODE_FILE.with_suffix(".json.migrated"))
+            names = {m.epic: m.name for m in MARKETS}
+            parts = [f"{names.get(e, e)} → `{mode}`" for e, mode in written.items()]
+            notice = (f"/forex `{legacy}` folded into /mode — "
+                      + (f"override written: {', '.join(parts)}" if parts else "nothing written")
+                      + (f"; unchanged: {', '.join(untouched)}" if untouched else ""))
+            logger.info(f"Legacy forex mode migrated: {notice}")
+            return notice
+        except Exception as e:
+            logger.warning(f"Legacy forex mode migration failed (left as-is): {e}")
+            return None
 
     def is_authorized(self, user_id: int) -> bool:
         """Check if user is authorized."""
@@ -303,8 +337,7 @@ class TelegramBot:
             "*🎮 Control:*\n"
             "/stop - Pause trading\n"
             "/resume - Resume trading\n"
-            "/forex - Forex mode (off|momentum|shadow|breakout)\n"
-            "/mode - Per-market strategy (off|momentum|shadow|breakout|breakout-shadow)\n"
+            "/mode - Per-market strategy, forex included (off|momentum|shadow|breakout|breakout-shadow)\n"
             "/rebuild - Pull latest code & restart\n"
             "/emergency - ⚠️ Close ALL positions\n\n"
             "*🔔 Notifications:*\n"
@@ -707,61 +740,26 @@ class TelegramBot:
             await update.effective_message.reply_text("ℹ️ Bot is already running")
 
     async def forex_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /forex - toggle the forex trading mode (off|momentum|shadow|breakout).
-
-        Forex momentum is retired-by-default (net-losing) but re-enablable on demand;
-        the validated path is the breakout strategy, toggled on for a window you choose.
-          off      - no forex trading (default, safe)
-          momentum - re-enable the (retired) EMA-momentum profiles on demand
-          shadow   - breakout strategy runs OBSERVATIONAL (logs/journals signals,
-                     no real orders) — validate on live prices before going live
-          breakout - breakout strategy trades LIVE
-        """
+        """Handle /forex — RETIRED 2026-09-09. The global forex toggle was folded into
+        the per-market /mode system. Kept for one release as a pointer so muscle
+        memory gets a useful reply instead of silence. Changes NOTHING."""
         if not self.is_authorized(update.effective_user.id):
             return
         self.commands_executed += 1
-
-        arg = (context.args[0].lower() if context.args else "").strip()
-        if not arg:
-            await update.effective_message.reply_text(
-                f"🌐 *Forex mode:* `{self.forex_mode}`\n\n"
-                "Usage: `/forex off | momentum | shadow | breakout`\n"
-                "• *off* — no forex trading (default)\n"
-                "• *momentum* — original momentum strategy (retired, net-losing)\n"
-                "• *shadow* — breakout runs observational (no real orders)\n"
-                "• *breakout* — breakout trades live",
-                parse_mode='Markdown'
-            )
-            return
-
-        if arg not in FOREX_MODES:
-            await update.effective_message.reply_text(
-                f"❌ Unknown mode `{arg}`. Use: off | shadow | breakout",
-                parse_mode='Markdown'
-            )
-            return
-
-        if arg == self.forex_mode:
-            await update.effective_message.reply_text(f"ℹ️ Forex already `{arg}`", parse_mode='Markdown')
-            return
-
-        prev, self.forex_mode = self.forex_mode, arg
-        self.save_forex_mode()
-        logger.info(f"Forex mode changed via Telegram: {prev} -> {arg}")
-        emoji = {"off": "⚪", "momentum": "🔵", "shadow": "🟡", "breakout": "🟢"}[arg]
-        note = {
-            "off": "No forex trading.",
-            "momentum": "⚠️ Original *momentum* strategy LIVE on forex (retired — net-losing).",
-            "shadow": "Breakout runs *observational* — logs signals, places NO real orders.",
-            "breakout": "⚠️ Breakout trading *LIVE* on forex.",
-        }[arg]
+        pairs = [m for m in MARKETS if m.sector == "Forex"]
+        board = "\n".join(f"• {m.name}: `{self._effective_mode(m)}`" for m in pairs)
         await update.effective_message.reply_text(
-            f"{emoji} *Forex mode → `{arg}`* (was `{prev}`)\n{note}",
-            parse_mode='Markdown'
-        )
+            "ℹ️ `/forex` is retired — forex pairs live on the `/mode` board now, one "
+            "mode per pair. Nothing changed.\n\n"
+            f"{board}\n\n"
+            "Use `/mode <pair> off|momentum|shadow|breakout|breakout-shadow`, e.g. "
+            "`/mode gbp/usd breakout-shadow`.\n"
+            "NB the old forex `shadow` (breakout observed) is now `breakout-shadow`; "
+            "`shadow` means momentum observed, as on every other market.",
+            parse_mode='Markdown')
 
     def _effective_mode(self, m) -> str:
-        """Effective strategy mode for a non-forex MarketConfig.
+        """Effective strategy mode for ANY MarketConfig (forex pairs included since 2026-09-09).
         MUST mirror main._market_mode: /mode override > default_mode > shadow_only > momentum."""
         override = self.market_modes.get(m.epic)
         if override in MARKET_MODES:
@@ -771,7 +769,8 @@ class TelegramBot:
         return "shadow" if getattr(m, "shadow_only", False) else "momentum"
 
     async def mode_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /mode — per-market strategy toggle for non-forex markets.
+        """Handle /mode — per-market strategy toggle for EVERY market (forex pairs
+        included since 2026-09-09; the separate global /forex toggle is retired).
 
         /mode                     -> board of every market's effective mode
         /mode <market> <mode>     -> set override (off|momentum|shadow|breakout|breakout-shadow)
@@ -789,16 +788,14 @@ class TelegramBot:
                      "breakout": "🟢", "breakout-shadow": "🟡"}
             lines = ["🎛 *Market strategy modes*\n"]
             for m in MARKETS:
-                if m.sector == "Forex":
-                    lines.append(f"• {m.name}: `/forex` governs (mode `{self.forex_mode}`"
-                                 f"{', pair shadow-only' if getattr(m, 'breakout_shadow_only', False) else ''})")
-                    continue
                 eff = self._effective_mode(m)
                 tag = " _(override)_" if m.epic in self.market_modes else ""
                 lines.append(f"{emoji.get(eff, '·')} {m.name}: `{eff}`{tag}")
             lines.append("\nUsage: `/mode <market> off|momentum|shadow|breakout|breakout-shadow`"
                          "\n`/mode <market> default` clears the override."
                          "\n👻 shadow = momentum observed; 🟡 breakout-shadow = breakout observed.")
+            if self.mode_migration_notice:
+                lines.append(f"\n🔁 At this boot: {self.mode_migration_notice}")
             await update.effective_message.reply_text("\n".join(lines), parse_mode='Markdown')
             return
 
@@ -820,11 +817,6 @@ class TelegramBot:
                 "❌ Ambiguous: " + ", ".join(m.name for m in matches), parse_mode='Markdown')
             return
         m = matches[0]
-        if m.sector == "Forex":
-            await update.effective_message.reply_text(
-                f"ℹ️ {m.name} is forex — use `/forex` (per-pair shadow is a config flag).",
-                parse_mode='Markdown')
-            return
 
         if mode_arg == "default":
             prev = self.market_modes.pop(m.epic, None)
@@ -857,6 +849,9 @@ class TelegramBot:
                          "Flip back to `breakout-shadow` when the trend view expires.")
         elif mode_arg == "momentum" and m.epic == "CC.D.CL.USS.IP":
             warn = "\n⚠️ Crude momentum was disabled for cause (live PF 0.38, costs eat the edge)."
+        elif mode_arg == "momentum" and m.sector == "Forex":
+            warn = ("\n⚠️ Forex momentum profiles were retired as net-losing (2026-06) — "
+                    "this places LIVE momentum orders on the pair.")
         await update.effective_message.reply_text(
             f"🎛 *{m.name} → `{mode_arg}`* (was `{prev}`){warn}", parse_mode='Markdown')
 

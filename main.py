@@ -188,8 +188,8 @@ breakeven_applied: set[str] = set()  # deal_ids with BE stop applied
 trailing_stop_levels: dict[str, float] = {}  # deal_id -> current trail stop level
 
 # Deal IDs opened by the BREAKOUT strategy. Distinguishes breakout positions (managed
-# by the Donchian-trail) from momentum forex positions (BE/ATR/MACD), since /forex can
-# run either — so exit management can't gate on sector alone.
+# by the Donchian-trail) from momentum positions (BE/ATR/MACD), since /mode can run
+# either strategy on the same epic — so exit management can't gate on sector alone.
 breakout_deals: set[str] = set()
 
 # Momentum-exit minimum-hold guard: deal_id -> timestamp of the newest CLOSED
@@ -721,20 +721,10 @@ def _auto_roll_contract(market_config: 'MarketConfig') -> None:
 
 def _screener_exempt_epics() -> set:
     """Epics that must not consume screener top-N slots: any market that is not
-    LIVE-trading right now (shadow/observer/off modes; forex pairs whose effective
-    mode is observe-only). Recomputed every screen so a /mode or /forex flip takes
-    effect at the next 30-min re-screen."""
-    exempt = set()
-    for m in MARKETS:
-        if m.sector == "Forex":
-            fxm = getattr(telegram, "forex_mode", "off")
-            live = (fxm == "momentum") or (
-                fxm == "breakout" and not getattr(m, "breakout_shadow_only", False))
-            if not live:
-                exempt.add(m.epic)
-        elif _market_mode(m) not in ("momentum", "breakout"):
-            exempt.add(m.epic)
-    return exempt
+    LIVE-trading right now (shadow/observer/off modes — forex pairs included, via
+    the same _market_mode). Recomputed every screen so a /mode flip takes effect
+    at the next 30-min re-screen."""
+    return {m.epic for m in MARKETS if _market_mode(m) not in ("momentum", "breakout")}
 
 
 def run_daily_screen(periodic: bool = False) -> None:
@@ -984,7 +974,7 @@ def on_candle_complete(epic: str, market: MarketStream) -> None:
 
 
 def _execute_breakout_entry(epic: str, market: MarketStream, market_config, signal, df) -> None:
-    """Place a LIVE breakout order (forex_mode == 'breakout'). ISOLATED from the
+    """Place a LIVE breakout order (market mode 'breakout'). ISOLATED from the
     momentum pipeline with its own essential gates (one-per-epic, loss cooldown,
     trading hours, IG min-stop clamp, spread, position sizing) so a bug here cannot
     touch the momentum book. Exit is the Donchian-trail (_update_breakout_trail) plus
@@ -1445,8 +1435,9 @@ def _breakout_frame_1h(epic: str, stream_df, drop_forming: bool = True) -> Optio
 
 
 def _observe_breakout_shadow(epic: str, market: MarketStream, market_config) -> None:
-    """ALWAYS-ON breakout observer (2026-07-24, user request): for every non-forex
-    market with a BREAKOUT_CONFIGS entry, log 1h Donchian signals in shadow
+    """ALWAYS-ON breakout observer (2026-07-24, user request): for every market
+    with a BREAKOUT_CONFIGS entry (forex pairs included since their fold into
+    /mode, 2026-09-09), log 1h Donchian signals in shadow
     ALONGSIDE the market's live strategy — momentum keeps trading; this only
     writes rejected_signals 'Breakout-shadow:' rows. This is the per-EPIC breakout
     validation the Yahoo cash proxies can't provide (no overnight bars). At most
@@ -1496,7 +1487,8 @@ def _observe_breakout_shadow(epic: str, market: MarketStream, market_config) -> 
 
 
 def _market_mode(market_config) -> str:
-    """Effective strategy mode for a NON-forex market (forex keeps /forex).
+    """Effective strategy mode for ANY market — forex pairs included since
+    2026-09-09, when the separate global /forex toggle was folded into /mode.
 
     Precedence: runtime /mode override (telegram.market_modes, persisted in
     data/market_modes.json) > MarketConfig.default_mode > shadow_only-derived
@@ -1517,50 +1509,31 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         if not market_config:
             return
 
-        # Forex gate, behind the runtime /forex toggle (telegram.forex_mode):
-        #   off      → no forex trading (default).
-        #   momentum → the original momentum profiles (retired, net-losing) — fall
-        #              through to the normal pipeline below, unchanged.
-        #   shadow   → breakout observed only (log + journal, no orders).
-        #   breakout → breakout LIVE.
+        # Per-market strategy mode (/mode toggle, 2026-07-24). Governs forex pairs
+        # too since 2026-09-09, when the separate global /forex toggle — with its own
+        # vocabulary, in which "shadow" meant BREAKOUT observed — was folded in:
+        #   off             → stream/archive only, no analysis.
+        #   breakout        → Donchian breakout LIVE (needs a BREAKOUT_CONFIGS entry).
+        #   breakout-shadow → the same breakout pipeline, observe-only (log + journal).
+        #   momentum/shadow → fall through to the momentum pipeline, with "shadow"
+        #                     honoured at the shadow-only branch further down.
         # Markets stay subscribed regardless so candles keep archiving.
-        if market_config.sector == "Forex":
-            fx_mode = getattr(telegram, "forex_mode", "off")
-            if fx_mode == "off":
-                return
-            if fx_mode in ("shadow", "breakout"):
-                # Per-pair veto: a market flagged breakout_shadow_only never places
-                # live breakout orders even when the global toggle is 'breakout' — it
-                # stays observe-only. EUR/USD set 2026-07-08 (un-validated edge, live
-                # tail given back); GBP/USD unflagged so it trades live.
-                effective_mode = "shadow" if getattr(
-                    market_config, "breakout_shadow_only", False) else fx_mode
-                analyze_forex_breakout(epic, market, market_config, effective_mode)
-                return
-            # fx_mode == "momentum": fall through to the original momentum pipeline.
-
-        # Per-market strategy mode for NON-forex markets (/mode toggle, 2026-07-24).
-        # Mirrors the forex gate above: off → stream/archive only; breakout(-shadow)
-        # → the same Donchian pipeline forex uses (requires a BREAKOUT_CONFIGS
-        # entry — Crude Oil currently); momentum/shadow → fall through, with
-        # "shadow" honoured at the shadow-only branch further down.
         mkt_mode = _market_mode(market_config)
-        if market_config.sector != "Forex":
-            if mkt_mode == "off":
-                return
-            if mkt_mode in ("breakout", "breakout-shadow"):
-                if breakout.has_breakout_config(epic):
-                    analyze_forex_breakout(
-                        epic, market, market_config,
-                        "breakout" if mkt_mode == "breakout" else "shadow",
-                    )
-                else:
-                    logger.debug(f"{market.name}: mode {mkt_mode} but no breakout config")
-                return
-            # momentum / shadow: the always-on observer ALSO logs 1h Donchian
-            # breakout signals for this market (shadow-only, hourly-capped) so
-            # every EPIC accumulates breakout evidence without touching trading.
-            _observe_breakout_shadow(epic, market, market_config)
+        if mkt_mode == "off":
+            return
+        if mkt_mode in ("breakout", "breakout-shadow"):
+            if breakout.has_breakout_config(epic):
+                analyze_forex_breakout(
+                    epic, market, market_config,
+                    "breakout" if mkt_mode == "breakout" else "shadow",
+                )
+            else:
+                logger.debug(f"{market.name}: mode {mkt_mode} but no breakout config")
+            return
+        # momentum / shadow: the always-on observer ALSO logs 1h Donchian
+        # breakout signals for this market (shadow-only, hourly-capped) so
+        # every EPIC accumulates breakout evidence without touching trading.
+        _observe_breakout_shadow(epic, market, market_config)
 
         # Skip if market not tradeable
         if market.market_state != "TRADEABLE":
@@ -1942,7 +1915,7 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
         # 100, AI Index. E2 thesis test: US Russell 2000. Sits before the
         # order-mechanics blocks (IG stop clamp, sizing, spread/cluster checks)
         # — those model execution, not signal quality.
-        if mkt_mode == "shadow" and market_config.sector != "Forex":
+        if mkt_mode == "shadow":
             logger.info(
                 f"👻 Shadow [{market.name}]: {trade_signal.signal.value} @ "
                 f"{trade_signal.confidence:.0%} passed all gates — logged, no order"
@@ -2504,11 +2477,14 @@ def _readopt_position(row: dict, live_pos) -> None:
     known_positions[deal_id] = live_pos
     recently_closed_deals.pop(deal_id, None)
     missing_poll_counts.pop(deal_id, None)
-    # Restore breakout-exit routing if this epic runs breakouts in the current
-    # forex mode — else the re-adopted position would fall through to the momentum
-    # exit instead of its Donchian trail (item 11).
-    if breakout.has_breakout_config(live_pos.epic) and \
-            getattr(telegram, "forex_mode", "off") == "breakout":
+    # Restore breakout-exit routing if this epic's CURRENT /mode is live breakout —
+    # else the re-adopted position would fall through to the momentum exit instead
+    # of its Donchian trail (item 11). Until 2026-09-09 this keyed on the GLOBAL
+    # forex toggle, so a re-adopted Gold breakout position depended on the forex
+    # setting; it now reads the epic's own mode.
+    readopt_cfg = next((m for m in MARKETS if m.epic == live_pos.epic), None)
+    if readopt_cfg is not None and breakout.has_breakout_config(live_pos.epic) and \
+            _market_mode(readopt_cfg) == "breakout":
         breakout_deals.add(deal_id)
         _save_breakout_deals()
 
@@ -3595,6 +3571,19 @@ async def main_async():
             f"*Regimes:*\n{regime_summary}\n\n"
             f"{'Real-time price streaming active!' if streaming_enabled else 'Using scheduled polling (API limited)'}"
         )
+
+    # A /forex → /mode translation ran at this boot (2026-09-09 fold). Deliberately
+    # IGNORES skip_banner: a persisted trading-mode translation must never hide
+    # behind the quiet-restart guard — same reasoning as the POLLING alert below.
+    if getattr(telegram, "mode_migration_notice", None):
+        try:
+            await telegram.send_notification(
+                "🔁 *Forex toggle folded into /mode*\n\n"
+                f"{telegram.mode_migration_notice}\n\n"
+                "Check the board with /mode."
+            )
+        except Exception as e:
+            logger.warning(f"Could not send mode-migration notice: {e}")
 
     if not streaming_enabled:
         # Deliberately IGNORES skip_banner. The 2026-07-18 incident hid exactly this

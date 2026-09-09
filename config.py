@@ -215,15 +215,6 @@ class MarketConfig:
     # kept; the effect is Wall-St-SPECIFIC (NASDAQ/FTSE/S&P inert or hurt) so this
     # is NOT raised globally. Small-sample (1 trade on n=14) → trial + review.
     reentry_cooldown_candles: int | None = None
-    # Force the breakout strategy to SHADOW (observe-only: log + journal, no live
-    # order) for THIS market even when the global /forex toggle is 'breakout'. The
-    # global mode still governs every other forex pair — this is a per-pair veto on
-    # LIVE breakout entries only; it does NOT touch an already-open position's
-    # Donchian-trail exit. Set on EUR/USD 2026-07-08: the 725d head-to-head never
-    # validated EUR/USD breakout (−2.29%/67t) and the live "edge" was a single +£61
-    # tail (#192) since fully given back — 3 straight losers −£64.83 (#198/#215/#225),
-    # 0% WR. GBP/USD breakout stays LIVE (backtest PF 1.30, validated).
-    breakout_shadow_only: bool = False
     # SHADOW mode for the momentum pipeline (2026-07-24 review). The market runs
     # the FULL live signal path — streaming, indicators, HTF, regime, confidence,
     # hours, cooldowns, calendar — but instead of placing the order the signal is
@@ -233,12 +224,15 @@ class MarketConfig:
     # Use for: demoted markets we want to keep measuring (FTSE, AI Index) and
     # the E2 memoryless-thesis test (Russell 2000). Zero orders, zero risk.
     shadow_only: bool = False
-    # Default STRATEGY MODE for the /mode Telegram toggle (2026-07-24, non-forex
-    # markets; forex keeps the /forex system). One of: off | momentum | shadow |
-    # breakout | breakout-shadow. None → derived: shadow_only=True → "shadow",
-    # else "momentum" (i.e. existing behaviour, this field changes nothing unless
-    # set). A runtime /mode override (data/market_modes.json) beats this default.
-    # breakout modes additionally require a src/breakout.py BREAKOUT_CONFIGS entry.
+    # Default STRATEGY MODE for the /mode Telegram toggle (2026-07-24). Since
+    # 2026-09-09 this governs EVERY market, forex pairs included — the separate
+    # global /forex toggle and the per-pair `breakout_shadow_only` veto were folded
+    # into it (a forex pair's veto is now simply default_mode="breakout-shadow").
+    # One of: off | momentum | shadow | breakout | breakout-shadow. None → derived:
+    # shadow_only=True → "shadow", else "momentum" (i.e. existing behaviour, this
+    # field changes nothing unless set). A runtime /mode override
+    # (data/market_modes.json) beats this default. breakout modes additionally
+    # require a src/breakout.py BREAKOUT_CONFIGS entry.
     default_mode: str | None = None
 
 
@@ -1223,9 +1217,11 @@ MARKETS = [
     # "shadow": momentum observed via benched_outcomes, and the always-on
     # observer logs 1h Donchian breakout signals too. /mode dollar momentum|
     # breakout are available as deliberate flips, warned as unvalidated.
-    # sector deliberately "Indices" not "Forex": DXY is a currency INDEX, and
-    # the "Forex" sector string routes through the /forex pair gate which would
-    # bypass the /mode system (and, in breakout mode, could place LIVE orders).
+    # sector deliberately "Indices" not "Forex": DXY is a currency INDEX. (Until
+    # 2026-09-09 the "Forex" sector string ALSO routed through a separate /forex
+    # pair gate that bypassed /mode and could place LIVE orders; that gate is gone
+    # — every sector now resolves through _market_mode — so the string is only a
+    # classification now.)
     # 2026-09-04: moved from the CO.D.DX.Month1.IP future to the undated DFB.
     # The Month1 slot (SEP-26) stops dealing 2026-09-11; at expiry IG re-points
     # the SAME epic to a far contract (Crude's went OFFLINE for weeks) — see the
@@ -1267,8 +1263,12 @@ MARKETS = [
         strategy="forex",      # Tight 1.0x stops
         trading_start=23,
         trading_end=21,
-        breakout_shadow_only=True,  # 2026-07-08: EUR/USD breakout un-validated + live
-                                    # tail given back — observe-only. GBP/USD stays live.
+        # Breakout OBSERVED only (2026-07-08, then `breakout_shadow_only=True`): the
+        # 725d head-to-head never validated EUR/USD breakout (−2.29%/67t) and the live
+        # "edge" was a single +£61 tail (#192) since fully given back — 3 straight
+        # losers −£64.83 (#198/#215/#225), 0% WR. The look-ahead-free re-run of
+        # 2026-08-13 leaves its most recent quarter at 0.57. GBP/USD trades live.
+        default_mode="breakout-shadow",
     ),
     MarketConfig(
         # 1h candles: 365d backtest +1.52%, PF 1.94, 56% WR vs 5m +0.50% PF 2.01.
@@ -1286,31 +1286,31 @@ MARKETS = [
         strategy="forex",      # Tight 1.0x stops
         trading_start=7,       # London open — avoid illiquid pre-London spread widening
         trading_end=21,
-        breakout_shadow_only=False,  # RE-PROMOTED TO LIVE 2026-08-13. Demoted 07-24 on
-                                     # walk-forward quarters 1.49 → 1.70 → 1.01 → 0.89, an
-                                     # explicitly conditional demotion ("re-promote if the
-                                     # quarterly record recovers", full-period PF 1.44).
-                                     # The condition is met, and the sub-1.0 quarter that
-                                     # triggered the demotion was largely an ARTEFACT:
-                                     # scripts/backtest_forex_breakout.htf_series() attaches
-                                     # each NATIVE daily bar to the 1h bars of that SAME day
-                                     # via merge_asof(backward), so a 00:00 entry was gated
-                                     # by a trend computed from that day's CLOSE — look-ahead.
-                                     # Same script, same 3-pip cost, daily label shifted one
-                                     # bar so a day is gated by the last COMPLETED day (what
-                                     # live actually does): quarters 1.76 → 1.82 → 1.13 →
-                                     # 1.19, all four green, most recent above the stated 1.0
-                                     # gate (as-shipped it read 0.78). Full period PF 1.55.
-                                     # Corroborated by an independent look-ahead-free sim at
-                                     # the live config (DAY HTF, cost 0.286xATR): 8/8 91-day
-                                     # quarters green, most recent PF 1.85, +54.81R over 730d
-                                     # — the best market on the book — and POSITIVE through
-                                     # the last 60 days when 7 of 9 markets were negative.
-                                     # EUR/USD stays shadow: same corrected run leaves its
-                                     # most recent quarter at 0.57. This is the first live
-                                     # forex since 07-24. NB the look-ahead affects every
-                                     # script importing htf_series — treat older forex
-                                     # breakout numbers from those scripts with suspicion.
+        default_mode="breakout",  # LIVE breakout. RE-PROMOTED 2026-08-13. Demoted 07-24 on
+                                  # walk-forward quarters 1.49 → 1.70 → 1.01 → 0.89, an
+                                  # explicitly conditional demotion ("re-promote if the
+                                  # quarterly record recovers", full-period PF 1.44).
+                                  # The condition is met, and the sub-1.0 quarter that
+                                  # triggered the demotion was largely an ARTEFACT:
+                                  # scripts/backtest_forex_breakout.htf_series() attaches
+                                  # each NATIVE daily bar to the 1h bars of that SAME day
+                                  # via merge_asof(backward), so a 00:00 entry was gated
+                                  # by a trend computed from that day's CLOSE — look-ahead.
+                                  # Same script, same 3-pip cost, daily label shifted one
+                                  # bar so a day is gated by the last COMPLETED day (what
+                                  # live actually does): quarters 1.76 → 1.82 → 1.13 →
+                                  # 1.19, all four green, most recent above the stated 1.0
+                                  # gate (as-shipped it read 0.78). Full period PF 1.55.
+                                  # Corroborated by an independent look-ahead-free sim at
+                                  # the live config (DAY HTF, cost 0.286xATR): 8/8 91-day
+                                  # quarters green, most recent PF 1.85, +54.81R over 730d
+                                  # — the best market on the book — and POSITIVE through
+                                  # the last 60 days when 7 of 9 markets were negative.
+                                  # EUR/USD stays shadow: same corrected run leaves its
+                                  # most recent quarter at 0.57. This is the first live
+                                  # forex since 07-24. NB the look-ahead affects every
+                                  # script importing htf_series — treat older forex
+                                  # breakout numbers from those scripts with suspicion.
     ),
     # Disabled 2026-06-25 — chronic loser in BOTH forex modes. All-time live
     # n=11 net −£93.36. The breakout leg was disabled 06-22 (commit 473f3af,
@@ -1384,12 +1384,13 @@ MARKETS = [
     # live retail account will refuse. Verify on the live account first — if it
     # is barred there, this stays an observer permanently.
     #
-    # sector="Crypto", NOT "Forex": the string "Forex" routes into the /forex
-    # path and, at main.py:1875, would EXCLUDE it from shadow benched-logging —
-    # i.e. silently defeat the whole point. Same trap that made DXY sector
-    # "Indices" deliberately (bef0ebe). Arbitrary sector strings are safe:
-    # screener.py already emits "Rates"/"Other", and risk_manager only buckets
-    # exposure by the string.
+    # sector="Crypto", NOT "Forex": until 2026-09-09 the string "Forex" routed
+    # into a separate /forex path and excluded the market from shadow
+    # benched-logging — silently defeating the whole point. Same trap that made
+    # DXY sector "Indices" deliberately (bef0ebe). That routing was removed when
+    # /forex was folded into /mode; "Crypto" stays because it is simply the
+    # right label. Arbitrary sector strings are safe: screener.py already emits
+    # "Rates"/"Other", and risk_manager only buckets exposure by the string.
     #
     # Streaming safety: CFD-only EPICs kill the ENTIRE Lightstreamer
     # subscription with "Invalid account type" (2026-01-22, CC.D.* outage).

@@ -58,7 +58,8 @@ class TestModeCommandOnEditedMessage(unittest.TestCase):
         self.modes_file = tmp / "market_modes.json"
         # Never let the test read or write the real data/market_modes.json.
         self.patches = [mock.patch.object(tb, "STATS_DIR", tmp),
-                        mock.patch.object(tb, "MARKET_MODES_FILE", self.modes_file)]
+                        mock.patch.object(tb, "MARKET_MODES_FILE", self.modes_file),
+                        mock.patch.object(tb, "LEGACY_FOREX_MODE_FILE", tmp / "forex_mode.json")]
         for p in self.patches:
             p.start()
         from config import TelegramConfig
