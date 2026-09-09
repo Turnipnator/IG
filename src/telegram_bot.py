@@ -22,6 +22,7 @@ from telegram.ext import (
 )
 
 from config import TelegramConfig, MARKETS
+from src.daily_trend import VALID_DAILY_TREND_MODES, has_daily_trend_config
 
 if TYPE_CHECKING:
     from src.client import IGClient
@@ -37,6 +38,13 @@ STATS_FILE = STATS_DIR / "daily_stats.json"
 # this file only ever holds deliberate user overrides. Read by main._market_mode.
 MARKET_MODES_FILE = STATS_DIR / "market_modes.json"
 MARKET_MODES = ("off", "momentum", "shadow", "breakout", "breakout-shadow")
+
+# DAILY-TREND strategy modes per market (2026-09-09), toggled via /daily. Separate
+# from /mode because the daily strategy runs ALONGSIDE the intraday one on the same
+# epic (Gold: 1h breakout + daily trend). {epic: off|shadow|live}; an absent epic uses
+# MarketConfig.daily_trend (None -> off). Read cross-thread by main._daily_trend_mode;
+# the valid tuple lives in src.daily_trend so the two modules cannot diverge.
+DAILY_TREND_MODES_FILE = STATS_DIR / "daily_trend_modes.json"
 
 # RETIRED 2026-09-09. Until then the forex pairs were governed by ONE global toggle
 # (/forex, persisted here) with its own four-mode vocabulary, in which "shadow"
@@ -137,6 +145,10 @@ class TelegramBot:
         # Read cross-thread by main._market_mode; absent epic = config default.
         self.market_modes: dict = {}
         self.load_market_modes()
+        # Per-market /daily overrides ({epic: off|shadow|live}) for the daily-trend
+        # strategy. Read cross-thread by main._daily_trend_mode.
+        self.daily_trend_modes: dict = {}
+        self.load_daily_trend_modes()
         # Human-readable record of the one-shot /forex → /mode translation when the
         # legacy file was found at this boot (surfaced on the startup banner and the
         # /mode board). None = nothing to migrate.
@@ -230,6 +242,41 @@ class TelegramBot:
         except Exception as e:
             logger.warning(f"Failed to load market modes (using config defaults): {e}")
             self.market_modes = {}
+
+    def save_daily_trend_modes(self) -> None:
+        """Persist /daily overrides across restarts."""
+        try:
+            STATS_DIR.mkdir(parents=True, exist_ok=True)
+            DAILY_TREND_MODES_FILE.write_text(json.dumps({
+                "daily_trend_modes": self.daily_trend_modes,
+                "saved_at": datetime.now().isoformat(),
+            }))
+        except Exception as e:
+            logger.warning(f"Failed to save daily-trend modes: {e}")
+
+    def load_daily_trend_modes(self) -> None:
+        """Restore /daily overrides; silently drop anything malformed (config default wins)."""
+        try:
+            if not DAILY_TREND_MODES_FILE.exists():
+                return
+            raw = json.loads(DAILY_TREND_MODES_FILE.read_text()).get("daily_trend_modes", {})
+            self.daily_trend_modes = {
+                e: m for e, m in raw.items() if isinstance(m, str) and m in VALID_DAILY_TREND_MODES
+            }
+            if self.daily_trend_modes:
+                logger.info(f"Restored daily-trend modes: {self.daily_trend_modes}")
+        except Exception as e:
+            logger.warning(f"Failed to load daily-trend modes (using config defaults): {e}")
+            self.daily_trend_modes = {}
+
+    def _effective_daily_mode(self, m) -> str:
+        """Effective DAILY-TREND mode for a MarketConfig.
+        MUST mirror main._daily_trend_mode: /daily override > MarketConfig.daily_trend > off."""
+        override = self.daily_trend_modes.get(m.epic)
+        if override in VALID_DAILY_TREND_MODES:
+            return override
+        cfg = getattr(m, "daily_trend", None)
+        return cfg if cfg in VALID_DAILY_TREND_MODES else "off"
 
     def migrate_legacy_forex_mode(self) -> Optional[str]:
         """One-shot translation of the retired global /forex toggle into per-pair
@@ -338,6 +385,7 @@ class TelegramBot:
             "/stop - Pause trading\n"
             "/resume - Resume trading\n"
             "/mode - Per-market strategy, forex included (off|momentum|shadow|breakout|breakout-shadow)\n"
+            "/daily - Daily trend-following per market (off|shadow|live)\n"
             "/rebuild - Pull latest code & restart\n"
             "/emergency - ⚠️ Close ALL positions\n\n"
             "*🔔 Notifications:*\n"
@@ -791,6 +839,11 @@ class TelegramBot:
                 eff = self._effective_mode(m)
                 tag = " _(override)_" if m.epic in self.market_modes else ""
                 lines.append(f"{emoji.get(eff, '·')} {m.name}: `{eff}`{tag}")
+                dmode = self._effective_daily_mode(m)
+                if dmode != "off" or has_daily_trend_config(m.epic):
+                    dtag = " _(override)_" if m.epic in self.daily_trend_modes else ""
+                    demoji = {"live": "📅🟢", "shadow": "📅🟡", "off": "📅⚪"}[dmode]
+                    lines.append(f"   {demoji} daily-trend: `{dmode}`{dtag}")
             lines.append("\nUsage: `/mode <market> off|momentum|shadow|breakout|breakout-shadow`"
                          "\n`/mode <market> default` clears the override."
                          "\n👻 shadow = momentum observed; 🟡 breakout-shadow = breakout observed.")
@@ -854,6 +907,73 @@ class TelegramBot:
                     "this places LIVE momentum orders on the pair.")
         await update.effective_message.reply_text(
             f"🎛 *{m.name} → `{mode_arg}`* (was `{prev}`){warn}", parse_mode='Markdown')
+
+    async def daily_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /daily — per-market toggle for the DAILY-TREND strategy (2026-09-09).
+
+        /daily                       -> board of markets with a daily-trend config
+        /daily <market> off|shadow|live -> set override (persisted)
+        /daily <market> default      -> clear override (config default resumes)
+        Runs alongside /mode's intraday strategy; a Gold daily position and a Gold
+        1h-breakout position may coexist (user decision 2026-09-09)."""
+        if not self.is_authorized(update.effective_user.id):
+            return
+        self.commands_executed += 1
+        args = [a.lower() for a in (context.args or [])]
+        if not args:
+            lines = ["📅 *Daily trend-following modes* (long-only Donchian 55/20, 2×ATR20 stop)\n"]
+            for m in MARKETS:
+                if not has_daily_trend_config(m.epic):
+                    continue
+                dmode = self._effective_daily_mode(m)
+                tag = " _(override)_" if m.epic in self.daily_trend_modes else ""
+                emoji = {"live": "🟢", "shadow": "🟡", "off": "⚪"}[dmode]
+                lines.append(f"{emoji} {m.name}: `{dmode}`{tag}")
+            lines.append("\nUsage: `/daily <market> off|shadow|live` · `/daily <market> default` clears the override."
+                         "\nOnly markets with a DAILY_TREND_CONFIGS entry (src/daily_trend.py) are listed.")
+            await update.effective_message.reply_text("\n".join(lines), parse_mode='Markdown')
+            return
+        if len(args) < 2:
+            await update.effective_message.reply_text(
+                "Usage: `/daily <market> <off|shadow|live|default>`", parse_mode='Markdown')
+            return
+        mode_arg = args[-1]
+        query = " ".join(args[:-1])
+        matches = [m for m in MARKETS if query in m.name.lower()]
+        if not matches:
+            await update.effective_message.reply_text(f"❌ No market matches `{query}`", parse_mode='Markdown')
+            return
+        if len(matches) > 1:
+            await update.effective_message.reply_text(
+                "❌ Ambiguous: " + ", ".join(m.name for m in matches), parse_mode='Markdown')
+            return
+        m = matches[0]
+        if mode_arg == "default":
+            prev = self.daily_trend_modes.pop(m.epic, None)
+            self.save_daily_trend_modes()
+            await update.effective_message.reply_text(
+                f"↩️ {m.name} daily-trend: override cleared (was `{prev}`) — config default "
+                f"`{self._effective_daily_mode(m)}` resumes.", parse_mode='Markdown')
+            return
+        if mode_arg not in VALID_DAILY_TREND_MODES:
+            await update.effective_message.reply_text(
+                f"❌ Unknown mode `{mode_arg}`. Use: off | shadow | live | default", parse_mode='Markdown')
+            return
+        if mode_arg != "off" and not has_daily_trend_config(m.epic):
+            await update.effective_message.reply_text(
+                f"❌ {m.name} has no daily-trend config (src/daily_trend.py DAILY_TREND_CONFIGS) — "
+                f"it must pass the 22-year study first.", parse_mode='Markdown')
+            return
+        prev = self._effective_daily_mode(m)
+        self.daily_trend_modes[m.epic] = mode_arg
+        self.save_daily_trend_modes()
+        logger.info(f"Daily-trend mode changed via Telegram: {m.name} {prev} -> {mode_arg}")
+        warn = ""
+        if mode_arg == "live":
+            warn = ("\n⚠️ LIVE — a real order on the next daily close above the 55-day high, "
+                    "size = IG minimum, stop 2×ATR20 (~£160 on Gold), own cap `DAILY_TREND_MAX_RISK_GBP`.")
+        await update.effective_message.reply_text(
+            f"📅 *{m.name} daily-trend → `{mode_arg}`* (was `{prev}`){warn}", parse_mode='Markdown')
 
     async def emergency_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /emergency command - close all and stop."""
@@ -1278,6 +1398,7 @@ class TelegramBot:
             self.app.add_handler(CommandHandler("resume", self.resume_command))
             self.app.add_handler(CommandHandler("forex", self.forex_command))
             self.app.add_handler(CommandHandler("mode", self.mode_command))
+            self.app.add_handler(CommandHandler("daily", self.daily_command))
             self.app.add_handler(CommandHandler("emergency", self.emergency_command))
             self.app.add_handler(CommandHandler("rebuild", self.rebuild_command))
 

@@ -3207,3 +3207,132 @@ The script's own run at HOUR HTF is negative in every index **even frictionless*
 **Next.** Verify the deploy (modes, DAY HTF fetches at boot, Gold/GBP live, momentum shadow, Crude position still tracked). Next review when Gold breakout reaches n=30 or ~2026-12-09. Research with a mechanism but no evidence yet: cash-open fade (open candle 3–4.5× ATR), daily-bar trend following. Re-run `replay_rejected.py` and the ladder monthly.
 
 **Fill-model caveat on Gold (added same day, for honesty).** Gold's IG-native positive is under the bar-CLOSE + spread model (NONE +2.3R PF 1.13; DAY +1.4R PF 1.29). Under the level + 0.286×ATR convention it is flat (NONE −0.8R PF 0.96; DAY −0.1R PF 0.99). Close-fill is the actual live mechanism (verified on Crude #341: level 9148.8, fill 9125.9), so it is the more faithful of the two, but the honest statement is "Gold breakout is flat-to-positive on IG-native data, positive on the 730d backtest, positive live at n=9". Nothing else on the book reaches even that.
+
+# Optimum strategy per instrument — session-open fade & daily trend following, 2026-09-09
+
+**Trigger.** User: "find the optimum strategy per instrument. If an instrument has zero chance we should
+not waste time on it. There must be instruments and a strategy that works." Both candidates were named in
+the v3 review as "mechanism, no evidence yet".
+
+## Pre-registration (written BEFORE any result was computed, 2026-09-09 13:10 BST)
+
+**Q1 Session-open fade.** Does the first 15/30 min of the cash session over-shoot and revert? Mechanism:
+the open candle is 3.3–4.5× pre-open ATR (measured 09-09) — a concentration of order-flow, not information.
+- Data: IG-native archive, 5m, 2026-06-12→09-09, 64 sessions (Russell 34). Cash-open bars in archive
+  (Europe/London) time: Japan 01:00, HK 02:30, FTSE 08:00, S&P/NASDAQ/Dow/Russell 14:30, AI 14:35 — each
+  confirmed as the max-median-range bar of the day. Gold/FX/Crude/DXY/BTC have no cash open → not tested.
+- Primary cell (ONE test): opening move OR15 = (close@open+15 − open)/ATR14_preopen; event |OR15| ≥ 2;
+  outcome = −sign(OR15) × (close@open+60 − close@open+15)/ATR. Pooled across the 8 index markets with US
+  indices collapsed to ONE observation per date (same open, not independent). Pass = mean > 0 with z ≥ 2
+  AND ≥ 5 of 8 markets positive. Everything else (OR30, ≥1/≥3 ATR, +120 min, to-cash-close, gap-fade)
+  is SECONDARY/descriptive.
+- Competing hypotheses: HF1 fade (reversion); HF2 opening-range CONTINUATION (the same study, opposite
+  sign); HF3 no information. Cost shown alongside as spread/ATR.
+**Q2 Daily gap fade (22y, Yahoo OHLC)** — the same mechanism on daily bars with real n: gap = (open −
+prev close)/ATR20; outcome −sign(gap) × (close − open)/ATR; events |gap| ≥ 0.5 and ≥ 1.0. Per index; per-year
+sign consistency reported. Caveat: cash-index "open" prints are partly stale quotes (esp. ^GSPC pre-2010).
+**Q3 Daily trend following (22y, Yahoo daily; 12y BTC).** Rules fixed now, no tuning:
+- TF1 (PRIMARY): Donchian 55-day breakout entry, 20-day opposite-channel exit, 2×ATR20 hard stop, one
+  position; L/S and long-only. Same family as the live breakout.
+- TF2: 50/200 SMA cross (L/S, long-only). TF3: 12-month time-series momentum, monthly (L/S, long-only).
+- Execution: signal on close, fill next open (+½ spread); FX close-to-close (Yahoo FX opens unreliable).
+- Costs: IG trading-hours spread (replay_all SPREAD table; Crude 2.8 pt, DXY 5 pt, BTC 32.7); DFB
+  financing per calendar night on notional: indices long (bench+2.5%), short receive (bench−2.5%), bench
+  step-function 2004–08 5% · 2009–21 0.5% · 2022 2% · 2023+ 4.5% (LOW confidence; index DFB financing
+  never observed on this account); Gold long 2.9%/yr (MEASURED 08-19), short 0; GBP/USD long −1.8%
+  (measured), short +1.5%; EUR/USD long +1.0% (measured), short −1.5%; Crude/DXY index-like (LOW);
+  BTC 12%/yr both sides (LOW; FCA-barred live anyway).
+- R = P&L ÷ (2×ATR20 at entry) for every rule, so cells are comparable. Report n, PF, mean R, ΣR/yr,
+  max DD (R), % of years positive, first-half (2004–15) vs second-half (2016–26) sign.
+- Pass for an (instrument, rule): net mean R > 0 in BOTH halves and ≥ 60% of years positive.
+  "Ruled out for daily TF" = no rule passes. Structural check: £ risk at IG minimum deal size for a
+  2×ATR20 daily stop vs the £23 budget.
+**Decision framing.** An instrument is "zero chance" only if it fails BOTH candidates AND its existing
+strategies (momentum dead, breakout negative) — not on one cell.
+
+## Results (run 2026-09-09 13:15–14:05 BST; scripts in the session scratchpad: study1_open.py, study2_gap.py,
+## study3_tf.py, study3b_beta.py, study3c_robust.py; daily data = Yahoo 2004-01→2026-09-09, 13 instruments)
+
+### Q1 Session-open fade — PRIMARY TEST FAILED (HIGH confidence that there is no tradeable direction)
+|OR15|≥2 (which is only the MEDIAN opening move — the open bar is 2–5× pre-open ATR on every index), fade at
++60 min: pooled n=185 (US collapsed per date) mean **+0.46 ATR, SE 0.35, z +1.3**, hit 51%; 5/8 markets positive
+(HK +1.30 z 1.6 · AI +0.47 · FTSE +0.38 · S&P +0.20 · WS +0.15 · NASDAQ −0.11 · Japan −0.23 · Russell −0.51).
+Every secondary cell (OR30, ≥1/≥3 ATR, +120, to-cash-close) is +0.02…+0.57 ATR with z 0.0–1.3 — same sign, never
+significant. Gap-fade vs the prior IG cash close: +0.17…+0.79 ATR, z 0.4–1.3. A fade with a 1-ATR stop is stopped
+out 72–90% of the time (pre-open ATR is the wrong yardstick for the open; the stop must be ~3–4× it, which makes
+the spread/R cost 3–4× larger too). **Verdict: the opening move is volatility, not direction.** HF1 (reversion) is
+the better-supported sign but the effect, if real, is ≤0.5 ATR on n≈60 sessions — not a strategy. The one cell
+worth watching passively is **Hong Kong** (n 47, +1.30 ATR, z 1.6) — LOW; HK also fails G1 on cost (0.157R).
+
+### Q2 Daily gap fade (22y) — NO EVIDENCE; the strong negatives are an ARTEFACT (HIGH)
+NDX (n 1,095) +0.00 ATR, HSI (n 1,511) −0.03: nothing. S&P −0.20 (z −4.4), DJI −0.34, RUT −0.29, N225 −0.19
+(z −11) look like strong CONTINUATION — but these cash-index "opens" are stale prints: S&P shows a ≥0.5-ATR gap on
+only 6.7% of days (HSI 27%, NDX 20%), FTSE on ONE day in 22 years. The "continuation" is the true gap being realised
+after a stale open. Do not cite those cells. Clean cells say the mechanism is absent at daily scale.
+
+### Q3 Daily trend following (22y, IG spread + DFB financing charged per night) — ONE pre-registered pass, two plateaus
+78 cells (13 × 3 rules × L/S, L). Pass rule (n≥20, meanR>0, both halves>0, ≥60% years+): **1 pass — NASDAQ 100
+TF1 long-only** (n 58, PF 2.0, +0.49R/trade, z 1.9, +1.3R/yr, 64% yrs, H1 +0.36 / H2 +0.64, maxDD 5.2R). Near
+misses: **Gold TF1 long-only** (n 56, PF 2.4, **+0.87R**, z 1.9, +2.3R/yr, H1 +0.85 / H2 +0.89, **59.1% yrs — fails
+the 60% line by 0.9pt**); Crude TF1 L/S (+0.19R, z 0.8, 2023–26 −1.5R). Everything else fails: S&P TF1 ≈0 (L) /
+−0.19R (L/S); FTSE, Russell, DXY negative on every rule; Wall St, HK, EUR/USD ≈0; GBP/USD long-only strongly
+negative (secular GBP decline), L/S +0.10R z 0.3; Bitcoin absurd (PF 35–295) = pure 100× drift, H1 negative,
+FCA-barred live. Long-short index TF is negative everywhere the long-only is positive: the short side pays the drift.
+**Robustness grid (NOT selection; 30 cells each: N_in 20–100 × N_out 10–30 × stop 2×ATR/none):**
+- **Gold long-only: positive in 30/30 cells, both halves positive in 30/30, z 1.5–2.5, +1.2…+3.5R/yr.** A plateau.
+- **NASDAQ long-only: positive in 30/30, H2 positive 30/30, H1 positive 24/30, z 0.6–2.1.** A plateau, weaker.
+- S&P long-only: −0.11…+0.25, **H1 negative in 30/30.** Japan long-only: positive 30/30 but 36–57% years+ (two
+  years carry it) and £1,458 risk/trade at size 1.0.
+**Beta check (study3b):** NASDAQ TF1-L captures 36% of buy-and-hold points in 49% of the time with **15% of B&H max
+drawdown** (903 vs 5,894 pts); Gold TF1-L 43% / 34% / 15% (195 vs 1,333). Financing = 30% (NASDAQ) / 17% (Gold) of
+gross at the step-function bench rates; **2023–26 at the current ~7%/yr long rate: NASDAQ +12R/7, Gold +21R/11.**
+So what survives is **"be long a secular-drift instrument while it trends, stand aside when it doesn't"** — crash
+protection on beta, not a directional edge. LOW confidence it beats an unleveraged long; MEDIUM-HIGH it is positive-EV
+after IG costs on Gold, MEDIUM on NASDAQ.
+**Self-critique.** (1) The sample starts 2004 — AFTER the 2000–02 NASDAQ bear; a repeat would be a string of ~−1R
+stop-outs (bounded, but many). (2) 78 cells → ~1 chance pass expected at this strictness; the grids, not the single
+cell, are the evidence. (3) Index DFB financing was never observed on this account; the long rate (bench+2.5%) is
+IG's published formula, not a measurement. (4) Yahoo cash closes vs IG DFB closes differ by the futures basis and
+out-of-hours moves; for daily-close signals this is second-order but unverified on IG data (archive too short).
+(5) Deal-size floors: config default_size used as the IG minimum — verify per market with get_market_info.
+
+### Structural facts that decide whether any of this is USABLE here
+- 2×ATR20 daily stop at config size: S&P £131 · NASDAQ £167 · WS £99 · Russell £65 · FTSE £182 · Japan £1,458 ·
+  HK £350 · Gold £158 · Crude £74 · DXY £86 · GBP/USD £65 · EUR/USD £50 — **6–60× the £23 budget**; NASDAQ/Gold ≈
+  1.7–1.8% of the £9.2k account (normal for a TF programme, 7× this repo's sizing). £500 hard stop ≈ 3 losers.
+- Trade rate 2.6/yr (Gold, NASDAQ): **GO_LIVE_CRITERIA G3 (30 IG-native trades) would take ~11 years.** G4 bars
+  Yahoo evidence for the seven indices — a rule written for INTRADAY windows; at daily resolution the proxy problem
+  (42.6% of entries outside Yahoo's hours) does not apply. Admitting a daily strategy therefore needs a §7 amendment
+  with a written reason BEFORE the change (user's decision), and it would be admitted on BACKTEST evidence (Tier 2).
+
+### Per-instrument verdict (all four sources: live momentum · IG-native 1h breakout · open fade · daily TF)
+| instrument | verdict | basis |
+|---|---|---|
+| **Gold** | **best instrument on the book — trend-following at BOTH horizons** | 1h breakout live +2.19R/9, IG-native +2.3R/27, 730d PF 1.4–1.5; daily long-only TF plateau 30/30 |
+| **NASDAQ 100** | **candidate: daily long-only Donchian** (the only pre-registered pass) | plateau 30/30; 1h breakout −7R/23 HOUR; momentum dead |
+| GBP/USD | keep as is (live 1h breakout, mixed); no daily edge | daily L/S +0.10R z 0.3; long-only −0.57R; G1 cost 0.146R |
+| Hong Kong | observe only; the one intraday cell worth a passive watch (open fade z 1.6) | fails G1 (0.157R); daily TF ≈0; 1h breakout −21R |
+| Wall Street | observer only (DAY-HTF breakout +11R/7 is the open item) | momentum dead; daily TF marginal/≈0 |
+| Japan 225 | ruled out STRUCTURALLY (£1,458/trade) unless IG min size ≪ 1.0 — verify | daily TF lumpy (2 years carry it) |
+| Crude Oil | ruled out | breakout PF 0.87; daily TF z 0.8 and −1.5R 2023–26; momentum PF 0.38 |
+| S&P 500, FTSE 100, Russell 2000, DXY, EUR/USD | **ruled out — no strategy tested has evidence** | negative/flat on every source; S&P H1 negative 30/30 |
+| AI Index | observer only — daily TF untestable (no history) | 1h breakout −11.9R/12 |
+| Bitcoin | ruled out for live (FCA); daily numbers are 100× drift | H1 negative |
+
+### Conclusion (protocol §7)
+- **Most supported:** the only thing on this book that is "more than a coin toss" is **slow trend persistence in
+  instruments with secular drift — Gold and NASDAQ — captured long-only at daily horizon (robust across parameters,
+  both 11-year halves, after IG costs)**, and Gold's 1h breakout is the same phenomenon one level down. Its nature is
+  crash-protected beta: ~40% of buy-and-hold with ~15% of the drawdown.
+- **Ruled out:** session-open fade as a strategy (volatility, not direction; z 1.3 at n 185); daily gap fade (clean
+  cells ≈0; negatives are stale-open artefacts); daily TF on S&P/FTSE/Russell/DXY/EUR/USD/Crude; any long-short index
+  TF (the short side pays the drift); Japan structurally.
+- **Open questions:** (a) IG index DFB financing rate — measure with one overnight index position; (b) IG minimum
+  deal sizes per market (one get_market_info each); (c) does Gold daily TF add to the live 1h breakout or duplicate
+  its exposure (same direction, longer hold — correlation of the two P&L streams); (d) NASDAQ's pre-2004 behaviour.
+- **Suggested next actions (user decisions, not mine):** 1. decide whether to amend GO_LIVE_CRITERIA §7 to admit a
+  daily-bar strategy on trustworthy daily backtest evidence, with a per-trade risk of ~1.7% (£160) and a trade rate
+  of ~3/yr/instrument — this is a different programme from the current one, not a tweak; 2. if yes, the candidate is
+  Gold (then NASDAQ) long-only Donchian 55/20 with a 2×ATR stop, run in SHADOW first on IG daily bars so fills and
+  financing are measured; 3. stop spending effort on S&P/FTSE/Russell/DXY/EUR/USD/Crude — four independent sources
+  now agree.

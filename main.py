@@ -22,6 +22,8 @@ LAST_STARTUP_FILE = _DATA_DIR / "last_startup.txt"
 LAST_HTF_REFRESH_FILE = _DATA_DIR / "last_htf_refresh.txt"
 HTF_TRENDS_FILE = _DATA_DIR / "htf_trends.json"
 BREAKOUT_DEALS_FILE = _DATA_DIR / "breakout_deals.json"
+DAILY_TREND_DEALS_FILE = _DATA_DIR / "daily_trend_deals.json"
+DAILY_TREND_STATE_FILE = _DATA_DIR / "daily_trend_state.json"
 QUIET_RESTART_WINDOW = timedelta(hours=2)
 HTF_REFRESH_COOLDOWN = timedelta(hours=6)  # On startup, skip HTF fetch if one ran within this window
 # Daily HTF refresh on a fixed WALL CLOCK, not relative to process start (2026-08-10).
@@ -54,6 +56,7 @@ from config import (
 from src.client import IGClient, Position
 from src.strategy import TradingStrategy, Signal, TradeSignal, should_close_position
 from src import breakout
+from src import daily_trend, daily_bars
 from src.risk_manager import RiskManager
 from src.telegram_bot import TelegramBot, _session_date
 from src.streaming import IGStreamService, MarketStream, LIGHTSTREAMER_AVAILABLE
@@ -192,6 +195,13 @@ trailing_stop_levels: dict[str, float] = {}  # deal_id -> current trail stop lev
 # either strategy on the same epic — so exit management can't gate on sector alone.
 breakout_deals: set[str] = set()
 
+# Deal IDs opened by the DAILY-TREND strategy (src/daily_trend.py, 2026-09-09). Managed
+# ONLY by run_daily_trend (channel exit on the daily close + the broker stop): every
+# per-tick/per-candle manager (BE, ATR trail, MACD/ranging/HTF exits, Donchian trail)
+# must skip these, and the breakout's one-per-epic check must ignore them so a
+# multi-week Gold hold does not block the 1h breakout. Persisted like breakout_deals.
+daily_trend_deals: set[str] = set()
+
 # Momentum-exit minimum-hold guard: deal_id -> timestamp of the newest CLOSED
 # candle at entry. The MACD-3 / ranging-3 momentum exits are suppressed for a
 # position until a NEWER candle has closed (>=1 fresh candle held). This kills
@@ -233,6 +243,29 @@ def _load_breakout_deals(open_deal_ids: set[str]) -> None:
             _save_breakout_deals()
     except Exception as e:
         logger.warning(f"Failed to load breakout_deals: {e}")
+
+
+def _save_daily_trend_deals() -> None:
+    try:
+        DAILY_TREND_DEALS_FILE.write_text(json.dumps(sorted(daily_trend_deals)))
+    except Exception as e:
+        logger.warning(f"Failed to persist daily_trend_deals: {e}")
+
+
+def _load_daily_trend_deals(open_deal_ids: set[str]) -> None:
+    """Restore daily-trend tags on startup (only deals still open at the broker)."""
+    try:
+        if not DAILY_TREND_DEALS_FILE.exists():
+            return
+        saved = set(json.loads(DAILY_TREND_DEALS_FILE.read_text()))
+        live = saved & open_deal_ids
+        daily_trend_deals.update(live)
+        if live:
+            logger.info(f"Restored {len(live)} daily-trend deal tag(s) from disk (daily exit routing preserved)")
+        if saved - live:
+            _save_daily_trend_deals()
+    except Exception as e:
+        logger.warning(f"Failed to load daily_trend_deals: {e}")
 
 # Post-restart cooldown: skip opening new positions for 15 mins after startup
 # to let indicators stabilise with fresh streaming data
@@ -390,8 +423,14 @@ def initialize() -> bool:
     try:
         open_ids = {p.deal_id for p in (client.get_positions() or []) if p.deal_id}
         _load_breakout_deals(open_ids)
+        _load_daily_trend_deals(open_ids)
     except Exception as e:
         logger.warning(f"breakout_deals restore skipped: {e}")
+    # Daily-trend bar store: seed once if thin (~130 REST points), else free.
+    try:
+        refresh_daily_trend_bars(boot=True)
+    except Exception as e:
+        logger.warning(f"daily-trend bar seed skipped: {e}")
 
     return True
 
@@ -827,7 +866,8 @@ def on_price_update(epic: str, market: MarketStream) -> None:
         # Breakout positions are managed by the Donchian-trail in
         # check_positions_from_stream (per candle), not BE/ATR per tick. Skip here.
         # (Momentum forex positions are NOT in breakout_deals and DO get BE/ATR.)
-        if deal_id in breakout_deals:
+        # Daily-trend positions: managed once a day by run_daily_trend only.
+        if deal_id in breakout_deals or deal_id in daily_trend_deals:
             continue
 
         strategy_cfg = get_strategy_for_market(market_config)
@@ -979,8 +1019,10 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
     trading hours, IG min-stop clamp, spread, position sizing) so a bug here cannot
     touch the momentum book. Exit is the Donchian-trail (_update_breakout_trail) plus
     the broker stop; a stop/limit fill is cleaned up by external-close detection."""
-    # One breakout position per epic.
-    if any(p.epic == epic for p in known_positions.values()):
+    # One breakout position per epic. Daily-trend positions on the same epic are
+    # IGNORED here (user decision 2026-09-09): the two strategies coexist on Gold,
+    # otherwise a multi-week daily hold would block every 1h breakout entry.
+    if any(p.epic == epic and p.deal_id not in daily_trend_deals for p in known_positions.values()):
         return
     # Loss cooldown (shared map) — don't immediately re-enter after a stop-out.
     if epic in loss_cooldown_until and datetime.now() < loss_cooldown_until[epic]:
@@ -1500,6 +1542,274 @@ def _market_mode(market_config) -> str:
     if getattr(market_config, "default_mode", None) in VALID_MARKET_MODES:
         return market_config.default_mode
     return "shadow" if getattr(market_config, "shadow_only", False) else "momentum"
+
+
+# =============================================================================
+# DAILY-TREND strategy (2026-09-09) — src/daily_trend.py + src/daily_bars.py
+# =============================================================================
+
+def _daily_trend_mode(market_config) -> str:
+    """Effective DAILY-TREND mode: /daily override (telegram.daily_trend_modes,
+    persisted in data/daily_trend_modes.json) > MarketConfig.daily_trend > "off".
+    Keep in sync with telegram_bot._effective_daily_mode (pinned by a test)."""
+    override = getattr(telegram, "daily_trend_modes", {}).get(market_config.epic)
+    if override in daily_trend.VALID_DAILY_TREND_MODES:
+        return override
+    cfg = getattr(market_config, "daily_trend", None)
+    return cfg if cfg in daily_trend.VALID_DAILY_TREND_MODES else "off"
+
+
+def _daily_trend_markets() -> list:
+    return [m for m in MARKETS
+            if daily_trend.has_daily_trend_config(m.epic) and _daily_trend_mode(m) != "off"]
+
+
+def _daily_trend_open_position(epic: str):
+    for deal_id, p in known_positions.items():
+        if p.epic == epic and deal_id in daily_trend_deals:
+            return p
+    return None
+
+
+def _load_daily_trend_state() -> dict:
+    try:
+        if DAILY_TREND_STATE_FILE.exists():
+            return json.loads(DAILY_TREND_STATE_FILE.read_text())
+    except Exception as e:
+        logger.warning(f"[DAILY-TREND] state unreadable ({e}); treating every bar as unevaluated")
+    return {}
+
+
+def _save_daily_trend_state(state: dict) -> None:
+    try:
+        DAILY_TREND_STATE_FILE.write_text(json.dumps(state, indent=1))
+    except Exception as e:
+        logger.warning(f"[DAILY-TREND] could not persist state: {e}")
+
+
+def _daily_trend_notify(msg: str) -> None:
+    if telegram_loop:
+        try:
+            asyncio.run_coroutine_threadsafe(telegram.send_notification(msg), telegram_loop)
+        except Exception as e:
+            logger.debug(f"[DAILY-TREND] notify failed: {e}")
+
+
+def refresh_daily_trend_bars(boot: bool = False) -> None:
+    """22:30 London, Mon-Fri: fetch IG DAY bars into the durable per-epic store.
+    Friday's bar is final by then (Gold closes 22:00 London); Mon-Thu bars gain one
+    more hour (23:00-24:00) that the NEXT refresh writes back over the snapshot.
+    boot=True seeds a thin store once (~130 REST points) and otherwise does nothing,
+    so a restart costs no allowance."""
+    if not client:
+        return
+    now = datetime.now()
+    for m in _daily_trend_markets():
+        cfg = daily_trend.get_daily_trend_config(m.epic)
+        try:
+            have = daily_bars.load_daily_bars(m.epic)
+            if boot and len(have) >= cfg.min_bars:
+                continue
+            if not boot and now.weekday() >= 5:
+                continue
+            rate_limiter.wait_if_needed()
+            daily_bars.refresh_daily_bars(client, m.epic, cfg.min_bars)
+        except Exception as e:
+            logger.warning(f"[DAILY-TREND] {m.name}: bar refresh failed: {e}")
+
+
+def run_daily_trend() -> None:
+    """23:15 London Sun-Thu (+07:15 catch-up): decide on the last stored bar and act.
+    Idempotent per bar via DAILY_TREND_STATE_FILE — a bar is marked evaluated only
+    when its action COMPLETED (HOLD/EXIT/ENTER done, or shadow logged), so a signal
+    the market was closed for (Friday's bar on Friday night) is retried on Sunday.
+    Never fetches: the store is refreshed by refresh_daily_trend_bars."""
+    import pandas as pd
+    if not client:
+        return
+    state = _load_daily_trend_state()
+    for m in _daily_trend_markets():
+        cfg = daily_trend.get_daily_trend_config(m.epic)
+        mode = _daily_trend_mode(m)
+        try:
+            bars = daily_bars.load_daily_bars(m.epic)
+            # A boot-time seed during the day stores TODAY's forming bar. Before 22:00
+            # London that bar is hours from complete — judge the last COMPLETED one.
+            now = datetime.now()
+            if len(bars) and pd.Timestamp(bars["date"].iloc[-1]).date() == now.date() and now.hour < 22:
+                bars = bars.iloc[:-1]
+            if bars.empty:
+                logger.info(f"[DAILY-TREND] {m.name}: no completed bars in store yet")
+                continue
+            last_bar = str(pd.Timestamp(bars["date"].iloc[-1]).date())
+            if state.get(m.epic, {}).get("last_bar") == last_bar:
+                continue    # this bar already acted on
+            open_pos = _daily_trend_open_position(m.epic)
+            shadow_rows = journal.get_open_daily_trend_shadow(m.epic) if (journal and mode == "shadow") else []
+            in_position = open_pos is not None if mode == "live" else bool(shadow_rows)
+            sig = daily_trend.evaluate(bars, cfg, in_position)
+            logger.info(
+                f"📅 Daily-trend [{m.name}] {mode} bar {last_bar}: {sig.action} — {sig.reason}"
+                + (f" | ATR {sig.atr:.1f} stop {sig.stop_distance:.1f} | {cfg.n_entry}d hi {sig.entry_hi:.1f} "
+                   f"{cfg.n_exit}d lo {sig.exit_lo:.1f}" if sig.action != "WAIT" else "")
+            )
+            if sig.action == "WAIT":
+                continue
+            done = True
+            if mode == "live":
+                if sig.action == "ENTER_LONG":
+                    done = _execute_daily_trend_entry(m, cfg, sig)
+                elif sig.action == "EXIT":
+                    done = _close_daily_trend_position(open_pos, m, f"Daily-trend: {sig.reason}")
+            else:  # shadow
+                done = _daily_trend_shadow(m, cfg, sig, bars, shadow_rows)
+            if done:
+                state[m.epic] = {"last_bar": last_bar, "action": sig.action, "at": datetime.now().isoformat()}
+                _save_daily_trend_state(state)
+        except Exception as e:
+            logger.error(f"[DAILY-TREND] {m.name}: run failed: {e}")
+
+
+def _daily_trend_risk_gbp(size: float, stop_distance: float) -> float:
+    """Spread-bet risk: size is £ per point, so £ at the stop = size x points."""
+    return float(size) * float(stop_distance)
+
+
+def _execute_daily_trend_entry(market_config, cfg, sig) -> bool:
+    """Place the LIVE daily-trend long. Returns True when this bar needs no retry
+    (order placed, or skipped for a reason that will not change before the next
+    bar), False when the market was closed or the order failed (retry at the next
+    run). Gates mirror _execute_breakout_entry: tradeable, IG min stop clamp,
+    spread sanity, £ cap — the daily strategy's OWN cap, not max_risk_gbp."""
+    epic = market_config.epic
+    if _daily_trend_open_position(epic) is not None:
+        return True
+    info = client.get_market_info(epic)
+    if not info or info.market_status != "TRADEABLE":
+        logger.info(f"[DAILY-TREND] {market_config.name}: market_status="
+                    f"{getattr(info, 'market_status', None)} — will retry")
+        return False
+    stop_distance = float(sig.stop_distance)
+    if info.min_stop_distance > 0:
+        stop_distance = max(stop_distance, info.min_stop_distance + 0.5)
+    stop_distance = round(stop_distance, 1)
+    spread = (info.offer or 0) - (info.bid or 0)
+    if spread > 0 and stop_distance < spread * 1.5:
+        logger.warning(f"[DAILY-TREND] {market_config.name}: stop {stop_distance} < 1.5x spread {spread:.1f} — skip")
+        return True
+    size = float(market_config.default_size)
+    if info.min_deal_size and info.min_deal_size > size:
+        size = float(info.min_deal_size)
+    risk = _daily_trend_risk_gbp(size, stop_distance)
+    # trading_config is function-local in initialize(); the RiskManager holds it.
+    cap = float(getattr(risk_manager.config, "daily_trend_max_risk_gbp", 250.0))
+    if risk > cap:
+        msg = (f"📅 Daily-trend {market_config.name}: signal SKIPPED — size {size} x stop "
+               f"{stop_distance} = £{risk:.0f} > cap £{cap:.0f} (DAILY_TREND_MAX_RISK_GBP)")
+        logger.warning(msg)
+        try:
+            journal.log_rejected_signal(epic=epic, market_name=market_config.name, direction="BUY",
+                                        confidence=1.0, adx=0.0, rsi=0.0,
+                                        reject_reason=f"Daily-trend-sizing: £{risk:.0f} > £{cap:.0f}")
+        except Exception:
+            pass
+        _daily_trend_notify(msg)
+        return True
+    logger.info(f"🟢📅 Daily-trend OPEN BUY {market_config.name}: size={size} stop={stop_distance} — {sig.reason}")
+    result = client.open_position(
+        epic=epic, direction="BUY", size=size, stop_distance=stop_distance, limit_distance=None,
+        expiry=(info.expiry if getattr(info, "expiry", "") else market_config.expiry),
+    )
+    if not result:
+        err = client.last_error or "unknown"
+        logger.warning(f"[DAILY-TREND] {market_config.name}: open failed ({err}) — will retry")
+        _daily_trend_notify(f"⚠️ Daily-trend open FAILED on {market_config.name}: {err}")
+        return False
+    deal_id = result.get("dealId", "")
+    if not deal_id:
+        return False
+    daily_trend_deals.add(deal_id)
+    _save_daily_trend_deals()
+    known_positions[deal_id] = Position(
+        deal_id=deal_id, epic=epic, direction="BUY", size=size,
+        open_level=result.get("level", sig.close), stop_level=result.get("stopLevel"),
+        limit_level=None, profit_loss=0.0, created_date=datetime.now().isoformat(),
+    )
+    journal.log_entry(
+        deal_id=deal_id, epic=epic, market_name=market_config.name, direction="BUY", size=size,
+        entry_price=result.get("level", sig.close), stop_distance=stop_distance, limit_distance=0.0,
+        confidence=1.0, reason=f"Daily-trend: {sig.reason}", strategy="daily-trend",
+        atr=float(sig.atr), htf_trend=htf_trends.get(epic, "NEUTRAL"),
+    )
+    if telegram_loop:
+        asyncio.run_coroutine_threadsafe(
+            telegram.notify_trade_opened(f"{market_config.name} (daily-trend)", "BUY", size,
+                                         float(result.get("level", sig.close)), stop_distance, 0.0),
+            telegram_loop)
+    return True
+
+
+def _close_daily_trend_position(position, market_config, reason: str) -> bool:
+    """Market-close a daily-trend long on a channel exit. Same bookkeeping as the
+    momentum close path (known_positions, tags, daily P&L lockstep, journal exit,
+    Telegram). Returns False if the close was refused (retry next run)."""
+    if position is None:
+        return True
+    result = client.close_position(position.deal_id, position.direction, position.size)
+    if not result:
+        logger.warning(f"[DAILY-TREND] {market_config.name}: close failed ({client.last_error}) — will retry")
+        return False
+    known_positions.pop(position.deal_id, None)
+    breakeven_applied.discard(position.deal_id)
+    trailing_stop_levels.pop(position.deal_id, None)
+    momentum_hold.pop(position.deal_id, None)
+    daily_trend_deals.discard(position.deal_id)
+    _save_daily_trend_deals()
+    last_close_time[position.epic] = datetime.now()
+    confirmed_profit = result.get("profit")
+    exit_price = float(result.get("level") or 0.0)
+    if confirmed_profit is not None:
+        pnl, journal_status = float(confirmed_profit), "CLOSED"
+    else:
+        pnl, journal_status = position.profit_loss, "PROVISIONAL"
+    risk_manager.update_daily_pnl(pnl)   # telegram.daily_pnl moves in notify_trade_closed
+    journal.log_exit(position.deal_id, pnl, reason, exit_price=exit_price, adx_at_exit=0.0,
+                     status=journal_status)
+    logger.info(f"📅 Daily-trend CLOSED {market_config.name} @ {exit_price:.1f} P&L £{pnl:.2f} — {reason}")
+    if telegram_loop:
+        asyncio.run_coroutine_threadsafe(
+            telegram.notify_trade_closed(f"{market_config.name} (daily-trend)", position.direction, pnl, reason),
+            telegram_loop)
+    return True
+
+
+def _daily_trend_shadow(market_config, cfg, sig, bars, open_rows) -> bool:
+    """SHADOW: resolve any open episode against the stored bars, then log a new
+    episode on ENTER_LONG at the current mid (what a market order would get)."""
+    import pandas as pd
+    if not journal:
+        return True
+    epic = market_config.epic
+    for r in open_rows:
+        res = daily_trend.resolve_open_episode(bars, cfg, r["benched_at"], float(r["entry_price"]),
+                                               float(r["stop_distance"]))
+        if res:
+            r_mult = (res["exit"] - float(r["entry_price"])) / float(r["stop_distance"])
+            journal.resolve_daily_trend_shadow(r["id"], "WIN" if r_mult > 0 else "LOSS", res["reason"],
+                                               res["bars"], r_mult, res["exit"])
+            logger.info(f"📅 Daily-trend shadow [{market_config.name}] #{r['id']} resolved {res['reason']} "
+                        f"{r_mult:+.2f}R @ {res['exit']:.1f}")
+            _daily_trend_notify(f"📅 Daily-trend (shadow) {market_config.name}: episode #{r['id']} "
+                                f"closed {res['reason']} {r_mult:+.2f}R")
+    if sig.action == "ENTER_LONG" and not open_rows:
+        ms = stream_service.markets.get(epic) if stream_service else None
+        mid = ms.mid_price if (ms and ms.mid_price) else float(sig.close)
+        spread = ((ms.offer or 0) - (ms.bid or 0)) if ms else 0.0
+        journal.log_daily_trend_shadow(epic, market_config.name, float(mid), float(sig.stop_distance),
+                                       pd.Timestamp(sig.bar_date).isoformat(), spread)
+        _daily_trend_notify(f"📅 Daily-trend (shadow) {market_config.name}: would BUY @ {mid:.1f}, "
+                            f"stop {sig.stop_distance:.1f} — {sig.reason}")
+    return True
 
 
 def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
@@ -2245,6 +2555,9 @@ def check_positions_from_stream() -> None:
                 if deal_id in breakout_deals:
                     breakout_deals.discard(deal_id)
                     _save_breakout_deals()
+                if deal_id in daily_trend_deals:
+                    daily_trend_deals.discard(deal_id)
+                    _save_daily_trend_deals()
                 missing_poll_counts.pop(deal_id, None)
                 del known_positions[deal_id]
                 continue
@@ -2280,6 +2593,9 @@ def check_positions_from_stream() -> None:
             if deal_id in breakout_deals:
                 breakout_deals.discard(deal_id)
                 _save_breakout_deals()
+            if deal_id in daily_trend_deals:
+                daily_trend_deals.discard(deal_id)
+                _save_daily_trend_deals()
 
             # Record close time for cooldown
             last_close_time[known_pos.epic] = datetime.now()
@@ -2364,6 +2680,12 @@ def check_positions_from_stream() -> None:
         # close logic entirely. The broker stop (ratcheted to the Donchian-M channel)
         # does the exit; external-close detection cleans up. (Momentum forex positions
         # are NOT in breakout_deals and fall through to should_close below.)
+        # Daily-trend positions are managed ONLY by the once-a-day run_daily_trend
+        # (channel exit on the daily close; the broker stop does the rest). No
+        # per-candle exit may touch them — neither the Donchian trail below nor
+        # should_close_position's MACD/ranging/HTF exits.
+        if position.deal_id in daily_trend_deals:
+            continue
         if position.deal_id in breakout_deals:
             _update_breakout_trail(position, df)
             continue
@@ -2415,6 +2737,9 @@ def check_positions_from_stream() -> None:
                 if position.deal_id in breakout_deals:
                     breakout_deals.discard(position.deal_id)
                     _save_breakout_deals()
+                if position.deal_id in daily_trend_deals:
+                    daily_trend_deals.discard(position.deal_id)
+                    _save_daily_trend_deals()
 
                 # Record close time for cooldown
                 last_close_time[position.epic] = datetime.now()
@@ -2487,6 +2812,9 @@ def _readopt_position(row: dict, live_pos) -> None:
             _market_mode(readopt_cfg) == "breakout":
         breakout_deals.add(deal_id)
         _save_breakout_deals()
+    if row.get("strategy") == "daily-trend":
+        daily_trend_deals.add(deal_id)
+        _save_daily_trend_deals()
 
     # Back out the provisional P&L booked at the false close — but only if it
     # belongs to the current 21:00 session (a prior-session reversal must not move
@@ -3650,6 +3978,14 @@ async def main_async():
         schedule.every(30).minutes.do(run_daily_screen, periodic=True)
         schedule.every().day.at("21:00", "UTC").do(send_daily_summary)
         schedule.every().day.at("22:00").do(_scheduled_prune_archive)  # Bound the durable archive (HDD-safe retention, default 365d)
+        # Daily-trend (2026-09-09): LOCAL clock on purpose, like the screener jobs.
+        # IG's Gold DAY bar rolls at 00:00 London and Gold's daily pause is
+        # 22:00-23:00 London — broker events on the London clock, not UTC.
+        # 22:30 Mon-Fri fetch+store; 23:15 Sun-Thu decide+trade after the reopen
+        # (Sunday acts on Friday's stored bar); 07:15 catch-up, idempotent per bar.
+        schedule.every().day.at("22:30").do(refresh_daily_trend_bars)
+        schedule.every().day.at("23:15").do(run_daily_trend)
+        schedule.every().day.at("07:15").do(run_daily_trend)
 
         logger.info(
             f"HTF trend refresh scheduled daily at {HTF_REFRESH_TIME} UTC "

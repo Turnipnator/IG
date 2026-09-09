@@ -489,6 +489,47 @@ class TradeJournal:
         except Exception as e:
             logger.warning(f"Journal: failed to resolve breakout row {row_id}: {e}")
 
+    @_synchronized
+    def log_daily_trend_shadow(
+        self, epic: str, market_name: str, entry_price: float,
+        stop_distance: float, benched_at: str, spread: float = 0.0,
+    ) -> None:
+        """Snapshot a DAILY-TREND shadow episode (bench_type='daily-trend', 2026-09-09).
+        Long-only, no take-profit (limit_distance 0); resolved ONLY by
+        main.run_daily_trend via daily_trend.resolve_open_episode on IG DAY bars.
+        Neither the momentum resolver (allowlist) nor the breakout resolver
+        (exact bench_type match) can touch these rows."""
+        try:
+            self.db.execute(
+                """INSERT INTO benched_outcomes
+                   (epic, market_name, direction, benched_at, entry_price,
+                    stop_distance, limit_distance, score, bench_type, status, spread)
+                   VALUES (?, ?, 'BUY', ?, ?, ?, 0, 0, 'daily-trend', 'OPEN', ?)""",
+                (epic, market_name, benched_at, entry_price, stop_distance, spread),
+            )
+            self.db.commit()
+        except Exception as e:
+            logger.warning(f"Journal: failed to log daily-trend shadow: {e}")
+
+    @_synchronized
+    def get_open_daily_trend_shadow(self, epic: str) -> list[dict]:
+        """Unresolved daily-trend shadow episodes for an epic (normally 0 or 1)."""
+        try:
+            rows = self.db.execute(
+                """SELECT * FROM benched_outcomes
+                   WHERE epic=? AND bench_type='daily-trend' AND status='OPEN'""",
+                (epic,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def resolve_daily_trend_shadow(self, row_id: int, status: str, outcome: str,
+                                   candles_to_resolve: int, r_multiple: float, exit_price: float) -> None:
+        """Close out a daily-trend shadow episode. Same UPDATE as the breakout
+        resolver (status/outcome/resolved_at/candles/r/exit_price by id)."""
+        self.resolve_breakout_shadow(row_id, status, outcome, candles_to_resolve, r_multiple, exit_price)
+
     # Bench types owned by the MOMENTUM resolver (main._resolve_benched). Deliberately
     # an allowlist, not "NOT LIKE 'breakout%'": a bench type added later is then simply
     # not resolved — visible as OPEN rows piling up — instead of being silently swept

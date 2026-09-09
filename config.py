@@ -102,6 +102,12 @@ class TradingConfig:
     # corrupt stops). Market SELECTION (no-edge markets) is the screener/disable's
     # job, not this ceiling's — it is a safety cap, not an edge filter.
     max_risk_gbp: float = 45.0
+    # Separate £ ceiling for the DAILY-TREND strategy (2026-09-09). Its stop is
+    # 2xATR20 on DAILY bars (~80 pts on Gold today) at IG's 1.0 minimum => ~£160 per
+    # trade, 7x the intraday budget — normal for a trend programme (1.7% of a £9.2k
+    # account), impossible under max_risk_gbp. Kept separate so raising it cannot
+    # loosen the intraday cap. £500 cumulative stop ≈ 3 losers at this size.
+    daily_trend_max_risk_gbp: float = 250.0
 
 
 @dataclass
@@ -234,6 +240,16 @@ class MarketConfig:
     # (data/market_modes.json) beats this default. breakout modes additionally
     # require a src/breakout.py BREAKOUT_CONFIGS entry.
     default_mode: str | None = None
+    # DAILY-TREND strategy for this market (2026-09-09): None/"off" = not run;
+    # "shadow" = signals journaled (benched_outcomes bench_type 'daily-trend'), no
+    # orders; "live" = real orders. Long-only Donchian 55/20 on IG DAY bars with a
+    # 2xATR20 hard stop (src/daily_trend.py) — validated on 22y for Gold (30/30
+    # parameter cells, both halves) and NASDAQ; everything else failed. It runs
+    # ALONGSIDE the intraday strategy chosen by default_mode (Gold: 1h breakout AND
+    # daily trend), which is why it is a separate field and a separate /daily
+    # toggle rather than another /mode value. Needs a DAILY_TREND_CONFIGS entry.
+    # A runtime /daily override (data/daily_trend_modes.json) beats this default.
+    daily_trend: str | None = None
 
 
 # Load configurations from environment
@@ -288,6 +304,8 @@ def load_trading_config() -> TradingConfig:
         cache_ttl_minutes=_env_num("CACHE_TTL_MINUTES", "55", int, minimum=0),
         max_risk_gbp=_env_num("MAX_RISK_GBP", "45", float,
                               minimum=0, maximum=1000, exclusive_min=True),
+        daily_trend_max_risk_gbp=_env_num("DAILY_TREND_MAX_RISK_GBP", "250", float,
+                                          minimum=0, maximum=2000, exclusive_min=True),
     )
 
 
@@ -1060,6 +1078,11 @@ MARKETS = [
                                   # 07-24/08-13). Gold breakout is the one pair with positive evidence
                                   # on BOTH the 730d backtest (DAY HTF PF 1.4–1.5) and its IG-native
                                   # record (live 9t +2.19R; archive replay PF 1.13–1.29).
+        daily_trend="live",     # 2026-09-09: daily long-only Donchian 55/20, 2xATR20 stop, size 1.0
+                                # (IG min) => ~£160 risk/trade under its OWN cap
+                                # (daily_trend_max_risk_gbp). User decision after the 22y study
+                                # (research_notes "Optimum strategy per instrument"): live on the
+                                # DEMO account from the first signal, coexisting with the 1h breakout.
         min_stop_distance=2.0,  # Raised from 1.0 — cap was 20pts (20x), ATR*2.5 = 25-35, every trade capped
         default_size=1.0,      # IG minimum is 1.0 per point (was 0.1 - all trades rejected!)
         min_confidence=0.55,   # Lowered 0.60→0.55 (2026-06-30): the 0.60 gate threw away
