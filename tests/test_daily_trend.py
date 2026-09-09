@@ -217,12 +217,13 @@ class TestRoutingAndCoexistence(unittest.TestCase):
         self.src = (REPO / "main.py").read_text()
 
     def test_exit_managers_skip_daily_trend_deals(self):
-        self.assertIn("if deal_id in breakout_deals or deal_id in daily_trend_deals:", self.src)  # BE/ATR tick manager
-        self.assertIn("if position.deal_id in daily_trend_deals:\n            continue\n        if position.deal_id in breakout_deals:",
+        self.assertIn("if deal_id in breakout_deals or _daily_managed(deal_id):", self.src)  # BE/ATR tick manager
+        self.assertIn("if _daily_managed(position.deal_id):\n            continue\n        if position.deal_id in breakout_deals:",
                       self.src)  # candle exit routing, before the trail/momentum exits
+        self.assertIn("return deal_id in daily_trend_deals or deal_id in pullback_deals", self.src)
 
     def test_breakout_one_per_epic_ignores_daily_trend(self):
-        self.assertIn("p.epic == epic and p.deal_id not in daily_trend_deals", self.src)
+        self.assertIn("p.epic == epic and not _daily_managed(p.deal_id)", self.src)
 
     def test_tag_cleanup_on_every_close_path_and_readopt(self):
         self.assertEqual(self.src.count("daily_trend_deals.discard("), 4)   # 2 external-close sites, momentum close, daily close

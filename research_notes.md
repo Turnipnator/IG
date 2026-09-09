@@ -3336,3 +3336,102 @@ out-of-hours moves; for daily-close signals this is second-order but unverified 
   Gold (then NASDAQ) long-only Donchian 55/20 with a 2×ATR stop, run in SHADOW first on IG daily bars so fills and
   financing are measured; 3. stop spending effort on S&P/FTSE/Russell/DXY/EUR/USD/Crude — four independent sources
   now agree.
+
+# Second sweep — the other instruments, 2026-09-09 (afternoon)
+
+**Trigger.** User: "Start to look at the other instruments." Gold daily-trend is live (48f4e6f). The first
+sweep left NASDAQ as the only other daily-TF pass and ruled out S&P/FTSE/Russell/DXY/EUR/Crude for trend
+following; the index set has NO strategy with evidence. Two gaps: (1) structural — real IG minimum sizes
+and how IG's 24h index DFB bars differ from the Yahoo cash bars (the Gold parity found IG ATR = 1.24× Yahoo);
+(2) a strategy CLASS not yet tested that has a documented mechanism on indices.
+
+## Pre-registration (written before any result, 14:40 BST)
+**S1 Structural.** IG minDealSize per market from the VPS logs (`Min size … x stop` cap-skip lines) and config
+comments; IG-native DAILY bars for each index built from the 5m archive (00:00 London roll, weekdays) vs
+Yahoo over the overlap: close diff %, ATR20 ratio, and whether a 2×ATR stop at min size fits a £250 cap.
+**S2 Short-term pullback in an uptrend (long-only; Connors-style mean reversion).** Mechanism: multi-day
+reversal in equity indices. Rule fixed now: regime close > SMA200; enter at next open when close < lowest
+low of the prior 5 bars; exit at next open when close > highest high of the prior 5 bars, OR after 10 bars;
+no stop (classic form) — a 3×ATR20 disaster stop reported as a variant. R = P&L ÷ 2×ATR20 at entry for
+comparability. Costs: IG spread + nightly financing (same table as sweep 1). Instruments: 7 indices, Gold,
+Bitcoin. Pass: mean R > 0 in both halves, ≥60% years positive, n ≥ 40.
+**S3 Overnight drift (long close→next open, every day).** Mechanism: US index returns accrue overnight.
+Yahoo opens are trustworthy only for NDX and HSI (stale-open artefact elsewhere, see sweep 1) → Yahoo
+test on those two only; IG-native test on all 7 indices from the archive (63 sessions; cash close bar →
+next cash open bar). Report overnight vs intraday mean in ATR units, with 1 spread + 1 night financing per
+trade. Pass: net mean > 0, z ≥ 2 on Yahoo 22y; archive read is descriptive only (n≈63).
+**S4 Daily-TF robustness grid** (N_in 20–100 × N_out 10–30 × stop 2×ATR/none, long-only AND long-short) for
+the instruments not gridded in sweep 1 — Wall St, HK, Russell, FTSE, Crude, DXY, GBP/USD, EUR/USD, Bitcoin —
+so every rule-out rests on a plateau, not one cell.
+
+## Results (run 14:45–15:40 BST; scripts sweep2.py, sweep2b_pullback_robust.py in the session scratchpad)
+
+### S1 Structural — the index size floor was a false constraint; FINANCING is the real one (HIGH)
+IG has ACCEPTED sizes as small as **0.04 £/pt on NASDAQ and Japan, 0.08 Wall St, 0.12 HK, 0.4 FTSE, 0.5 FX**
+(journal `min(size)` per market) — Gold's 1.0 floor is the exception, not the rule. Index risk can be sized
+exactly; Japan is NOT structurally blocked (0.04 × 2,916 pts = £117). IG 24h index bars vs Yahoo cash bars
+(43–45 day overlap): closes within 0.05–0.11% for US/FTSE (IG's 23:55 London close ≈ cash close), 0.4% HK,
+0.9% Japan; ranges 1.12–1.38× wider, ATR20 1.04–1.13×. What decides daily-horizon viability is the
+instrument's **ATR as % of price**, because nightly financing scales with price ÷ (2×ATR): at 7%/yr over a
+40-night hold **S&P 0.41R · Wall St 0.40R · FTSE 0.41R · Russell 0.33R · HK 0.25R · NASDAQ 0.24R · Japan 0.14R
+· Gold 0.05R** per trade. That is why trend following dies on S&P/WS/FTSE at today's rates and survives on
+Gold/NASDAQ/Japan. Any multi-week strategy on a ~1%-ATR index pays ~0.4R/trade in financing before it starts.
+
+### S2 Pullback in uptrend (long-only, close fills) — PASSES on S&P and NASDAQ; a PLATEAU (MEDIUM-HIGH)
+Pre-registered cell (5-day low entry, 5-day high exit, ≤10 bars, close>SMA200, no stop, spread + financing):
+| | n | meanR | z | PF | yrs+ | H1 / H2 | hit | ΣR 2023–26 |
+|---|---|---|---|---|---|---|---|---|
+| **S&P 500** | 183 | **+0.22** | **+2.4** | 1.57 | **73%** | +0.16 / +0.28 | 72% | +15.6 |
+| **NASDAQ 100** | 191 | **+0.22** | **+2.7** | 1.63 | 65% | +0.19 / +0.24 | 71% | +14.8 |
+| Russell 2000 | 186 | +0.11 | +1.2 | 1.27 | 59% | +0.16 / +0.07 | 67% | +4.2 |
+| Wall Street | 177 | +0.10 | +1.1 | 1.23 | 55% | +0.08 / +0.12 | 68% | +8.4 |
+| Gold | 177 | +0.16 | +2.1 | 1.49 | 57% | +0.09 / +0.24 | 63% | +13.2 |
+| FTSE / Japan / HK / Bitcoin | | −0.05 / −0.06 / +0.06 / −0.18 | | | | | | |
+3×ATR disaster-stop variant: same picture (S&P +0.22 z 2.8). **Robustness grid, 72 cells (entry 3–10 × exit
+3–7 × hold 5–15 × SMA 100/200): S&P 72/72 positive, 72/72 both halves, 66/72 ≥60% years; NASDAQ 72/72,
+72/72, 47/72; Russell 72/72, 61/72, 52/72; Wall St 72/72, 58/72, 35/72; Gold 70/72, 48/72, 15/72; HK 45/72;
+Japan 7/72; FTSE 14/72.** Beta check: S&P captures **45% of buy-and-hold in 24% of calendar time**, max DD
+half of B&H; NASDAQ 38% in 25%. Being in the market a random quarter of the time would capture ~25% — this is
+timing, not drift. Mechanism = multi-day reversal in US equity indices (the documented short-term-reversal
+effect); H2 ≥ H1 on both, so it has not decayed in this sample. Cost is negligible at this horizon (S&P spread
+0.005R; ~4 nights financing ≈ 0.04R). **Caveats:** close fills assume a market order at the cash close (IG
+DFBs trade to 22:00 London, basis ≈ 0.05%); the 5-day low must be computed on CASH-SESSION bars (IG 24h lows
+are 25–35% wider → fewer signals) — the 5m archive/stream can build them; n≈180/instrument over 22 years is
+~8 trades/yr, so an IG-native live record accrues at ~8/yr (vs ~2.6 for daily TF).
+
+### S3 Overnight drift — NO (HIGH)
+NASDAQ 22y: overnight NET of one spread + one night's financing is **negative (z −4.3)**; HSI +0.01–0.02
+ATR/day (z 1.3–2.2) — ~7%/yr unlevered, not a spread-bet strategy. Archive (n≈44/market): nothing significant.
+
+### S4 Daily-TF grids, remaining instruments — rule-outs now rest on plateaus (HIGH)
+Long-only cells positive / both halves: **Japan 30/30 / 30/30** (yrs+ median 45% — lumpy, two years carry it;
+cheapest index financing 0.14R; size 0.04 → tradeable) · NASDAQ 30/30 / 23/30 (confirmed) · Crude **L/S**
+27/30 / 23/30 (yrs 48%, 2023–26 −1.5R) · EUR/USD L/S 24/30 / 3/30 · HK L 19/30 / 12/30 · DXY 18/30 / **0/30**
+· Wall St 2/30 / 0/30 · Russell 3/30 / 0/30 · FTSE 0/30 · GBP/USD L 0/30 · Bitcoin 30/30 / 0/30 (H1 negative).
+Every long-short index variant is negative where long-only is positive.
+
+### Per-instrument map after two sweeps
+| instrument | evidence-grade strategy | status |
+|---|---|---|
+| **Gold** | daily TF long-only (30/30, live since 48f4e6f); 1h breakout live | trading |
+| **S&P 500** | **pullback-in-uptrend (72/72, z 2.4–2.8, 73% yrs)** | CANDIDATE — first strategy with evidence on S&P |
+| **NASDAQ 100** | **pullback (72/72, z 2.7)** AND daily TF long-only (30/30) | CANDIDATE — two mechanisms |
+| Russell 2000 | pullback plateau (72/72, 61/72) but cell z 1.2 | Tier 2 |
+| Wall Street | pullback 72/72 but 58/72, z 1.1; DAY-HTF breakout observer | Tier 2 / observe |
+| Japan 225 | daily TF plateau 30/30, lumpy | Tier 2 |
+| GBP/USD | 1h breakout live (mixed); nothing daily | unchanged |
+| FTSE, HK, DXY, EUR/USD, Crude, Bitcoin | nothing survives | ruled out (Crude L/S TF plateau noted, fails years) |
+Correlation: S&P/NASDAQ/Russell/WS pullback signals fire on the SAME days (one bet wearing four hats) — the
+criteria's max-2-per-equity-group rule applies; S&P + NASDAQ is the natural pair.
+
+### Conclusion (protocol §7)
+- **Most supported:** two independent mechanisms now have plateau-grade evidence after IG costs: slow trend
+  on high-ATR% instruments (Gold, NASDAQ, Japan) and multi-day reversal on US indices in an uptrend (S&P,
+  NASDAQ). They are complementary (buy breakouts vs buy dips) and cheap at their horizons.
+- **Ruled out:** overnight drift; open fade (sweep 1); daily TF on ~1%-ATR indices at current financing;
+  pullback on FTSE/Japan/HK/Bitcoin; FTSE/HK/DXY/EUR/USD/Crude/Bitcoin on every class tested.
+- **Open:** (a) cash-session bars for the pullback channel in the live bot; (b) index DFB financing still
+  unmeasured (one overnight index position settles it); (c) whether NASDAQ should run both strategies.
+- **Suggested next action (user decision):** build pullback-in-uptrend as a third strategy family (same
+  once-a-day architecture as daily-trend, evaluated at the US cash close), S&P 500 + NASDAQ 100, long-only,
+  sized to a fixed £ risk (indices have no size floor) — live on demo, like Gold.

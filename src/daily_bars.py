@@ -88,7 +88,7 @@ def refresh_daily_bars(client, epic: str, min_bars: int, base: Optional[Path] = 
     cache (use_cache=False) — see module docstring. Any failure returns the store
     unchanged; the caller decides whether the frame is usable."""
     existing = load_daily_bars(epic, base)
-    n_points = SEED_POINTS if len(existing) < min_bars else REFRESH_POINTS
+    n_points = max(SEED_POINTS, min_bars + 20) if len(existing) < min_bars else REFRESH_POINTS
     try:
         fetched = client.get_historical_prices(epic, resolution="DAY", num_points=n_points, use_cache=False)
     except Exception as e:

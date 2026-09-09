@@ -108,6 +108,11 @@ class TradingConfig:
     # account), impossible under max_risk_gbp. Kept separate so raising it cannot
     # loosen the intraday cap. £500 cumulative stop ≈ 3 losers at this size.
     daily_trend_max_risk_gbp: float = 250.0
+    # £ RISK UNIT for the pullback strategy: position size = risk / (2xATR20), the unit
+    # the study is measured in. Indices have no meaningful IG size floor (accepted
+    # down to 0.04/pt), so this is exact. The 3xATR broker stop makes the worst case
+    # 1.5x this (£150 at £100); daily_trend_max_risk_gbp is the hard ceiling.
+    pullback_risk_gbp: float = 100.0
 
 
 @dataclass
@@ -250,6 +255,13 @@ class MarketConfig:
     # toggle rather than another /mode value. Needs a DAILY_TREND_CONFIGS entry.
     # A runtime /daily override (data/daily_trend_modes.json) beats this default.
     daily_trend: str | None = None
+    # PULLBACK-IN-UPTREND strategy for this market (2026-09-09, second sweep): long-only,
+    # close>SMA200, buy a close below the prior 5-session low, sell a close above the
+    # prior 5-session high or after 10 sessions, 3xATR20 broker stop (src/pullback.py).
+    # Channels use CASH-SESSION bars (src/session_bars.py). Passed on S&P 500 and
+    # NASDAQ 100 (72/72 parameter cells, both 11-year halves, z 2.4-2.8). Same
+    # off|shadow|live semantics and /pullback override as daily_trend.
+    pullback: str | None = None
 
 
 # Load configurations from environment
@@ -306,6 +318,8 @@ def load_trading_config() -> TradingConfig:
                               minimum=0, maximum=1000, exclusive_min=True),
         daily_trend_max_risk_gbp=_env_num("DAILY_TREND_MAX_RISK_GBP", "250", float,
                                           minimum=0, maximum=2000, exclusive_min=True),
+        pullback_risk_gbp=_env_num("PULLBACK_RISK_GBP", "100", float,
+                                   minimum=0, maximum=1000, exclusive_min=True),
     )
 
 
@@ -721,6 +735,7 @@ MARKETS = [
                                        # S&P's hyper-efficiency thins our momentum edge; disable
                                        # if the marginal +0.31% doesn't survive the live spread.
         correlation_group="equity_index",  # cluster filter (2026-06-11)
+        pullback="live",       # 2026-09-09: pullback-in-uptrend live on demo (sweep 2; user decision)
     ),
     MarketConfig(
         epic="IX.D.NASDAQ.CASH.IP",
@@ -751,6 +766,7 @@ MARKETS = [
         adx_ceiling_enforce=False,
         adx_ceiling_direction="SELL",  # short-side: longs never reach 55 (dir-split 2026-06-09)
         correlation_group="equity_index",  # cluster filter (2026-06-11)
+        pullback="live",       # 2026-09-09: pullback-in-uptrend live on demo (sweep 2; user decision)
     ),
     # Disabled 2026-05-01 ("strategy doesn't fit"); RE-ADDED AS SHADOW 2026-07-24.
     # The per-EPIC walk-forward (07-14) flatly contradicted the disable: PF 1.84,

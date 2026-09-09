@@ -24,6 +24,8 @@ HTF_TRENDS_FILE = _DATA_DIR / "htf_trends.json"
 BREAKOUT_DEALS_FILE = _DATA_DIR / "breakout_deals.json"
 DAILY_TREND_DEALS_FILE = _DATA_DIR / "daily_trend_deals.json"
 DAILY_TREND_STATE_FILE = _DATA_DIR / "daily_trend_state.json"
+PULLBACK_DEALS_FILE = _DATA_DIR / "pullback_deals.json"
+PULLBACK_STATE_FILE = _DATA_DIR / "pullback_state.json"
 QUIET_RESTART_WINDOW = timedelta(hours=2)
 HTF_REFRESH_COOLDOWN = timedelta(hours=6)  # On startup, skip HTF fetch if one ran within this window
 # Daily HTF refresh on a fixed WALL CLOCK, not relative to process start (2026-08-10).
@@ -56,7 +58,7 @@ from config import (
 from src.client import IGClient, Position
 from src.strategy import TradingStrategy, Signal, TradeSignal, should_close_position
 from src import breakout
-from src import daily_trend, daily_bars
+from src import daily_trend, daily_bars, pullback, session_bars
 from src.risk_manager import RiskManager
 from src.telegram_bot import TelegramBot, _session_date
 from src.streaming import IGStreamService, MarketStream, LIGHTSTREAMER_AVAILABLE
@@ -202,6 +204,17 @@ breakout_deals: set[str] = set()
 # multi-week Gold hold does not block the 1h breakout. Persisted like breakout_deals.
 daily_trend_deals: set[str] = set()
 
+# Deal IDs opened by the PULLBACK-IN-UPTREND strategy (src/pullback.py, 2026-09-09).
+# Same contract as daily_trend_deals: managed once a day by run_pullback only.
+pullback_deals: set[str] = set()
+
+
+def _daily_managed(deal_id: str) -> bool:
+    """True for any position owned by a ONCE-A-DAY strategy (daily-trend, pullback).
+    The per-tick/per-candle managers and the breakout's one-per-epic check consult
+    this single helper so a new daily strategy cannot be missed at one site."""
+    return deal_id in daily_trend_deals or deal_id in pullback_deals
+
 # Momentum-exit minimum-hold guard: deal_id -> timestamp of the newest CLOSED
 # candle at entry. The MACD-3 / ranging-3 momentum exits are suppressed for a
 # position until a NEWER candle has closed (>=1 fresh candle held). This kills
@@ -266,6 +279,28 @@ def _load_daily_trend_deals(open_deal_ids: set[str]) -> None:
             _save_daily_trend_deals()
     except Exception as e:
         logger.warning(f"Failed to load daily_trend_deals: {e}")
+
+
+def _save_pullback_deals() -> None:
+    try:
+        PULLBACK_DEALS_FILE.write_text(json.dumps(sorted(pullback_deals)))
+    except Exception as e:
+        logger.warning(f"Failed to persist pullback_deals: {e}")
+
+
+def _load_pullback_deals(open_deal_ids: set[str]) -> None:
+    try:
+        if not PULLBACK_DEALS_FILE.exists():
+            return
+        saved = set(json.loads(PULLBACK_DEALS_FILE.read_text()))
+        live = saved & open_deal_ids
+        pullback_deals.update(live)
+        if live:
+            logger.info(f"Restored {len(live)} pullback deal tag(s) from disk (daily exit routing preserved)")
+        if saved - live:
+            _save_pullback_deals()
+    except Exception as e:
+        logger.warning(f"Failed to load pullback_deals: {e}")
 
 # Post-restart cooldown: skip opening new positions for 15 mins after startup
 # to let indicators stabilise with fresh streaming data
@@ -424,6 +459,7 @@ def initialize() -> bool:
         open_ids = {p.deal_id for p in (client.get_positions() or []) if p.deal_id}
         _load_breakout_deals(open_ids)
         _load_daily_trend_deals(open_ids)
+        _load_pullback_deals(open_ids)
     except Exception as e:
         logger.warning(f"breakout_deals restore skipped: {e}")
     # Daily-trend bar store: seed once if thin (~130 REST points), else free.
@@ -867,7 +903,7 @@ def on_price_update(epic: str, market: MarketStream) -> None:
         # check_positions_from_stream (per candle), not BE/ATR per tick. Skip here.
         # (Momentum forex positions are NOT in breakout_deals and DO get BE/ATR.)
         # Daily-trend positions: managed once a day by run_daily_trend only.
-        if deal_id in breakout_deals or deal_id in daily_trend_deals:
+        if deal_id in breakout_deals or _daily_managed(deal_id):
             continue
 
         strategy_cfg = get_strategy_for_market(market_config)
@@ -1022,7 +1058,7 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
     # One breakout position per epic. Daily-trend positions on the same epic are
     # IGNORED here (user decision 2026-09-09): the two strategies coexist on Gold,
     # otherwise a multi-week daily hold would block every 1h breakout entry.
-    if any(p.epic == epic and p.deal_id not in daily_trend_deals for p in known_positions.values()):
+    if any(p.epic == epic and not _daily_managed(p.deal_id) for p in known_positions.values()):
         return
     # Loss cooldown (shared map) — don't immediately re-enter after a stop-out.
     if epic in loss_cooldown_until and datetime.now() < loss_cooldown_until[epic]:
@@ -1604,18 +1640,29 @@ def refresh_daily_trend_bars(boot: bool = False) -> None:
     if not client:
         return
     now = datetime.now()
-    for m in _daily_trend_markets():
-        cfg = daily_trend.get_daily_trend_config(m.epic)
+    for m, need in _daily_store_targets():
         try:
             have = daily_bars.load_daily_bars(m.epic)
-            if boot and len(have) >= cfg.min_bars:
+            if boot and len(have) >= need:
                 continue
             if not boot and now.weekday() >= 5:
                 continue
             rate_limiter.wait_if_needed()
-            daily_bars.refresh_daily_bars(client, m.epic, cfg.min_bars)
+            daily_bars.refresh_daily_bars(client, m.epic, need)
         except Exception as e:
-            logger.warning(f"[DAILY-TREND] {m.name}: bar refresh failed: {e}")
+            logger.warning(f"[DAILY-STORE] {m.name}: bar refresh failed: {e}")
+
+
+def _daily_store_targets() -> list:
+    """(market, bars needed) for every market whose once-a-day strategy reads the IG
+    DAY-bar store: daily-trend needs its channel + ATR (~56), pullback needs its
+    SMA200 (+10 headroom). A market on both strategies appears once, at the max."""
+    need: dict = {}
+    for m in _daily_trend_markets():
+        need[m.epic] = (m, max(need.get(m.epic, (m, 0))[1], daily_trend.get_daily_trend_config(m.epic).min_bars))
+    for m in _pullback_markets():
+        need[m.epic] = (m, max(need.get(m.epic, (m, 0))[1], pullback.get_pullback_config(m.epic).sma_n + 10))
+    return list(need.values())
 
 
 def run_daily_trend() -> None:
@@ -1809,6 +1856,256 @@ def _daily_trend_shadow(market_config, cfg, sig, bars, open_rows) -> bool:
                                        pd.Timestamp(sig.bar_date).isoformat(), spread)
         _daily_trend_notify(f"📅 Daily-trend (shadow) {market_config.name}: would BUY @ {mid:.1f}, "
                             f"stop {sig.stop_distance:.1f} — {sig.reason}")
+    return True
+
+
+# =============================================================================
+# PULLBACK-IN-UPTREND strategy (2026-09-09, sweep 2) — src/pullback.py + src/session_bars.py
+# =============================================================================
+
+def _pullback_mode(market_config) -> str:
+    """/pullback override (telegram.pullback_modes) > MarketConfig.pullback > off.
+    Keep in sync with telegram_bot._effective_pullback_mode (pinned by a test)."""
+    override = getattr(telegram, "pullback_modes", {}).get(market_config.epic)
+    if override in pullback.VALID_PULLBACK_MODES:
+        return override
+    cfg = getattr(market_config, "pullback", None)
+    return cfg if cfg in pullback.VALID_PULLBACK_MODES else "off"
+
+
+def _pullback_markets() -> list:
+    return [m for m in MARKETS if pullback.has_pullback_config(m.epic) and _pullback_mode(m) != "off"]
+
+
+def _pullback_open_position(epic: str):
+    for deal_id, p in known_positions.items():
+        if p.epic == epic and deal_id in pullback_deals:
+            return p
+    return None
+
+
+def _load_pullback_state() -> dict:
+    try:
+        if PULLBACK_STATE_FILE.exists():
+            return json.loads(PULLBACK_STATE_FILE.read_text())
+    except Exception as e:
+        logger.warning(f"[PULLBACK] state unreadable ({e}); treating every session as unevaluated")
+    return {}
+
+
+def _save_pullback_state(state: dict) -> None:
+    try:
+        PULLBACK_STATE_FILE.write_text(json.dumps(state, indent=1))
+    except Exception as e:
+        logger.warning(f"[PULLBACK] could not persist state: {e}")
+
+
+def _pullback_frames(market_config):
+    """Cash-session bars (archive + live stream deque) and the IG DAY closes the
+    SMA200 is built on. The stream deque holds ~8h of 5m candles, so today's full
+    session is present at 21:05 even before the 15-min archive job flushes it."""
+    import pandas as pd
+    ms = stream_service.markets.get(market_config.epic) if stream_service else None
+    stream_df = None
+    if ms is not None:
+        try:
+            stream_df = ms.to_dataframe()
+        except Exception:
+            stream_df = None
+    sess = session_bars.build_session_bars(market_config.epic, stream_df)
+    store = daily_bars.load_daily_bars(market_config.epic)
+    sma_closes = pd.Series(store["close"].values, index=store["date"].values) if len(store) else None
+    return sess, sma_closes, ms
+
+
+def run_pullback() -> None:
+    """21:05 London Mon-Fri (+21:35 retry): decide on TODAY's cash-session bar and
+    act while IG's US index bets still trade (to 22:00 London). No session bar for
+    today (NYSE holiday, outage) -> nothing to do. Idempotent per session date via
+    PULLBACK_STATE_FILE, marked only when the action completed."""
+    import pandas as pd
+    if not client:
+        return
+    now = datetime.now()
+    if now.weekday() >= 5:
+        return
+    state = _load_pullback_state()
+    for m in _pullback_markets():
+        cfg = pullback.get_pullback_config(m.epic)
+        mode = _pullback_mode(m)
+        try:
+            sess, sma_closes, ms = _pullback_frames(m)
+            if sess.empty or pd.Timestamp(sess["date"].iloc[-1]).date() != now.date():
+                logger.info(f"[PULLBACK] {m.name}: no completed session bar for {now.date()} — skip")
+                continue
+            last_bar = str(now.date())
+            st = state.get(m.epic, {})
+            if st.get("last_bar") == last_bar:
+                continue
+            open_pos = _pullback_open_position(m.epic)
+            shadow_rows = journal.get_open_pullback_shadow(m.epic) if (journal and mode == "shadow") else []
+            in_position = (open_pos is not None) if mode == "live" else bool(shadow_rows)
+            if mode == "live":
+                entry_date = st.get("entry_bar") if in_position else None
+            else:
+                entry_date = shadow_rows[0]["benched_at"][:10] if shadow_rows else None
+            bars_held = int((sess["date"] > pd.Timestamp(entry_date)).sum()) if (in_position and entry_date) else 0
+            lc = last_close_time.get(m.epic)
+            exited_today = (lc is not None and lc.date() == now.date())   # broker stop earlier today
+            sig = pullback.evaluate(sess, cfg, in_position, bars_held, sma_closes, exited_today=exited_today)
+            logger.info(
+                f"📉 Pullback [{m.name}] {mode} session {last_bar}: {sig.action} — {sig.reason}"
+                + (f" | ATR {sig.atr:.1f} R-unit {sig.risk_unit:.1f} stop {sig.stop_distance:.1f} | "
+                   f"{cfg.n_in}d lo {sig.entry_lo:.1f} {cfg.n_out}d hi {sig.exit_hi:.1f} SMA {sig.sma:.1f}"
+                   if sig.action != "WAIT" else "")
+            )
+            if sig.action == "WAIT":
+                continue
+            done = True
+            if mode == "live":
+                if sig.action == "ENTER_LONG":
+                    done = _execute_pullback_entry(m, cfg, sig)
+                elif sig.action == "EXIT":
+                    done = _close_pullback_position(open_pos, m, f"Pullback: {sig.reason}")
+            else:
+                done = _pullback_shadow(m, cfg, sig, sess, shadow_rows, ms)
+            if done:
+                new_state = {"last_bar": last_bar, "action": sig.action, "at": now.isoformat()}
+                if sig.action == "ENTER_LONG":
+                    new_state["entry_bar"] = last_bar
+                elif sig.action == "HOLD" and in_position and entry_date:
+                    new_state["entry_bar"] = entry_date
+                state[m.epic] = new_state
+                _save_pullback_state(state)
+        except Exception as e:
+            logger.error(f"[PULLBACK] {m.name}: run failed: {e}")
+
+
+def _execute_pullback_entry(market_config, cfg, sig) -> bool:
+    """Place the LIVE pullback long, sized to the £ risk unit (2xATR20) with a 3xATR20
+    broker stop. Same gate order as the breakout/daily-trend entries. Returns False
+    (retry at 21:35) only when the market was closed or the order failed."""
+    epic = market_config.epic
+    if _pullback_open_position(epic) is not None:
+        return True
+    info = client.get_market_info(epic)
+    if not info or info.market_status != "TRADEABLE":
+        logger.info(f"[PULLBACK] {market_config.name}: market_status={getattr(info, 'market_status', None)} — will retry")
+        return False
+    stop_distance = float(sig.stop_distance)
+    if info.min_stop_distance > 0:
+        stop_distance = max(stop_distance, info.min_stop_distance + 0.5)
+    stop_distance = round(stop_distance, 1)
+    spread = (info.offer or 0) - (info.bid or 0)
+    if spread > 0 and stop_distance < spread * 1.5:
+        logger.warning(f"[PULLBACK] {market_config.name}: stop {stop_distance} < 1.5x spread {spread:.1f} — skip")
+        return True
+    risk_gbp = float(getattr(risk_manager.config, "pullback_risk_gbp", 100.0))
+    size = round(risk_gbp / float(sig.risk_unit), 2)
+    if info.min_deal_size and size < info.min_deal_size:
+        size = float(info.min_deal_size)
+    worst = size * stop_distance
+    cap = float(getattr(risk_manager.config, "daily_trend_max_risk_gbp", 250.0))
+    if worst > cap:
+        msg = (f"📉 Pullback {market_config.name}: signal SKIPPED — size {size} x stop {stop_distance} = "
+               f"£{worst:.0f} > cap £{cap:.0f}")
+        logger.warning(msg)
+        try:
+            journal.log_rejected_signal(epic=epic, market_name=market_config.name, direction="BUY",
+                                        confidence=1.0, adx=0.0, rsi=0.0,
+                                        reject_reason=f"Pullback-sizing: £{worst:.0f} > £{cap:.0f}")
+        except Exception:
+            pass
+        _daily_trend_notify(msg)
+        return True
+    logger.info(f"🟢📉 Pullback OPEN BUY {market_config.name}: size={size} (£{risk_gbp:.0f} per 2xATR) "
+                f"stop={stop_distance} — {sig.reason}")
+    result = client.open_position(
+        epic=epic, direction="BUY", size=size, stop_distance=stop_distance, limit_distance=None,
+        expiry=(info.expiry if getattr(info, "expiry", "") else market_config.expiry),
+    )
+    if not result:
+        err = client.last_error or "unknown"
+        logger.warning(f"[PULLBACK] {market_config.name}: open failed ({err}) — will retry")
+        _daily_trend_notify(f"⚠️ Pullback open FAILED on {market_config.name}: {err}")
+        return False
+    deal_id = result.get("dealId", "")
+    if not deal_id:
+        return False
+    pullback_deals.add(deal_id)
+    _save_pullback_deals()
+    known_positions[deal_id] = Position(
+        deal_id=deal_id, epic=epic, direction="BUY", size=size,
+        open_level=result.get("level", sig.close), stop_level=result.get("stopLevel"),
+        limit_level=None, profit_loss=0.0, created_date=datetime.now().isoformat(),
+    )
+    journal.log_entry(
+        deal_id=deal_id, epic=epic, market_name=market_config.name, direction="BUY", size=size,
+        entry_price=result.get("level", sig.close), stop_distance=stop_distance, limit_distance=0.0,
+        confidence=1.0, reason=f"Pullback: {sig.reason}", strategy="pullback",
+        atr=float(sig.atr), htf_trend=htf_trends.get(epic, "NEUTRAL"),
+    )
+    if telegram_loop:
+        asyncio.run_coroutine_threadsafe(
+            telegram.notify_trade_opened(f"{market_config.name} (pullback)", "BUY", size,
+                                         float(result.get("level", sig.close)), stop_distance, 0.0),
+            telegram_loop)
+    return True
+
+
+def _close_pullback_position(position, market_config, reason: str) -> bool:
+    """Market-close a pullback long on a channel/time exit; momentum-path bookkeeping."""
+    if position is None:
+        return True
+    result = client.close_position(position.deal_id, position.direction, position.size)
+    if not result:
+        logger.warning(f"[PULLBACK] {market_config.name}: close failed ({client.last_error}) — will retry")
+        return False
+    known_positions.pop(position.deal_id, None)
+    breakeven_applied.discard(position.deal_id)
+    trailing_stop_levels.pop(position.deal_id, None)
+    momentum_hold.pop(position.deal_id, None)
+    pullback_deals.discard(position.deal_id)
+    _save_pullback_deals()
+    last_close_time[position.epic] = datetime.now()
+    confirmed_profit = result.get("profit")
+    exit_price = float(result.get("level") or 0.0)
+    if confirmed_profit is not None:
+        pnl, journal_status = float(confirmed_profit), "CLOSED"
+    else:
+        pnl, journal_status = position.profit_loss, "PROVISIONAL"
+    risk_manager.update_daily_pnl(pnl)   # telegram.daily_pnl moves in notify_trade_closed
+    journal.log_exit(position.deal_id, pnl, reason, exit_price=exit_price, adx_at_exit=0.0,
+                     status=journal_status)
+    logger.info(f"📉 Pullback CLOSED {market_config.name} @ {exit_price:.1f} P&L £{pnl:.2f} — {reason}")
+    if telegram_loop:
+        asyncio.run_coroutine_threadsafe(
+            telegram.notify_trade_closed(f"{market_config.name} (pullback)", position.direction, pnl, reason),
+            telegram_loop)
+    return True
+
+
+def _pullback_shadow(market_config, cfg, sig, sess, open_rows, ms) -> bool:
+    """SHADOW: resolve open episodes on the session bars, then log a new one on ENTER_LONG."""
+    import pandas as pd
+    if not journal:
+        return True
+    epic = market_config.epic
+    for r in open_rows:
+        res = pullback.resolve_open_episode(sess, cfg, r["benched_at"][:10], float(r["entry_price"]),
+                                            float(r["stop_distance"]))
+        if res:
+            r_mult = (res["exit"] - float(r["entry_price"])) / float(r["stop_distance"])
+            journal.resolve_pullback_shadow(r["id"], "WIN" if r_mult > 0 else "LOSS", res["reason"],
+                                            res["bars"], r_mult, res["exit"])
+            logger.info(f"📉 Pullback shadow [{market_config.name}] #{r['id']} resolved {res['reason']} {r_mult:+.2f}R @ {res['exit']:.1f}")
+            _daily_trend_notify(f"📉 Pullback (shadow) {market_config.name}: episode #{r['id']} closed {res['reason']} {r_mult:+.2f}R")
+    if sig.action == "ENTER_LONG" and not open_rows:
+        mid = ms.mid_price if (ms and ms.mid_price) else float(sig.close)
+        spread = ((ms.offer or 0) - (ms.bid or 0)) if ms else 0.0
+        journal.log_pullback_shadow(epic, market_config.name, float(mid), float(sig.stop_distance),
+                                    pd.Timestamp(sig.bar_date).isoformat(), spread)
+        _daily_trend_notify(f"📉 Pullback (shadow) {market_config.name}: would BUY @ {mid:.1f}, stop {sig.stop_distance:.1f} — {sig.reason}")
     return True
 
 
@@ -2558,6 +2855,9 @@ def check_positions_from_stream() -> None:
                 if deal_id in daily_trend_deals:
                     daily_trend_deals.discard(deal_id)
                     _save_daily_trend_deals()
+                if deal_id in pullback_deals:
+                    pullback_deals.discard(deal_id)
+                    _save_pullback_deals()
                 missing_poll_counts.pop(deal_id, None)
                 del known_positions[deal_id]
                 continue
@@ -2596,6 +2896,9 @@ def check_positions_from_stream() -> None:
             if deal_id in daily_trend_deals:
                 daily_trend_deals.discard(deal_id)
                 _save_daily_trend_deals()
+            if deal_id in pullback_deals:
+                pullback_deals.discard(deal_id)
+                _save_pullback_deals()
 
             # Record close time for cooldown
             last_close_time[known_pos.epic] = datetime.now()
@@ -2684,7 +2987,7 @@ def check_positions_from_stream() -> None:
         # (channel exit on the daily close; the broker stop does the rest). No
         # per-candle exit may touch them — neither the Donchian trail below nor
         # should_close_position's MACD/ranging/HTF exits.
-        if position.deal_id in daily_trend_deals:
+        if _daily_managed(position.deal_id):
             continue
         if position.deal_id in breakout_deals:
             _update_breakout_trail(position, df)
@@ -2740,6 +3043,9 @@ def check_positions_from_stream() -> None:
                 if position.deal_id in daily_trend_deals:
                     daily_trend_deals.discard(position.deal_id)
                     _save_daily_trend_deals()
+                if position.deal_id in pullback_deals:
+                    pullback_deals.discard(position.deal_id)
+                    _save_pullback_deals()
 
                 # Record close time for cooldown
                 last_close_time[position.epic] = datetime.now()
@@ -2815,6 +3121,9 @@ def _readopt_position(row: dict, live_pos) -> None:
     if row.get("strategy") == "daily-trend":
         daily_trend_deals.add(deal_id)
         _save_daily_trend_deals()
+    if row.get("strategy") == "pullback":
+        pullback_deals.add(deal_id)
+        _save_pullback_deals()
 
     # Back out the provisional P&L booked at the false close — but only if it
     # belongs to the current 21:00 session (a prior-session reversal must not move
@@ -3986,6 +4295,12 @@ async def main_async():
         schedule.every().day.at("22:30").do(refresh_daily_trend_bars)
         schedule.every().day.at("23:15").do(run_daily_trend)
         schedule.every().day.at("07:15").do(run_daily_trend)
+        # Pullback (2026-09-09, sweep 2): US cash close is 21:00 London year-round
+        # (London and New York shift DST within a fortnight); IG's US index bets
+        # trade to 22:00, so 21:05 decides and fills on today's session bar and
+        # 21:35 retries anything the market refused. Idempotent per session date.
+        schedule.every().day.at("21:05").do(run_pullback)
+        schedule.every().day.at("21:35").do(run_pullback)
 
         logger.info(
             f"HTF trend refresh scheduled daily at {HTF_REFRESH_TIME} UTC "

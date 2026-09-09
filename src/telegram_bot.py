@@ -23,6 +23,7 @@ from telegram.ext import (
 
 from config import TelegramConfig, MARKETS
 from src.daily_trend import VALID_DAILY_TREND_MODES, has_daily_trend_config
+from src.pullback import VALID_PULLBACK_MODES, has_pullback_config
 
 if TYPE_CHECKING:
     from src.client import IGClient
@@ -45,6 +46,8 @@ MARKET_MODES = ("off", "momentum", "shadow", "breakout", "breakout-shadow")
 # MarketConfig.daily_trend (None -> off). Read cross-thread by main._daily_trend_mode;
 # the valid tuple lives in src.daily_trend so the two modules cannot diverge.
 DAILY_TREND_MODES_FILE = STATS_DIR / "daily_trend_modes.json"
+# Same shape for the PULLBACK strategy (2026-09-09, second sweep), toggled via /pullback.
+PULLBACK_MODES_FILE = STATS_DIR / "pullback_modes.json"
 
 # RETIRED 2026-09-09. Until then the forex pairs were governed by ONE global toggle
 # (/forex, persisted here) with its own four-mode vocabulary, in which "shadow"
@@ -149,6 +152,8 @@ class TelegramBot:
         # strategy. Read cross-thread by main._daily_trend_mode.
         self.daily_trend_modes: dict = {}
         self.load_daily_trend_modes()
+        self.pullback_modes: dict = {}
+        self.load_pullback_modes()
         # Human-readable record of the one-shot /forex → /mode translation when the
         # legacy file was found at this boot (surfaced on the startup banner and the
         # /mode board). None = nothing to migrate.
@@ -269,6 +274,35 @@ class TelegramBot:
             logger.warning(f"Failed to load daily-trend modes (using config defaults): {e}")
             self.daily_trend_modes = {}
 
+    def save_pullback_modes(self) -> None:
+        try:
+            STATS_DIR.mkdir(parents=True, exist_ok=True)
+            PULLBACK_MODES_FILE.write_text(json.dumps({
+                "pullback_modes": self.pullback_modes, "saved_at": datetime.now().isoformat()}))
+        except Exception as e:
+            logger.warning(f"Failed to save pullback modes: {e}")
+
+    def load_pullback_modes(self) -> None:
+        try:
+            if not PULLBACK_MODES_FILE.exists():
+                return
+            raw = json.loads(PULLBACK_MODES_FILE.read_text()).get("pullback_modes", {})
+            self.pullback_modes = {e: m for e, m in raw.items() if isinstance(m, str) and m in VALID_PULLBACK_MODES}
+            if self.pullback_modes:
+                logger.info(f"Restored pullback modes: {self.pullback_modes}")
+        except Exception as e:
+            logger.warning(f"Failed to load pullback modes (using config defaults): {e}")
+            self.pullback_modes = {}
+
+    def _effective_pullback_mode(self, m) -> str:
+        """Effective PULLBACK mode. MUST mirror main._pullback_mode: /pullback override >
+        MarketConfig.pullback > off."""
+        override = self.pullback_modes.get(m.epic)
+        if override in VALID_PULLBACK_MODES:
+            return override
+        cfg = getattr(m, "pullback", None)
+        return cfg if cfg in VALID_PULLBACK_MODES else "off"
+
     def _effective_daily_mode(self, m) -> str:
         """Effective DAILY-TREND mode for a MarketConfig.
         MUST mirror main._daily_trend_mode: /daily override > MarketConfig.daily_trend > off."""
@@ -386,6 +420,7 @@ class TelegramBot:
             "/resume - Resume trading\n"
             "/mode - Per-market strategy, forex included (off|momentum|shadow|breakout|breakout-shadow)\n"
             "/daily - Daily trend-following per market (off|shadow|live)\n"
+            "/pullback - Pullback-in-uptrend per market (off|shadow|live)\n"
             "/rebuild - Pull latest code & restart\n"
             "/emergency - ⚠️ Close ALL positions\n\n"
             "*🔔 Notifications:*\n"
@@ -844,6 +879,11 @@ class TelegramBot:
                     dtag = " _(override)_" if m.epic in self.daily_trend_modes else ""
                     demoji = {"live": "📅🟢", "shadow": "📅🟡", "off": "📅⚪"}[dmode]
                     lines.append(f"   {demoji} daily-trend: `{dmode}`{dtag}")
+                pmode = self._effective_pullback_mode(m)
+                if pmode != "off" or has_pullback_config(m.epic):
+                    ptag = " _(override)_" if m.epic in self.pullback_modes else ""
+                    pemoji = {"live": "📉🟢", "shadow": "📉🟡", "off": "📉⚪"}[pmode]
+                    lines.append(f"   {pemoji} pullback: `{pmode}`{ptag}")
             lines.append("\nUsage: `/mode <market> off|momentum|shadow|breakout|breakout-shadow`"
                          "\n`/mode <market> default` clears the override."
                          "\n👻 shadow = momentum observed; 🟡 breakout-shadow = breakout observed.")
@@ -974,6 +1014,51 @@ class TelegramBot:
                     "size = IG minimum, stop 2×ATR20 (~£160 on Gold), own cap `DAILY_TREND_MAX_RISK_GBP`.")
         await update.effective_message.reply_text(
             f"📅 *{m.name} daily-trend → `{mode_arg}`* (was `{prev}`){warn}", parse_mode='Markdown')
+
+    async def pullback_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /pullback — per-market toggle for the PULLBACK-IN-UPTREND strategy
+        (2026-09-09). Same grammar as /daily. Runs alongside /mode's intraday strategy."""
+        if not self.is_authorized(update.effective_user.id):
+            return
+        self.commands_executed += 1
+        args = [a.lower() for a in (context.args or [])]
+        if not args:
+            lines = ["📉 *Pullback-in-uptrend modes* (long-only, close>SMA200, buy <5d low, sell >5d high / 10d, 3×ATR stop)\n"]
+            for m in MARKETS:
+                if not has_pullback_config(m.epic):
+                    continue
+                pmode = self._effective_pullback_mode(m)
+                tag = " _(override)_" if m.epic in self.pullback_modes else ""
+                lines.append(f"{ {'live': '🟢', 'shadow': '🟡', 'off': '⚪'}[pmode] } {m.name}: `{pmode}`{tag}")
+            lines.append("\nUsage: `/pullback <market> off|shadow|live` · `/pullback <market> default` clears the override.")
+            await update.effective_message.reply_text("\n".join(lines), parse_mode='Markdown')
+            return
+        if len(args) < 2:
+            await update.effective_message.reply_text("Usage: `/pullback <market> <off|shadow|live|default>`", parse_mode='Markdown')
+            return
+        mode_arg = args[-1]; query = " ".join(args[:-1])
+        matches = [m for m in MARKETS if query in m.name.lower()]
+        if not matches:
+            await update.effective_message.reply_text(f"❌ No market matches `{query}`", parse_mode='Markdown'); return
+        if len(matches) > 1:
+            await update.effective_message.reply_text("❌ Ambiguous: " + ", ".join(m.name for m in matches), parse_mode='Markdown'); return
+        m = matches[0]
+        if mode_arg == "default":
+            prev = self.pullback_modes.pop(m.epic, None); self.save_pullback_modes()
+            await update.effective_message.reply_text(
+                f"↩️ {m.name} pullback: override cleared (was `{prev}`) — config default "
+                f"`{self._effective_pullback_mode(m)}` resumes.", parse_mode='Markdown'); return
+        if mode_arg not in VALID_PULLBACK_MODES:
+            await update.effective_message.reply_text(f"❌ Unknown mode `{mode_arg}`. Use: off | shadow | live | default", parse_mode='Markdown'); return
+        if mode_arg != "off" and not has_pullback_config(m.epic):
+            await update.effective_message.reply_text(
+                f"❌ {m.name} has no pullback config (src/pullback.py PULLBACK_CONFIGS) — it must pass the 22-year study first.",
+                parse_mode='Markdown'); return
+        prev = self._effective_pullback_mode(m)
+        self.pullback_modes[m.epic] = mode_arg; self.save_pullback_modes()
+        logger.info(f"Pullback mode changed via Telegram: {m.name} {prev} -> {mode_arg}")
+        warn = "\n⚠️ LIVE — a real order at the next US cash close that closes below the 5-session low above SMA200; risk unit `PULLBACK_RISK_GBP`." if mode_arg == "live" else ""
+        await update.effective_message.reply_text(f"📉 *{m.name} pullback → `{mode_arg}`* (was `{prev}`){warn}", parse_mode='Markdown')
 
     async def emergency_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /emergency command - close all and stop."""
@@ -1399,6 +1484,7 @@ class TelegramBot:
             self.app.add_handler(CommandHandler("forex", self.forex_command))
             self.app.add_handler(CommandHandler("mode", self.mode_command))
             self.app.add_handler(CommandHandler("daily", self.daily_command))
+            self.app.add_handler(CommandHandler("pullback", self.pullback_command))
             self.app.add_handler(CommandHandler("emergency", self.emergency_command))
             self.app.add_handler(CommandHandler("rebuild", self.rebuild_command))
 

@@ -524,6 +524,39 @@ class TradeJournal:
         except Exception:
             return []
 
+    @_synchronized
+    def log_pullback_shadow(self, epic: str, market_name: str, entry_price: float,
+                            stop_distance: float, benched_at: str, spread: float = 0.0) -> None:
+        """Snapshot a PULLBACK shadow episode (bench_type='pullback', 2026-09-09).
+        Resolved ONLY by main.run_pullback via pullback.resolve_open_episode."""
+        try:
+            self.db.execute(
+                """INSERT INTO benched_outcomes
+                   (epic, market_name, direction, benched_at, entry_price,
+                    stop_distance, limit_distance, score, bench_type, status, spread)
+                   VALUES (?, ?, 'BUY', ?, ?, ?, 0, 0, 'pullback', 'OPEN', ?)""",
+                (epic, market_name, benched_at, entry_price, stop_distance, spread),
+            )
+            self.db.commit()
+        except Exception as e:
+            logger.warning(f"Journal: failed to log pullback shadow: {e}")
+
+    @_synchronized
+    def get_open_pullback_shadow(self, epic: str) -> list[dict]:
+        try:
+            rows = self.db.execute(
+                """SELECT * FROM benched_outcomes
+                   WHERE epic=? AND bench_type='pullback' AND status='OPEN'""",
+                (epic,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    def resolve_pullback_shadow(self, row_id: int, status: str, outcome: str,
+                                candles_to_resolve: int, r_multiple: float, exit_price: float) -> None:
+        self.resolve_breakout_shadow(row_id, status, outcome, candles_to_resolve, r_multiple, exit_price)
+
     def resolve_daily_trend_shadow(self, row_id: int, status: str, outcome: str,
                                    candles_to_resolve: int, r_multiple: float, exit_price: float) -> None:
         """Close out a daily-trend shadow episode. Same UPDATE as the breakout

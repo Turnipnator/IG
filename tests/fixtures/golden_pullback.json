@@ -1,0 +1,2349 @@
+{
+ "note": "Pullback-in-uptrend long-only: close>SMA200, enter close<prior 5d low (fill AT close), exit close>prior 5d high or 10 bars (fill at close), 3xATR20 stop (min(open,stop) on gap); generated 2026-09-09 by the sweep engine; entries >= 2005",
+ "config": {
+  "n_in": 5,
+  "n_out": 5,
+  "max_hold": 10,
+  "sma_n": 200,
+  "atr_n": 20,
+  "stop_mult": 3.0
+ },
+ "sp500": [
+  {
+   "entry_date": "2005-01-03",
+   "exit_date": "2005-01-18",
+   "pts": -6.1,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-01-20",
+   "exit_date": "2005-01-31",
+   "pts": 5.86,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-02-22",
+   "exit_date": "2005-02-25",
+   "pts": 27.21,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-03-11",
+   "exit_date": "2005-03-23",
+   "pts": -30.9746,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2005-03-29",
+   "exit_date": "2005-04-07",
+   "pts": 25.78,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-04-14",
+   "exit_date": "2005-04-25",
+   "pts": 0.0499,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-06-23",
+   "exit_date": "2005-07-05",
+   "pts": 4.26,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-08-05",
+   "exit_date": "2005-08-19",
+   "pts": -6.7101,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2005-08-24",
+   "exit_date": "2005-09-01",
+   "pts": 12.0,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-09-14",
+   "exit_date": "2005-09-28",
+   "pts": -10.27,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2005-11-30",
+   "exit_date": "2005-12-14",
+   "pts": 23.26,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-12-27",
+   "exit_date": "2006-01-04",
+   "pts": 16.9199,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-01-18",
+   "exit_date": "2006-02-01",
+   "pts": 4.5299,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2006-02-03",
+   "exit_date": "2006-02-14",
+   "pts": 11.5,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-02-28",
+   "exit_date": "2006-03-14",
+   "pts": 16.8199,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-03-28",
+   "exit_date": "2006-04-05",
+   "pts": 18.3301,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-04-11",
+   "exit_date": "2006-04-18",
+   "pts": 20.7101,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-05-11",
+   "exit_date": "2006-05-17",
+   "pts": -32.1624,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2006-05-18",
+   "exit_date": "2006-05-26",
+   "pts": 18.35,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-09-07",
+   "exit_date": "2006-09-13",
+   "pts": 24.0499,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-11-01",
+   "exit_date": "2006-11-07",
+   "pts": 15.0299,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-11-27",
+   "exit_date": "2006-12-04",
+   "pts": 27.16,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-12-22",
+   "exit_date": "2007-01-10",
+   "pts": 4.09,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2007-02-09",
+   "exit_date": "2007-02-14",
+   "pts": 17.24,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-02-27",
+   "exit_date": "2007-03-13",
+   "pts": -21.0901,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2007-05-10",
+   "exit_date": "2007-05-18",
+   "pts": 31.28,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-05-24",
+   "exit_date": "2007-06-01",
+   "pts": 28.83,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-06-07",
+   "exit_date": "2007-06-14",
+   "pts": 32.25,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-06-22",
+   "exit_date": "2007-07-02",
+   "pts": 16.87,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-07-24",
+   "exit_date": "2007-07-27",
+   "pts": -46.4702,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2007-10-16",
+   "exit_date": "2007-10-29",
+   "pts": 2.45,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-06-15",
+   "exit_date": "2009-06-29",
+   "pts": 3.51,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-08-17",
+   "exit_date": "2009-08-21",
+   "pts": 46.4,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-09-01",
+   "exit_date": "2009-09-09",
+   "pts": 35.33,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-09-24",
+   "exit_date": "2009-10-08",
+   "pts": 14.7,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-10-26",
+   "exit_date": "2009-11-06",
+   "pts": 2.3501,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-12-08",
+   "exit_date": "2009-12-14",
+   "pts": 22.17,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-12-17",
+   "exit_date": "2009-12-22",
+   "pts": 21.9401,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-12-31",
+   "exit_date": "2010-01-04",
+   "pts": 17.89,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2010-01-21",
+   "exit_date": "2010-01-29",
+   "pts": -38.5717,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2010-02-04",
+   "exit_date": "2010-02-16",
+   "pts": 31.76,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2010-04-27",
+   "exit_date": "2010-05-06",
+   "pts": -38.5592,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2010-11-12",
+   "exit_date": "2010-11-29",
+   "pts": -11.45,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2011-01-28",
+   "exit_date": "2011-02-01",
+   "pts": 31.25,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2011-02-22",
+   "exit_date": "2011-03-08",
+   "pts": 6.38,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2011-03-10",
+   "exit_date": "2011-03-16",
+   "pts": -44.196,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2011-04-12",
+   "exit_date": "2011-04-20",
+   "pts": 16.2,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2011-05-05",
+   "exit_date": "2011-05-19",
+   "pts": 8.5,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2011-05-23",
+   "exit_date": "2011-05-31",
+   "pts": 27.83,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2011-06-03",
+   "exit_date": "2011-06-17",
+   "pts": -28.66,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2011-07-12",
+   "exit_date": "2011-07-21",
+   "pts": 30.16,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2011-07-27",
+   "exit_date": "2011-08-02",
+   "pts": -48.4263,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2012-03-06",
+   "exit_date": "2012-03-13",
+   "pts": 52.59,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-04-09",
+   "exit_date": "2012-04-17",
+   "pts": 8.5801,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-05-04",
+   "exit_date": "2012-05-17",
+   "pts": -44.546,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2012-05-18",
+   "exit_date": "2012-05-29",
+   "pts": 37.2001,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-06-25",
+   "exit_date": "2012-06-29",
+   "pts": 48.4401,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-07-10",
+   "exit_date": "2012-07-17",
+   "pts": 22.2001,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-08-23",
+   "exit_date": "2012-09-06",
+   "pts": 30.04,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-09-25",
+   "exit_date": "2012-10-04",
+   "pts": 19.8101,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-10-10",
+   "exit_date": "2012-10-17",
+   "pts": 28.35,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-10-23",
+   "exit_date": "2012-11-08",
+   "pts": -35.6,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2012-12-26",
+   "exit_date": "2013-01-02",
+   "pts": 42.5901,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-02-04",
+   "exit_date": "2013-02-08",
+   "pts": 22.2201,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-02-20",
+   "exit_date": "2013-03-05",
+   "pts": 27.8401,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-04-17",
+   "exit_date": "2013-04-23",
+   "pts": 26.77,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-05-31",
+   "exit_date": "2013-06-14",
+   "pts": -4.01,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2013-06-20",
+   "exit_date": "2013-07-05",
+   "pts": 43.7001,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-08-15",
+   "exit_date": "2013-08-29",
+   "pts": -23.1499,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2013-09-25",
+   "exit_date": "2013-10-09",
+   "pts": -42.4513,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2013-11-07",
+   "exit_date": "2013-11-13",
+   "pts": 34.85,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-12-03",
+   "exit_date": "2013-12-17",
+   "pts": -14.15,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2014-01-06",
+   "exit_date": "2014-01-15",
+   "pts": 21.61,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-01-23",
+   "exit_date": "2014-01-27",
+   "pts": -40.3883,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2014-02-03",
+   "exit_date": "2014-02-07",
+   "pts": 55.13,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-03-13",
+   "exit_date": "2014-03-27",
+   "pts": 2.7001,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2014-04-07",
+   "exit_date": "2014-04-21",
+   "pts": 26.85,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-07-31",
+   "exit_date": "2014-08-13",
+   "pts": 16.0499,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-09-09",
+   "exit_date": "2014-09-18",
+   "pts": 22.92,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-09-25",
+   "exit_date": "2014-10-09",
+   "pts": -37.78,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2014-10-10",
+   "exit_date": "2014-10-15",
+   "pts": -63.4453,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2014-12-01",
+   "exit_date": "2014-12-12",
+   "pts": -48.8282,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2014-12-15",
+   "exit_date": "2014-12-18",
+   "pts": 71.6,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-12-31",
+   "exit_date": "2015-01-06",
+   "pts": -58.9183,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2015-01-28",
+   "exit_date": "2015-02-03",
+   "pts": 47.87,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-03-06",
+   "exit_date": "2015-03-18",
+   "pts": 28.24,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-03-25",
+   "exit_date": "2015-04-09",
+   "pts": 30.1299,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-04-17",
+   "exit_date": "2015-04-23",
+   "pts": 31.75,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-04-30",
+   "exit_date": "2015-05-14",
+   "pts": 35.5901,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-05-26",
+   "exit_date": "2015-06-09",
+   "pts": -24.05,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2015-06-26",
+   "exit_date": "2015-07-07",
+   "pts": -50.2913,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2015-07-23",
+   "exit_date": "2015-08-06",
+   "pts": -18.5898,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2015-11-09",
+   "exit_date": "2015-11-20",
+   "pts": 10.5898,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-04-07",
+   "exit_date": "2016-04-13",
+   "pts": 40.5099,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-04-28",
+   "exit_date": "2016-05-10",
+   "pts": 8.5798,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-06-13",
+   "exit_date": "2016-06-23",
+   "pts": 34.26,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-06-24",
+   "exit_date": "2016-07-08",
+   "pts": 92.4899,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-08-02",
+   "exit_date": "2016-08-05",
+   "pts": 25.8401,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-08-26",
+   "exit_date": "2016-09-06",
+   "pts": 17.4399,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-09-09",
+   "exit_date": "2016-09-21",
+   "pts": 35.3101,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-10-11",
+   "exit_date": "2016-10-24",
+   "pts": 14.6001,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-10-28",
+   "exit_date": "2016-11-08",
+   "pts": 13.1501,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-12-01",
+   "exit_date": "2016-12-07",
+   "pts": 50.27,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-12-28",
+   "exit_date": "2017-01-06",
+   "pts": 27.0601,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-03-08",
+   "exit_date": "2017-03-15",
+   "pts": 22.28,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-03-21",
+   "exit_date": "2017-03-30",
+   "pts": 24.04,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-04-13",
+   "exit_date": "2017-04-20",
+   "pts": 26.8901,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-05-17",
+   "exit_date": "2017-05-24",
+   "pts": 47.3599,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-06-27",
+   "exit_date": "2017-07-12",
+   "pts": 23.8701,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-08-10",
+   "exit_date": "2017-08-24",
+   "pts": 0.76,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2017-11-15",
+   "exit_date": "2017-11-21",
+   "pts": 34.4099,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-12-29",
+   "exit_date": "2018-01-02",
+   "pts": 22.2,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-01-30",
+   "exit_date": "2018-02-02",
+   "pts": -57.5336,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2018-02-05",
+   "exit_date": "2018-02-09",
+   "pts": -81.0018,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2018-03-01",
+   "exit_date": "2018-03-08",
+   "pts": 61.3,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-03-19",
+   "exit_date": "2018-03-23",
+   "pts": -113.0732,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2018-04-24",
+   "exit_date": "2018-05-08",
+   "pts": 37.3599,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2018-05-29",
+   "exit_date": "2018-06-01",
+   "pts": 44.76,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-06-25",
+   "exit_date": "2018-07-06",
+   "pts": 42.75,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-08-13",
+   "exit_date": "2018-08-20",
+   "pts": 35.1201,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-10-04",
+   "exit_date": "2018-10-10",
+   "pts": -59.3085,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2019-03-22",
+   "exit_date": "2019-04-01",
+   "pts": 66.48,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2019-05-07",
+   "exit_date": "2019-05-13",
+   "pts": -79.3839,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2019-05-23",
+   "exit_date": "2019-06-05",
+   "pts": 3.9099,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2019-07-17",
+   "exit_date": "2019-07-24",
+   "pts": 35.1401,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2019-07-31",
+   "exit_date": "2019-08-05",
+   "pts": -82.3098,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2019-08-23",
+   "exit_date": "2019-09-05",
+   "pts": 128.8899,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2019-09-24",
+   "exit_date": "2019-10-03",
+   "pts": -94.7162,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2019-12-03",
+   "exit_date": "2019-12-12",
+   "pts": 75.3701,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2020-01-24",
+   "exit_date": "2020-01-31",
+   "pts": -66.8342,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2020-02-21",
+   "exit_date": "2020-02-24",
+   "pts": -88.8556,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2020-02-25",
+   "exit_date": "2020-02-27",
+   "pts": -116.967,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2020-06-24",
+   "exit_date": "2020-07-01",
+   "pts": 65.53,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2020-09-03",
+   "exit_date": "2020-09-11",
+   "pts": -129.6546,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2020-09-21",
+   "exit_date": "2020-09-28",
+   "pts": 70.54,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2020-10-19",
+   "exit_date": "2020-10-29",
+   "pts": -165.7048,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2021-01-15",
+   "exit_date": "2021-01-20",
+   "pts": 83.6001,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-01-27",
+   "exit_date": "2021-02-04",
+   "pts": 120.97,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-02-22",
+   "exit_date": "2021-03-04",
+   "pts": -126.3301,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2021-05-04",
+   "exit_date": "2021-05-07",
+   "pts": 67.9399,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-05-12",
+   "exit_date": "2021-05-24",
+   "pts": 134.0098,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-06-18",
+   "exit_date": "2021-06-24",
+   "pts": 100.04,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-07-16",
+   "exit_date": "2021-07-23",
+   "pts": 84.6299,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-08-18",
+   "exit_date": "2021-08-25",
+   "pts": 95.9199,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-09-09",
+   "exit_date": "2021-09-20",
+   "pts": -92.0129,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2021-09-30",
+   "exit_date": "2021-10-07",
+   "pts": 92.2197,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-11-26",
+   "exit_date": "2021-12-07",
+   "pts": 92.1299,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-12-20",
+   "exit_date": "2021-12-27",
+   "pts": 223.1699,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2022-01-05",
+   "exit_date": "2022-01-19",
+   "pts": -167.6527,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2022-01-20",
+   "exit_date": "2022-01-24",
+   "pts": -194.0488,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2023-02-09",
+   "exit_date": "2023-02-24",
+   "pts": -111.46,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2023-04-25",
+   "exit_date": "2023-04-28",
+   "pts": 97.8501,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2023-05-04",
+   "exit_date": "2023-05-17",
+   "pts": 97.55,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2023-06-23",
+   "exit_date": "2023-06-29",
+   "pts": 48.1099,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2023-08-02",
+   "exit_date": "2023-08-16",
+   "pts": -109.0601,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2023-08-17",
+   "exit_date": "2023-08-29",
+   "pts": 127.27,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2023-09-20",
+   "exit_date": "2023-09-26",
+   "pts": -125.684,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2023-10-03",
+   "exit_date": "2023-10-09",
+   "pts": 106.21,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2023-10-19",
+   "exit_date": "2023-10-27",
+   "pts": -158.4661,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2024-01-03",
+   "exit_date": "2024-01-10",
+   "pts": 78.6401,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-01-31",
+   "exit_date": "2024-02-02",
+   "pts": 112.96,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-04-04",
+   "exit_date": "2024-04-17",
+   "pts": -136.0083,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2024-04-19",
+   "exit_date": "2024-04-26",
+   "pts": 132.73,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-05-23",
+   "exit_date": "2024-06-05",
+   "pts": 86.1899,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-07-18",
+   "exit_date": "2024-07-25",
+   "pts": -146.9653,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2024-08-02",
+   "exit_date": "2024-08-05",
+   "pts": -210.3342,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2024-09-03",
+   "exit_date": "2024-09-11",
+   "pts": 25.1997,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-10-23",
+   "exit_date": "2024-11-06",
+   "pts": 131.6201,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-11-15",
+   "exit_date": "2024-11-22",
+   "pts": 98.7197,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-12-18",
+   "exit_date": "2025-01-03",
+   "pts": 70.3101,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2025-01-10",
+   "exit_date": "2025-01-17",
+   "pts": 169.6201,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-02-21",
+   "exit_date": "2025-03-03",
+   "pts": -191.0726,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2025-03-04",
+   "exit_date": "2025-03-11",
+   "pts": -238.5497,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2025-05-21",
+   "exit_date": "2025-06-03",
+   "pts": 125.7603,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-06-13",
+   "exit_date": "2025-06-24",
+   "pts": 115.21,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-08-01",
+   "exit_date": "2025-08-12",
+   "pts": 207.75,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-08-20",
+   "exit_date": "2025-08-27",
+   "pts": 85.6201,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-09-02",
+   "exit_date": "2025-09-11",
+   "pts": 171.9302,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-09-25",
+   "exit_date": "2025-10-01",
+   "pts": 106.48,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-10-10",
+   "exit_date": "2025-10-20",
+   "pts": 182.6201,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-11-04",
+   "exit_date": "2025-11-11",
+   "pts": 75.0601,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-11-18",
+   "exit_date": "2025-11-26",
+   "pts": 195.29,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-12-16",
+   "exit_date": "2025-12-22",
+   "pts": 78.2305,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-12-31",
+   "exit_date": "2026-01-06",
+   "pts": 99.3198,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2026-01-20",
+   "exit_date": "2026-01-27",
+   "pts": 181.7402,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2026-02-05",
+   "exit_date": "2026-02-20",
+   "pts": 111.1099,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2026-03-13",
+   "exit_date": "2026-03-27",
+   "pts": -272.5876,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2026-06-05",
+   "exit_date": "2026-06-15",
+   "pts": 170.5498,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2026-06-23",
+   "exit_date": "2026-06-30",
+   "pts": 133.8999,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2026-07-17",
+   "exit_date": "2026-07-31",
+   "pts": 32.0303,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2026-08-18",
+   "exit_date": "2026-08-27",
+   "pts": 39.2305,
+   "reason": "channel"
+  }
+ ],
+ "nasdaq100": [
+  {
+   "entry_date": "2005-01-04",
+   "exit_date": "2005-01-19",
+   "pts": -26.1799,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2005-01-20",
+   "exit_date": "2005-01-31",
+   "pts": 5.0699,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-02-22",
+   "exit_date": "2005-03-07",
+   "pts": 51.13,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-03-16",
+   "exit_date": "2005-03-30",
+   "pts": 5.51,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-06-07",
+   "exit_date": "2005-06-21",
+   "pts": 5.36,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2005-06-23",
+   "exit_date": "2005-07-08",
+   "pts": 17.3201,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-08-05",
+   "exit_date": "2005-08-19",
+   "pts": -27.87,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2005-08-24",
+   "exit_date": "2005-09-06",
+   "pts": 35.5601,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-09-14",
+   "exit_date": "2005-09-28",
+   "pts": -20.8199,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2005-10-06",
+   "exit_date": "2005-10-19",
+   "pts": 16.67,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-10-27",
+   "exit_date": "2005-11-02",
+   "pts": 53.91,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-11-30",
+   "exit_date": "2005-12-02",
+   "pts": 36.5399,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2005-12-19",
+   "exit_date": "2006-01-04",
+   "pts": 31.47,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-01-18",
+   "exit_date": "2006-02-01",
+   "pts": -3.6,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2006-02-03",
+   "exit_date": "2006-02-16",
+   "pts": 24.08,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-03-07",
+   "exit_date": "2006-03-14",
+   "pts": 20.13,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-04-11",
+   "exit_date": "2006-04-19",
+   "pts": 29.64,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-05-01",
+   "exit_date": "2006-05-15",
+   "pts": -66.2221,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2006-11-01",
+   "exit_date": "2006-11-07",
+   "pts": 33.88,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2006-11-27",
+   "exit_date": "2006-12-11",
+   "pts": 16.5699,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2006-12-21",
+   "exit_date": "2007-01-09",
+   "pts": 29.35,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2007-01-22",
+   "exit_date": "2007-02-05",
+   "pts": 16.37,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2007-02-27",
+   "exit_date": "2007-03-13",
+   "pts": -33.79,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2007-05-10",
+   "exit_date": "2007-05-21",
+   "pts": 35.9601,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-05-24",
+   "exit_date": "2007-05-31",
+   "pts": 53.59,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-06-07",
+   "exit_date": "2007-06-14",
+   "pts": 42.37,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-06-25",
+   "exit_date": "2007-07-02",
+   "pts": 41.22,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-07-24",
+   "exit_date": "2007-07-31",
+   "pts": -65.2392,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2007-08-15",
+   "exit_date": "2007-08-22",
+   "pts": 71.85,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-10-19",
+   "exit_date": "2007-10-23",
+   "pts": 74.0999,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-11-07",
+   "exit_date": "2007-11-09",
+   "pts": -107.9099,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2007-11-12",
+   "exit_date": "2007-11-27",
+   "pts": 51.6,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2007-12-17",
+   "exit_date": "2007-12-21",
+   "pts": 90.97,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2007-12-31",
+   "exit_date": "2008-01-04",
+   "pts": -113.2864,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2009-06-15",
+   "exit_date": "2009-06-26",
+   "pts": 23.24,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-07-06",
+   "exit_date": "2009-07-13",
+   "pts": 6.6899,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-08-06",
+   "exit_date": "2009-08-20",
+   "pts": 13.9299,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2009-09-01",
+   "exit_date": "2009-09-08",
+   "pts": 58.9701,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-09-24",
+   "exit_date": "2009-10-08",
+   "pts": 8.03,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-10-27",
+   "exit_date": "2009-11-05",
+   "pts": -1.37,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2009-12-08",
+   "exit_date": "2009-12-21",
+   "pts": 56.0601,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2010-01-12",
+   "exit_date": "2010-01-22",
+   "pts": -67.2094,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2010-01-28",
+   "exit_date": "2010-02-11",
+   "pts": 4.64,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2010-05-04",
+   "exit_date": "2010-05-06",
+   "pts": -86.1752,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2010-06-23",
+   "exit_date": "2010-06-30",
+   "pts": -128.6185,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2010-10-04",
+   "exit_date": "2010-10-08",
+   "pts": 51.7001,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2010-11-12",
+   "exit_date": "2010-11-24",
+   "pts": 22.5701,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2011-01-20",
+   "exit_date": "2011-01-27",
+   "pts": 43.99,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2011-02-22",
+   "exit_date": "2011-03-03",
+   "pts": 48.8999,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2011-03-10",
+   "exit_date": "2011-03-24",
+   "pts": 27.8,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2011-04-12",
+   "exit_date": "2011-04-20",
+   "pts": 59.46,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2011-05-16",
+   "exit_date": "2011-05-31",
+   "pts": 34.6899,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2011-06-03",
+   "exit_date": "2011-06-16",
+   "pts": -88.3011,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2011-07-12",
+   "exit_date": "2011-07-19",
+   "pts": 54.3799,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2011-07-27",
+   "exit_date": "2011-08-03",
+   "pts": -105.5777,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2012-03-06",
+   "exit_date": "2012-03-13",
+   "pts": 108.48,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-04-10",
+   "exit_date": "2012-04-24",
+   "pts": -56.3901,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2012-05-03",
+   "exit_date": "2012-05-08",
+   "pts": -107.7894,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2012-05-15",
+   "exit_date": "2012-05-30",
+   "pts": -43.3501,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2012-06-01",
+   "exit_date": "2012-06-06",
+   "pts": 87.49,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-06-25",
+   "exit_date": "2012-06-29",
+   "pts": 82.1799,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-07-10",
+   "exit_date": "2012-07-18",
+   "pts": 40.3501,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-07-25",
+   "exit_date": "2012-08-03",
+   "pts": 126.8,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-09-25",
+   "exit_date": "2012-10-04",
+   "pts": 24.0701,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2012-10-09",
+   "exit_date": "2012-10-23",
+   "pts": -75.8999,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2012-10-24",
+   "exit_date": "2012-11-09",
+   "pts": -71.45,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2013-02-04",
+   "exit_date": "2013-02-08",
+   "pts": 59.8801,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-02-20",
+   "exit_date": "2013-03-05",
+   "pts": 59.26,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-04-05",
+   "exit_date": "2013-04-10",
+   "pts": 87.46,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-04-17",
+   "exit_date": "2013-04-25",
+   "pts": 66.6799,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-06-05",
+   "exit_date": "2013-06-18",
+   "pts": 58.9502,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-06-20",
+   "exit_date": "2013-07-05",
+   "pts": 72.8899,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-07-19",
+   "exit_date": "2013-07-26",
+   "pts": 31.3,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-08-15",
+   "exit_date": "2013-08-22",
+   "pts": 25.5901,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-08-27",
+   "exit_date": "2013-09-04",
+   "pts": 64.96,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-10-08",
+   "exit_date": "2013-10-14",
+   "pts": 102.1499,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-11-07",
+   "exit_date": "2013-11-13",
+   "pts": 84.1501,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2013-12-12",
+   "exit_date": "2013-12-20",
+   "pts": 70.8999,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-01-03",
+   "exit_date": "2014-01-14",
+   "pts": 41.9199,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-01-24",
+   "exit_date": "2014-02-03",
+   "pts": -104.8055,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2014-03-13",
+   "exit_date": "2014-03-27",
+   "pts": -88.3601,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2014-04-04",
+   "exit_date": "2014-04-21",
+   "pts": 20.5701,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-05-07",
+   "exit_date": "2014-05-12",
+   "pts": 66.26,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-07-31",
+   "exit_date": "2014-08-13",
+   "pts": 56.7,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-09-15",
+   "exit_date": "2014-09-18",
+   "pts": 73.1902,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-09-25",
+   "exit_date": "2014-10-09",
+   "pts": -38.5,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2014-10-10",
+   "exit_date": "2014-10-15",
+   "pts": -155.1468,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2014-12-12",
+   "exit_date": "2014-12-19",
+   "pts": 82.5,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2014-12-31",
+   "exit_date": "2015-01-15",
+   "pts": -148.4192,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2015-01-28",
+   "exit_date": "2015-02-05",
+   "pts": 115.8003,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-03-06",
+   "exit_date": "2015-03-18",
+   "pts": 23.27,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-03-25",
+   "exit_date": "2015-04-09",
+   "pts": 74.6602,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-04-17",
+   "exit_date": "2015-04-21",
+   "pts": 84.1802,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-04-30",
+   "exit_date": "2015-05-14",
+   "pts": 80.79,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-05-26",
+   "exit_date": "2015-05-27",
+   "pts": 73.1001,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-06-08",
+   "exit_date": "2015-06-18",
+   "pts": 100.3403,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-06-26",
+   "exit_date": "2015-07-07",
+   "pts": -136.6385,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2015-07-24",
+   "exit_date": "2015-08-07",
+   "pts": -37.29,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2015-08-20",
+   "exit_date": "2015-08-21",
+   "pts": -178.4454,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2015-11-12",
+   "exit_date": "2015-11-20",
+   "pts": 97.4297,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2015-12-03",
+   "exit_date": "2015-12-17",
+   "pts": -8.6099,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2016-01-04",
+   "exit_date": "2016-01-08",
+   "pts": -198.194,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2016-04-11",
+   "exit_date": "2016-04-13",
+   "pts": 96.0103,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-04-22",
+   "exit_date": "2016-05-04",
+   "pts": -173.0005,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2016-06-10",
+   "exit_date": "2016-06-23",
+   "pts": 6.4302,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-09-09",
+   "exit_date": "2016-09-15",
+   "pts": 138.3599,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-10-11",
+   "exit_date": "2016-10-24",
+   "pts": 88.0601,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-10-28",
+   "exit_date": "2016-11-04",
+   "pts": -158.0,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2016-11-30",
+   "exit_date": "2016-12-08",
+   "pts": 48.3799,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2016-12-30",
+   "exit_date": "2017-01-06",
+   "pts": 143.46,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-03-21",
+   "exit_date": "2017-03-29",
+   "pts": 97.7402,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-04-11",
+   "exit_date": "2017-04-20",
+   "pts": 45.1299,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-05-17",
+   "exit_date": "2017-05-24",
+   "pts": 149.75,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-06-09",
+   "exit_date": "2017-06-21",
+   "pts": 40.4502,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-06-27",
+   "exit_date": "2017-07-10",
+   "pts": 22.5498,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-08-10",
+   "exit_date": "2017-08-24",
+   "pts": 46.25,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2017-09-25",
+   "exit_date": "2017-09-29",
+   "pts": 111.9497,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-11-29",
+   "exit_date": "2017-12-11",
+   "pts": 82.5103,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2017-12-26",
+   "exit_date": "2018-01-02",
+   "pts": 78.1797,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-02-02",
+   "exit_date": "2018-02-05",
+   "pts": -209.4129,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2018-02-08",
+   "exit_date": "2018-02-15",
+   "pts": 488.8198,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-03-19",
+   "exit_date": "2018-03-23",
+   "pts": -336.2303,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2018-03-28",
+   "exit_date": "2018-04-12",
+   "pts": 195.4497,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-04-24",
+   "exit_date": "2018-05-04",
+   "pts": 260.0703,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-06-25",
+   "exit_date": "2018-07-06",
+   "pts": 169.1602,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-07-27",
+   "exit_date": "2018-08-06",
+   "pts": 142.2104,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-08-15",
+   "exit_date": "2018-08-24",
+   "pts": 130.7397,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-09-05",
+   "exit_date": "2018-09-13",
+   "pts": 38.4302,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2018-10-04",
+   "exit_date": "2018-10-10",
+   "pts": -257.821,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2019-05-02",
+   "exit_date": "2019-05-09",
+   "pts": -232.8446,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2019-05-13",
+   "exit_date": "2019-05-28",
+   "pts": -45.75,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2019-05-29",
+   "exit_date": "2019-06-06",
+   "pts": 59.0703,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2019-06-25",
+   "exit_date": "2019-07-01",
+   "pts": 176.6001,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2019-07-31",
+   "exit_date": "2019-08-05",
+   "pts": -338.7598,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2019-08-23",
+   "exit_date": "2019-09-05",
+   "pts": 397.5498,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2019-09-24",
+   "exit_date": "2019-10-08",
+   "pts": -105.77,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2019-12-03",
+   "exit_date": "2019-12-12",
+   "pts": 212.1494,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2020-01-27",
+   "exit_date": "2020-02-04",
+   "pts": 381.8799,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2020-02-21",
+   "exit_date": "2020-02-24",
+   "pts": -391.3906,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2020-02-25",
+   "exit_date": "2020-02-28",
+   "pts": -701.02,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2020-04-21",
+   "exit_date": "2020-04-29",
+   "pts": 579.7598,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2020-06-26",
+   "exit_date": "2020-07-01",
+   "pts": 429.8896,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2020-07-24",
+   "exit_date": "2020-07-31",
+   "pts": 422.75,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2020-08-11",
+   "exit_date": "2020-08-17",
+   "pts": 412.4902,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2020-09-03",
+   "exit_date": "2020-09-08",
+   "pts": -660.4599,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2020-10-19",
+   "exit_date": "2020-11-02",
+   "pts": -549.5898,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2021-01-27",
+   "exit_date": "2021-02-05",
+   "pts": 491.3096,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-02-22",
+   "exit_date": "2021-03-04",
+   "pts": -605.8418,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2021-05-03",
+   "exit_date": "2021-05-11",
+   "pts": -697.0801,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2021-05-12",
+   "exit_date": "2021-05-20",
+   "pts": 492.46,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-06-03",
+   "exit_date": "2021-06-07",
+   "pts": 273.21,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-07-16",
+   "exit_date": "2021-07-22",
+   "pts": 258.79,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-08-18",
+   "exit_date": "2021-08-23",
+   "pts": 454.9004,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-09-10",
+   "exit_date": "2021-09-20",
+   "pts": -445.6432,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2021-09-28",
+   "exit_date": "2021-10-07",
+   "pts": 126.8301,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2021-11-26",
+   "exit_date": "2021-12-10",
+   "pts": 306.4004,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2021-12-14",
+   "exit_date": "2021-12-27",
+   "pts": 652.5996,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2022-01-04",
+   "exit_date": "2022-01-10",
+   "pts": -896.5508,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2022-01-19",
+   "exit_date": "2022-01-24",
+   "pts": -915.4608,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2023-02-09",
+   "exit_date": "2023-02-24",
+   "pts": -411.5195,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2023-04-25",
+   "exit_date": "2023-04-27",
+   "pts": 434.9199,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2023-06-26",
+   "exit_date": "2023-06-30",
+   "pts": 490.1904,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2023-07-21",
+   "exit_date": "2023-08-04",
+   "pts": -150.75,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2023-08-09",
+   "exit_date": "2023-08-23",
+   "pts": 46.3496,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2023-09-07",
+   "exit_date": "2023-09-21",
+   "pts": -564.2793,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2023-09-26",
+   "exit_date": "2023-10-06",
+   "pts": 427.4102,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2023-10-18",
+   "exit_date": "2023-10-26",
+   "pts": -694.0676,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2024-01-02",
+   "exit_date": "2024-01-10",
+   "pts": 249.1113,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-01-31",
+   "exit_date": "2024-02-02",
+   "pts": 505.4902,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-03-15",
+   "exit_date": "2024-03-20",
+   "pts": 431.8594,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-04-02",
+   "exit_date": "2024-04-16",
+   "pts": -408.1191,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2024-04-17",
+   "exit_date": "2024-04-26",
+   "pts": 224.6816,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-05-30",
+   "exit_date": "2024-06-05",
+   "pts": 496.3906,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-06-24",
+   "exit_date": "2024-07-03",
+   "pts": 712.0117,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-07-17",
+   "exit_date": "2024-07-24",
+   "pts": -759.5991,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2024-07-25",
+   "exit_date": "2024-08-05",
+   "pts": -1386.1797,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2024-08-28",
+   "exit_date": "2024-09-11",
+   "pts": -113.4785,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-10-31",
+   "exit_date": "2024-11-06",
+   "pts": 890.9102,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-11-15",
+   "exit_date": "2024-12-02",
+   "pts": 770.4688,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2024-12-18",
+   "exit_date": "2025-01-03",
+   "pts": 116.8398,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2025-01-27",
+   "exit_date": "2025-02-10",
+   "pts": 629.4512,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2025-02-21",
+   "exit_date": "2025-02-27",
+   "pts": -945.5801,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2025-05-21",
+   "exit_date": "2025-06-03",
+   "pts": 582.2207,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-06-13",
+   "exit_date": "2025-06-24",
+   "pts": 559.4805,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-08-01",
+   "exit_date": "2025-08-08",
+   "pts": 847.959,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-08-19",
+   "exit_date": "2025-08-28",
+   "pts": 318.6797,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-09-02",
+   "exit_date": "2025-09-11",
+   "pts": 761.4512,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-10-10",
+   "exit_date": "2025-10-20",
+   "pts": 919.2793,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-11-04",
+   "exit_date": "2025-11-18",
+   "pts": -1008.0468,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2025-11-20",
+   "exit_date": "2025-11-26",
+   "pts": 1182.5586,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-12-12",
+   "exit_date": "2025-12-22",
+   "pts": 264.9688,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2025-12-31",
+   "exit_date": "2026-01-06",
+   "pts": 389.8613,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2026-01-20",
+   "exit_date": "2026-01-27",
+   "pts": 952.1699,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2026-02-03",
+   "exit_date": "2026-02-18",
+   "pts": -439.75,
+   "reason": "time"
+  },
+  {
+   "entry_date": "2026-06-05",
+   "exit_date": "2026-06-15",
+   "pts": 1586.3203,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2026-06-23",
+   "exit_date": "2026-06-30",
+   "pts": 929.0801,
+   "reason": "channel"
+  },
+  {
+   "entry_date": "2026-07-16",
+   "exit_date": "2026-07-29",
+   "pts": -1806.1993,
+   "reason": "stop"
+  },
+  {
+   "entry_date": "2026-08-20",
+   "exit_date": "2026-08-27",
+   "pts": 428.4004,
+   "reason": "channel"
+  }
+ ]
+}
