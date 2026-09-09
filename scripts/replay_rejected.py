@@ -40,7 +40,7 @@ COOLDOWN = pd.Timedelta(minutes=30)
 # spread per epic: benched_outcomes medians (live, at signal time); memory trading-hours figures where verified
 SPREAD = {'IX.D.SPTRD.DAILY.IP': 0.61, 'IX.D.NASDAQ.CASH.IP': 2.28, 'IX.D.NIKKEI.DAILY.IP': 9.63, 'IX.D.HANGSENG.DAILY.IP': 7.11,
           'IX.D.DOW.DAILY.IP': 3.2, 'IX.D.FTSE.DAILY.IP': 1.3, 'IX.D.AIIDX.DAILY.IP': 7.9, 'IX.D.RUSSELL.DAILY.IP': 0.3,
-          'CS.D.USCGC.TODAY.IP': 0.4, 'CS.D.EURUSD.TODAY.IP': 0.6, 'CS.D.GBPUSD.TODAY.IP': 0.9, 'CS.D.BITCOIN.TODAY.IP': 32.7,
+          'CS.D.USCGC.TODAY.IP': 0.4, 'CS.D.EURUSD.TODAY.IP': 0.6, 'CS.D.GBPUSD.TODAY.IP': 0.9,
           'CC.D.CL.USS.IP': 3.0, 'EN.D.CL.Month1.IP': 6.0, 'CC.D.DX.USS.IP': 8.1, 'CO.D.DX.Month1.IP': 8.1}
 
 _IND = {}

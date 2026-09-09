@@ -43,7 +43,6 @@ INSTRUMENT_EPICS: dict[str, tuple[str, ...]] = {
     "Gold":         ("CS.D.USCGC.TODAY.IP",),
     "Dollar Index": ("CC.D.DX.USS.IP",),
     "EUR/USD":      ("CS.D.EURUSD.TODAY.IP",),
-    "Bitcoin":      ("CS.D.BITCOIN.TODAY.IP",),
 }
 
 

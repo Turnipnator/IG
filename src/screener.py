@@ -41,8 +41,7 @@ DISCOVERY_SEARCHES = [
     "Cocoa", "Coffee", "Cotton", "Sugar", "Soybeans", "Wheat", "Corn",
     # Rates
     "T-Note", "T-Bond", "Gilt", "Bund",
-    # Crypto
-    "Bitcoin", "Ethereum",
+    # (no Crypto: the FCA bars crypto derivatives for UK retail accounts — 2026-09-09)
 ]
 
 # EPICs to exclude (known CFD-only or problematic)
