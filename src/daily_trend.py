@@ -12,10 +12,14 @@ instrument", pre-registration of 2026-09-09):
     negative: the short side pays the drift).
 
 Evidence: Gold long-only positive in 30/30 parameter cells and in both 11-year
-halves of 2004-2026 after IG spread + nightly financing (+0.8R/trade, +2.2R/yr,
-z about 2); NASDAQ 30/30 (weaker). What it IS: crash-protected beta — about 40%
-of buy-and-hold with about 15% of its drawdown. What it is NOT: a directional
-edge. Hold is weeks, trade rate about 2.6/yr on Gold.
+halves of 2004-2026 after IG spread + nightly financing (+0.69R/trade, +1.76R/yr,
+PF 2.06 at the MEASURED 5.8%/yr Gold financing rate, re-charged 2026-09-09 on the
+golden trades; the study's +0.87R/+2.3R used 2.9%, a rows-counted-as-nights
+error — research_notes.md "Gold financing rate RE-MEASURED"); NASDAQ 30/30
+(weaker). What it IS: crash-protected beta — about 40% of buy-and-hold with
+about 15% of its drawdown. What it is NOT: a directional edge. Hold is weeks,
+trade rate about 2.6/yr on Gold. Financing is the dominant cost: about 0.35R
+per trade at the measured rate on a 47-night mean hold.
 
 Bar hygiene (prepare_daily): IG's DAY bars for spot Gold roll at 00:00 London
 and include a one-HOUR Sunday stub (Sun 23:00-23:59) that the Yahoo-based

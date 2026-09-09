@@ -18,7 +18,9 @@ Going live is **buying information, not expecting profit**. The measured positio
 
 - Pooled gross breakout edge **+0.191R/trade** (t = 3.85, n = 676, 730d) — real.
 - Measured cost **~0.139R/trade** book-average — about 73% of it. On Gold specifically,
-  all-in cost is only ~0.022–0.042R, so the 73% is a book average, not Gold's number.
+  all-in cost is only ~0.032–0.072R at 1–3 nights (execution 0.012R + financing 0.020R/night,
+  re-measured 2026-09-09 — originally stated 0.022–0.042R at a halved rate), so the 73% is a
+  book average, not Gold's number.
 - Net residual **+0.048R/trade, t = 0.97** — positive on best estimate, statistically
   indistinguishable from zero.
 - Resolving a +0.10R edge at 80% power needs **~2,400 trades ≈ 7 years** at the current
@@ -41,7 +43,7 @@ assumed. Rationale: the pooled gross edge is +0.191R; a cost above 0.10R consume
 than half of it before anything else goes wrong. Cost is the ONLY quantity here measured
 with near-certainty, so it carries the hardest gate.
 
-    PASS  Wall St 0.009 · Gold 0.012 (+0.010/night) · S&P 0.054 · NASDAQ 0.077
+    PASS  Wall St 0.009 · Gold 0.012 (+0.020/night, corrected 2026-09-09) · S&P 0.054 · NASDAQ 0.077
           EUR/USD 0.084 (earns carry) · Crude 0.091
     FAIL  FTSE 0.145 · GBP/USD 0.146 · Hong Kong 0.157 · Russell 0.219
           Japan 0.239 · DXY 0.372

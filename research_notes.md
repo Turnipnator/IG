@@ -1607,6 +1607,16 @@ Specifically:
 
 # Overnight funding: MEASURED from the IG account (2026-08-19)
 
+> **CORRECTION 2026-09-09 — the Gold per-night figure below is HALF the true charge.** The "nights"
+> column counted ROWS: IG posts two rows per instrument-night (Admin Fee + Financing Adjustment), so
+> Gold's £2.80 was 4 nights, not 8. Re-measured on 44 rows since March: Gold **£0.70–0.74/night ≈
+> 5.8–6.1%/yr** on size×price (admin 1.5% + interest 4.3–4.5%) = **0.020R/night** on the breakout stop;
+> all-in 1/2/3-night hold **0.032 / 0.052 / 0.072R** — still under the 0.10R G1 gate. Every calendar
+> night is charged (Friday posts a 3-night row). GBP/USD ≈ −£0.43/night (admin only, interest ≈ 0);
+> EUR/USD ≈ net zero. FF1, FF4, FF5 stand; FF2's "2.9%" and FF3's "0.010R/night" are superseded.
+> Full re-measurement and the daily-trend sensitivity: "Gold financing rate RE-MEASURED (2026-09-09)"
+> at the end of this file.
+
 **Why:** the cost-vs-edge synthesis named DFB overnight financing "the largest single
 unmodelled cost", estimated at 2.7–12.7% of 1R per calendar day (assumed 7.5%/yr on
 notional at 500–1300× implied leverage), i.e. 20–60% of 1R over a 5-day breakout hold,
@@ -1622,9 +1632,9 @@ Interest`, each naming the instrument and the number of nights.
 
 | Instrument | GBP total (180d) | nights | **GBP/night** | as R on the risk actually traded |
 |---|---:|---:|---:|---|
-| Spot Gold | −2.80 | 8 | **−0.350** | **−0.0100 R** (on £35 actual) / −0.0149 (on £23.50) |
-| GBP/USD | −5.68 | 18 | **−0.316** | ≈ −0.0137 R (on £23.11 actual) |
-| EUR/USD | +1.83 | 10 | **+0.183** | ≈ **+0.008 R — a CREDIT** |
+| Spot Gold | −2.80 | **4** (the 8 were rows, not nights — corrected 2026-09-09) | **−0.700** (was −0.350) | **−0.0200 R** (on £35 actual) / −0.030 (on £23.50) |
+| GBP/USD | −5.68 | 18 (rows? — same conflation likely) | **−0.316** | ≈ −0.0137 R (on £23.11 actual) — re-measured 2026-09-09: ≈ −£0.43/night, admin only |
+| EUR/USD | +1.83 | 10 (rows? — same conflation likely) | **+0.183** | ≈ **+0.008 R — a CREDIT** — re-measured 2026-09-09: admin −0.46 / interest +0.46 per night, net ≈ 0 |
 | USD/JPY | +6.34 | 9 | **+0.704** | ≈ **+0.031 R — a CREDIT** |
 | Dollar Index (DXY) | — | 0 | **none** | `CO.D.DX.Month1.IP` is a **future**, not a DFB — no daily financing at all |
 | **All instruments** | **−0.31** | **45** | **−0.007** | ≈ **0** |
@@ -1637,17 +1647,20 @@ reasons, both structural: (a) only **16 of 314 closed trades (5%) were held over
 27 position-nights in total; (b) the FX legs **earn** carry as often as they pay it, and
 the single largest financing row in the account is a **+£6.38 credit** (USD/JPY, 6 nights).
 
-**FF2. But the per-night RATE assumption was roughly right — HIGH.** Gold at size 1.0
-(notional ≈ £4,400) is charged £0.35/night ≈ 2.9%/yr on notional, against the 7.5%
+**FF2. But the per-night RATE assumption was roughly right — HIGH.** *(CORRECTED 2026-09-09: the true
+charge is £0.70/night ≈ 5.8%/yr — rows were counted as nights. The conclusion below still holds against
+the 7.5% assumption; every derived "2.9%" and "0.35" figure is superseded.)* Gold at size 1.0
+(notional ≈ £4,400) is charged ~~£0.35/night ≈ 2.9%/yr~~ **£0.70/night ≈ 5.8%/yr** on notional, against the 7.5%
 assumed. So the synthesis's error was NOT the rate — it was multiplying that rate by a
 hold pattern the bot does not have, and ignoring the credit side entirely.
 
 **FF3. Gold's all-in cost roughly doubles-to-triples, and is still tiny — HIGH.**
-Execution 0.012R + financing 0.010R/night:
+Execution 0.012R + financing ~~0.010R~~ **0.020R**/night (corrected 2026-09-09):
 
-    1-night hold -> 0.022R    2-night -> 0.032R    3-night -> 0.042R    (gross edge +0.191R)
+    1-night hold -> 0.032R    2-night -> 0.052R    3-night -> 0.072R    (gross edge +0.191R)
+    (corrected 2026-09-09; originally stated 0.022 / 0.032 / 0.042R at the halved rate)
 
-Even at three nights Gold's all-in cost is **~22% of the pooled gross edge**, against the
+Even at three nights Gold's all-in cost is **~38% of the pooled gross edge** (corrected 2026-09-09; was ~22%), against the
 book-average 0.139R that produced the headline "cost is 73% of the edge". **The 73% figure
 is a book average dominated by expensive markets (DXY 0.372R); it materially overstates
 the cost problem on the one market that is actually the go-live candidate.**
@@ -1665,7 +1678,7 @@ worst-on-the-book 0.372R execution cost, but does not rescue it.
 The 5%-overnight statistic is a property of the CURRENT book, which is mostly momentum
 (holds minutes). **The go-live recommendation is breakout-only, and breakout holds days —
 overnight exposure would go from 5% of trades to ~100%.** So financing becomes structural
-rather than incidental. At the measured Gold rate that is still only 0.010R/night, but it
+rather than incidental. At the measured Gold rate that is still only 0.020R/night (corrected 2026-09-09), but it
 should be charged per realised hold duration in every future breakout backtest, not
 ignored and not charged at the 7.5%-of-notional estimate.
 
@@ -3239,7 +3252,7 @@ sign consistency reported. Caveat: cash-index "open" prints are partly stale quo
 - Costs: IG trading-hours spread (replay_all SPREAD table; Crude 2.8 pt, DXY 5 pt, BTC 32.7); DFB
   financing per calendar night on notional: indices long (bench+2.5%), short receive (bench−2.5%), bench
   step-function 2004–08 5% · 2009–21 0.5% · 2022 2% · 2023+ 4.5% (LOW confidence; index DFB financing
-  never observed on this account); Gold long 2.9%/yr (MEASURED 08-19), short 0; GBP/USD long −1.8%
+  never observed on this account); Gold long 2.9%/yr (MEASURED 08-19 — **WRONG: rows counted as nights; true rate 5.8%/yr**, verdict re-charged in the 2026-09-09 re-measurement section: +0.69R/trade, PF 2.06, still passes), short 0; GBP/USD long −1.8%
   (measured), short +1.5%; EUR/USD long +1.0% (measured), short −1.5%; Crude/DXY index-like (LOW);
   BTC 12%/yr both sides (LOW; FCA-barred live anyway).
 - R = P&L ÷ (2×ATR20 at entry) for every rule, so cells are comparable. Report n, PF, mean R, ΣR/yr,
@@ -3284,7 +3297,7 @@ FCA-barred live. Long-short index TF is negative everywhere the long-only is pos
 - S&P long-only: −0.11…+0.25, **H1 negative in 30/30.** Japan long-only: positive 30/30 but 36–57% years+ (two
   years carry it) and £1,458 risk/trade at size 1.0.
 **Beta check (study3b):** NASDAQ TF1-L captures 36% of buy-and-hold points in 49% of the time with **15% of B&H max
-drawdown** (903 vs 5,894 pts); Gold TF1-L 43% / 34% / 15% (195 vs 1,333). Financing = 30% (NASDAQ) / 17% (Gold) of
+drawdown** (903 vs 5,894 pts); Gold TF1-L 43% / 34% / 15% (195 vs 1,333). Financing = 30% (NASDAQ) / 17% (Gold; **21% at the corrected 5.8% Gold rate**, re-charged 2026-09-09) of
 gross at the step-function bench rates; **2023–26 at the current ~7%/yr long rate: NASDAQ +12R/7, Gold +21R/11.**
 So what survives is **"be long a secular-drift instrument while it trends, stand aside when it doesn't"** — crash
 protection on beta, not a directional edge. LOW confidence it beats an unleveraged long; MEDIUM-HIGH it is positive-EV
@@ -3435,3 +3448,63 @@ criteria's max-2-per-equity-group rule applies; S&P + NASDAQ is the natural pair
 - **Suggested next action (user decision):** build pullback-in-uptrend as a third strategy family (same
   once-a-day architecture as daily-trend, evaluated at the US cash close), S&P 500 + NASDAQ 100, long-only,
   sized to a fixed £ risk (indices have no size floor) — live on demo, like Gold.
+
+
+---
+
+# Gold financing rate RE-MEASURED (2026-09-09) — the 08-19 figure was half the true charge
+
+**Why:** the 08-19 table reported Gold at £0.35/night ≈ 2.9%/yr and the 09-09 daily-TF study charged
+that rate. A read-only probe of `/history/transactions` on 09-09 showed £0.70–0.74/night.
+
+**Source:** `/history/transactions?type=ALL` 2026-03-01→09-10 in 30-day pages (read-only, demo, run
+inside the container): 410 rows = 366 DEAL, 35 WITH, 9 DEPO; **44 financing rows, net +£2.12** (USD/JPY
++£13.78 and EUR/USD +£3.20 credits outweigh Gold −£7.13 and GBP/USD −£6.42).
+
+**Cause of the 08-19 error — HIGH.** IG posts TWO rows per instrument-night: `Daily Admin Fee - FX
+Interest for N day Spot Gold` and `Daily Financing Adjustment - FX Interest for N day Spot Gold`. The
+08-19 table's "8 nights" were 8 ROWS = 4 nights (£2.80 = 4 × (0.52 + 0.18)). Every per-night figure in
+that table is suspect by the same factor; FF1/FF4/FF5 (portfolio total ≈ 0, FX credits, DXY future)
+are unaffected. NB: DEAL rows' `reference` is the CLOSING deal id, not the journal's opening `deal_id` —
+any join to the journal must go via instrument + time window, not deal id.
+
+## Measured Gold rate (size 1.0, notional = size × price ≈ £4,300–4,460)
+
+| row | £/night | %/yr on notional |
+|---|---:|---:|
+| Admin Fee | −0.18 … −0.19 | 1.5% |
+| Financing Adjustment (interest) | −0.52 … −0.55 | 4.3–4.5% |
+| **all-in** | **−0.70 … −0.74** | **5.8–6.1%** |
+
+Every calendar night is charged: Friday posts a 3-night row (08-24: −1.61 / −0.57). Trade #315 (Gold
+breakout, 6 nights, +£160.56) paid £4.33 ≈ 0.11R on a £40 R. Per night ≈ **0.020R** on the breakout's
+2×ATR stop (was stated 0.010R). Breakout all-in cost at 1/2/3 nights = 0.032 / 0.052 / 0.072R — G1
+(≤0.10R) still passes; the typical 1.2-night hold ≈ 0.036R.
+
+Other instruments, per night: GBP/USD admin −£0.43, interest ≈ 0 (15 nights); EUR/USD admin −£0.46,
+interest +£0.46 (net ≈ 0); Crude DFB 09-07: basis +£1.82, admin −£0.17 (one observation).
+**Index DFB financing: still never observed** — no index position has been held overnight on this
+account; the first S&P/NASDAQ pullback hold will produce the row. Read it then.
+
+## Daily-trend Gold verdict re-charged at the measured rate
+
+Method: the 56 trades in `tests/fixtures/golden_daily_trend_gold.json` (entries ≥2005, next-open
+fills) re-costed as nights × entry close × rate/365 at size 1.0, spread 0.30 pt, R = 2×ATR20 at entry
+from `gc_f_daily.csv`. The 2.9% row reproduces the study headline (+0.87R / PF 2.4 / +2.3R/yr), so the
+comparison is like for like. Mean hold 47 nights (median 28, max 199); mean R £33 over the period.
+
+| rate | net/trade | PF | R/yr | H1 (2004–14) / H2 (2015–26) | 2023–26 | financing / gross wins |
+|---|---:|---:|---:|---|---|---:|
+| 2.9% (as studied) | +0.88R | 2.40 | +2.23 | +1.09 / +0.69 | +1.91R, PF 4.1 | 10% |
+| **5.8% (measured)** | **+0.69R** | **2.06** | **+1.76** | **+0.91 / +0.50** | +1.71R, PF 3.7 | **21%** |
+| 7.0% | +0.62R | 1.92 | +1.57 | | | 25% |
+
+Years positive 64% at both rates. **Verdict survives: both halves positive, PF ≈ 2.** What changes is
+the cost picture — at a 47-night mean hold, financing is ≈ **0.35R per trade**, the dominant cost by
+~30× over the spread. `src/daily_trend.py`'s docstring now quotes the corrected figures.
+
+**No live config change.** Gold daily-trend stays live; Gold breakout still passes G1.
+**Records corrected 2026-09-09:** the 08-19 table + FF2/FF3 (inline), the Q3 cost line, the
+`daily_trend.py` docstring, and `GO_LIVE_CRITERIA.md` (Gold all-in 0.032–0.072R at 1–3 nights; the G1
+table's Gold financing 0.010→0.020/night) — a factual correction that changes no gate outcome, made at
+the owner's instruction.
