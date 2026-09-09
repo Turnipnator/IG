@@ -102,6 +102,20 @@ down: IG's 1.0 minimum is the floor.
 - **FTSE, Russell, GBP/USD, DXY, Crude, EUR/USD, AI Index** — fail two or more gates.
 - **All breakout markets except Gold** — fail G3 badly (n = 2–9).
 
+### Status update 2026-09-09 (recorded per §7.1; no gate changed)
+- **S&P 500 and NASDAQ 100 momentum: Tier-1 records went negative** — post-gate S&P −£36.33 over 15, NASDAQ
+  −£23.00 over 11 (§6 stop condition: "live record goes negative over its own next 20 trades"). Demoted to
+  shadow 2026-09-09 together with Japan and Hong Kong momentum. Root cause, not variance: the momentum
+  signal has no forward information (mean move after signal ≈ 0 ATR at every horizon, n=1,078, two
+  populations; `research_notes.md` 2026-09-09). No exit/stop/entry variant tested is positive. Nothing is
+  grandfathered: momentum re-enters only by passing §2 on a NEW signal.
+- **Index breakout on IG-native data (3-month archive, `scripts/backtest_index_breakout_ignative.py` +
+  HTF ladder): negative under NONE/HOUR/DAY gates, negative even frictionless** (pooled HOUR −60R/150 at zero
+  cost). Stays observer-only; observer switched to DAY HTF so the record measures the promotable config.
+- **Gold breakout remains the only pair positive on both a trustworthy backtest and its IG-native record**
+  (live 9t +2.19R; archive replay PF 1.13–1.29). Stays live, Tier 2 as before. Crude's discretionary /mode
+  flip reverted to breakout-shadow (730d PF 0.87–0.93, live 2t −1R).
+
 **Note the tension honestly: no market has both trustworthy backtest evidence AND
 sufficient live evidence.** Gold has the first, S&P/NASDAQ have the second. That is the
 actual state of knowledge, and no analysis available closes it.

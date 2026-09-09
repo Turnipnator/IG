@@ -690,6 +690,16 @@ MARKETS = [
         epic="IX.D.SPTRD.DAILY.IP",
         name="S&P 500",
         sector="Indices",
+        shadow_only=True,  # 2026-09-09 v3 review: index MOMENTUM demoted to shadow. The 5-min
+                           # EMA-alignment signal carries no forward information (mean move after
+                           # a signal ≈ 0 ATR at every horizon 3–96 candles, n=1,078 across traded
+                           # + rejected signals); lifetime momentum −£447/318t, 2 positive months
+                           # of 7; no stop/exit/entry variant tested is positive; post-gate S&P
+                           # −£36.33/15t met GO_LIVE_CRITERIA §6. research_notes.md 2026-09-09.
+                           # Signals keep generating and benching.
+        htf_resolution="DAY",  # 2026-09-09: was the inherited HOUR. The breakout OBSERVER on this
+                               # market now gates on the daily EMA9/21 (v3 items 15b/17: the
+                               # instrumentation must model the config that could be promoted).
         min_stop_distance=2.0,  # Raised from 1.0 — cap was 20pts, ATR*1.5 can exceed that
         default_size=1.0,
         min_confidence=0.55,   # Raised from 0.4 for quality entries
@@ -704,6 +714,9 @@ MARKETS = [
         epic="IX.D.NASDAQ.CASH.IP",
         name="NASDAQ 100",
         sector="Indices",
+        shadow_only=True,  # 2026-09-09 v3 review: momentum demoted to shadow — see S&P 500 note.
+                           # Post-gate −£23.00/11t; same empty signal (research_notes.md 2026-09-09).
+        htf_resolution="DAY",  # 2026-09-09: was HOUR; breakout observer measures the DAY gate (15b/17).
         min_stop_distance=4.0,
         default_size=0.2,
         min_confidence=0.55,
@@ -810,6 +823,7 @@ MARKETS = [
                            # long/short mix. Signals keep logging + resolving via
                            # benched_outcomes; re-promote only if the shadow
                            # record turns clearly positive.
+        htf_resolution="DAY",  # 2026-09-09: was HOUR; breakout observer measures the DAY gate (15b/17).
         min_stop_distance=4.0,
         default_size=0.1,
         min_confidence=0.55,
@@ -834,6 +848,7 @@ MARKETS = [
                            # 6wk IG-archive replay (n=3, PF 1.07 ≈ breakeven). Signals
                            # keep logging + resolving via benched_outcomes; re-promote
                            # only if the shadow record turns clearly positive.
+        htf_resolution="DAY",  # 2026-09-09: was HOUR; breakout observer measures the DAY gate (15b/17).
         min_stop_distance=1.0,
         default_size=1.0,
         min_confidence=0.55,
@@ -865,6 +880,7 @@ MARKETS = [
                            # since long-only deployed, so it's untested. Shadow tests
                            # long-only risk-free while the archive (our only data source
                            # for this exotic — no Yahoo proxy) keeps building.
+        htf_resolution="DAY",  # 2026-09-09: was HOUR; breakout observer measures the DAY gate (15b/17).
         min_stop_distance=1.0,
         default_size=1.0,
         min_confidence=0.55,
@@ -917,6 +933,11 @@ MARKETS = [
         epic="IX.D.NIKKEI.DAILY.IP",
         name="Japan 225",
         sector="Indices",
+        shadow_only=True,  # 2026-09-09 v3 review: momentum demoted to shadow — see S&P 500 note.
+                           # Also the type specimen of the cash-open leak: 09-09 01:00 BST SELL
+                           # (= Tokyo 09:00 open) stopped in 85 s; the open candle runs 3.3× the
+                           # pre-open ATR (median, 61 sessions) against a 1.5×ATR stop.
+        htf_resolution="DAY",  # 2026-09-09: was HOUR; breakout observer measures the DAY gate (15b/17).
         min_stop_distance=20.0,
         default_size=0.5,
         min_confidence=0.55,
@@ -929,6 +950,10 @@ MARKETS = [
         epic="IX.D.HANGSENG.DAILY.IP",
         name="Hong Kong HS50",
         sector="Indices",
+        shadow_only=True,  # 2026-09-09 v3 review: momentum demoted to shadow — see S&P 500 note.
+                           # HK was +£33 post-gate on 5 trades, but the signal is the same empty
+                           # generator and it fails G1 on cost (0.157R); shadow keeps the record.
+        htf_resolution="DAY",  # 2026-09-09: was HOUR; breakout observer measures the DAY gate (15b/17).
         min_stop_distance=20.0,
         default_size=0.5,
         min_confidence=0.55,
@@ -1037,6 +1062,10 @@ MARKETS = [
         epic="CS.D.USCGC.TODAY.IP",
         name="Gold",
         sector="Commodities",
+        default_mode="breakout",  # 2026-09-09: config is the truth (was only a /mode override since
+                                  # 07-24/08-13). Gold breakout is the one pair with positive evidence
+                                  # on BOTH the 730d backtest (DAY HTF PF 1.4–1.5) and its IG-native
+                                  # record (live 9t +2.19R; archive replay PF 1.13–1.29).
         min_stop_distance=2.0,  # Raised from 1.0 — cap was 20pts (20x), ATR*2.5 = 25-35, every trade capped
         default_size=1.0,      # IG minimum is 1.0 per point (was 0.1 - all trades rejected!)
         min_confidence=0.55,   # Lowered 0.60→0.55 (2026-06-30): the 0.60 gate threw away

@@ -3003,3 +3003,170 @@ once Sept 30 + 5 bars exist (≈ Oct 7). The "quiet after crosses" observation i
 the same way (Gold cross-date `mag5` < September non-cross median). If the reader has sheets
 from BEFORE June, those are true out-of-sample for the dates themselves and are worth more
 than any further re-cut of Jun–Aug.
+
+---
+
+# Blocked-signal replay, 2026-09-06/07 (Labor Day session)
+
+## Question
+Nothing traded from Thu 09-04 to Mon 09-07 16:50 BST. Of the signals the gates refused
+(Japan 225 BUY ×5 "Regime BEARISH blocks BUY"; S&P 500 SELL ×5 and FTSE 100 SELL ×12
+"Direction-restricted (BUY-only)"), would any have been a winning trade?
+
+## Hypotheses
+H1 The gates cost money: at least one refused signal would have won.
+H2 The gates were neutral or saved money on this sample.
+H3 The blocking gate is not the binding one — another gate would have refused the same
+   signal anyway (hours, shadow_only, confidence).
+
+## Method
+`scratchpad/replay_blocked.py` on the IG 5m archive (mid prices), live rules: ATR×profile
+stop with min_stop floor and close×0.05 cap, R:R limit, BE at 0.7R (stop→entry), ATR×1.5
+trail after BE, RSI-extreme exit, MACD-5 exit suppressed on the entry candle, barriers on
+candle high/low with stop-first tie-break, entry at next candle open, spread charged once
+(S&P 0.61, Japan 9.63, FTSE 1.0 assumed). Sensitivity pass with the bench resolver's
+rules (MACD-3, no BE/trail). Only the FIRST signal of each cluster is a trade; follow-ons
+inside the hold or the 6-candle re-entry cooldown are not.
+
+## Evidence
+- H3 is decisive for Japan: its window is 00–08 UTC; all five BUYs were at 22:50 UTC (Sun)
+  or 14:15–14:25 UTC (Mon). Regime is checked first (main.py:1762) and hours after
+  (:1852), so the log shows "Regime" but the hours gate would have refused them regardless.
+- Regime gate scope: `if market_config.strategy == "indices"` — Japan, HK, Wall St, AI Index
+  (and the Bitcoin placeholder). S&P (indices_selective) and NASDAQ (indices_wide)
+  are NOT regime-gated; the code comment "(S&P, NASDAQ)" at main.py:1762 is stale.
+- FTSE is shadow_only; the direction check precedes the shadow check, so lifting BUY-only
+  would only have benched it. 11 of its 12 SELLs were outside its 08–17 UTC window anyway.
+- Replay (LIVE rules → RESOLVER rules), net of spread, £ at ≈£23.1/R:
+  | Signal | Gate | Would trade? | LIVE | RESOLVER |
+  | Japan BUY Sun 23:50 78% | regime (+hours) | no | LOSS −1.08R (−£25) stop | LOSS −0.42R |
+  | Japan BUY Mon 15:15 74% | regime (+hours) | no | WIN +0.40R (+£9) macd-5 | LOSS −0.65R |
+  | S&P SELL Mon 11:05 63% | BUY-only | YES | LOSS −0.12R (−£3) macd-5 | LOSS −0.29R |
+  | S&P SELL Mon 16:35 65% | BUY-only | yes | OPEN +0.12R gross @16:50 | FLAT −0.04R |
+  | FTSE SELL Mon 16:40 56% | BUY-only (+shadow) | no | OPEN +0.42R gross @16:50 | WIN +0.49R |
+- S&P cost: holiday ATR 1.98 → stop 2.97pt → the 0.61pt spread is 0.21R. Any S&P trade
+  on a day like this starts a fifth of a stop behind.
+
+## Conclusion
+H2/H3 supported, H1 not. The only refused signals that could actually have been placed
+(S&P SELLs) were flat-to-losing under both exit models; the Japan pair nets −0.7R under
+live rules and −1.1R under resolver rules, and were hours-blocked anyway. Nothing here
+argues for touching the regime gate or S&P long-only.
+Confidence: MEDIUM on the individual replays (candle-level BE/trail approximates tick
+logic; entry at next open; spreads assumed), HIGH on the gate-order/hours finding (code
++ rejected_signals timestamps), LOW as evidence about the gates in general — five
+signals on a US-holiday session are an anecdote, not a sample.
+
+## Next steps
+- Nothing to change. If the question recurs, extend `replay_blocked.py` to every
+  `Regime BEARISH blocks BUY` / `Direction-restricted` row in rejected_signals (2,608 rows
+  back to spring) and report per-gate expectancy with n — that is a real test; this is not.
+- Fix the stale comment at main.py:1762 when next editing that function (cosmetic).
+
+## Addendum 2026-09-08 (day 2 of the blocked-signal replay, run during the 12:31 BST healthcheck)
+
+Fresh archive tails (to 12:20 BST). Same script, same rules (LIVE = MACD-5 + BE + ATR trail; RESOLVER = MACD-3, no BE). Net of spread; ≈£23/R.
+
+| Signal | Placeable? | LIVE | RESOLVER |
+|---|---|---|---|
+| Japan BUY 09-07 23:20 75% (regime) | No — 22:20 UTC, outside 00–08 | LOSS −1.20R (stop in 15 min) | LOSS −1.20R |
+| **Japan BUY 09-08 02:25 78% (regime)** | **Yes — 01:25 UTC, inside hours** | **WIN +0.83R ≈ +£19 (MACD-5)** | WIN +0.38R |
+| Japan BUY 09-08 02:30 58% | would already be in position | (WIN +0.86R) | (WIN +0.39R) |
+| S&P SELL 09-07 16:35 65% (BUY-only) | Yes (resolved today; was OPEN +0.12R) | LOSS −0.61R (MACD-5) | FLAT −0.04R |
+| S&P SELL 09-08 07:45 76% (BUY-only) | Yes | LOSS −1.10R (stop in 25 min) | LOSS −0.65R |
+| S&P SELL 09-08 09:35 56% (BUY-only) | Yes (07:45 closed 08:05, cooldown clear) | FLAT −0.09R (BE stop after +0.77R MFE) | WIN +0.42R |
+| S&P SELL 09-08 12:20 61% (BUY-only) | Yes | OPEN +0.29R after 1 candle | OPEN |
+
+Running tally, PLACEABLE signals only, two sessions (09-07 Labor Day + 09-08 to midday):
+- S&P SELLs (BUY-only gate): 5 signals, 4 closed → **−1.92R LIVE / −0.56R RESOLVER**. The BUY-only gate is not obviously costing money; S&P shorts have been stopped or MACD-exited within 30 min three times out of four.
+- Japan BUYs (regime gate), inside hours: 1 signal → **+0.83R LIVE / +0.38R RESOLVER**. First genuinely placeable regime-blocked signal, and it won. n=1.
+- Closed total: −1.09R LIVE ≈ −£25. Still an anecdote; the per-gate expectancy test over all `rejected_signals` rows remains the real next step.
+
+Note on the Japan 02:25 replay: ATR was 125 (vs 32 at 23:20) because the Osaka open had just happened; stop 188pt, so the 9.63 spread is only 0.05R. That trade is the kind the hours window exists to admit.
+
+Crude live position (opened 09-07 17:00 BST, first live Crude DFB trade): entry rule check. `src/breakout.py:170` enters when the just-closed 1h bar's HIGH ≥ prior-55-bar high (touch, not close-confirm), executing at that bar's close. The 16:00 bar had high 9149.3 vs level 9148.8 and closed at 9124.2, so the fill (9125.9) sat 23pt INSIDE the channel. That is the designed behaviour (faithful to `scripts/backtest_forex_breakout.py`), not a late entry — don't flag it. Trail = prior-27-bar low (m = n//2) and was ≈8934 at 12:00 BST, below the broker stop 9025.5, so no ratchet was due. MTM +£14.68 (+0.73R) at 12:31.
+
+# Per-gate replay of EVERY rejected signal, 2026-09-08
+
+**Question.** Over all momentum signals the bot refused (`rejected_signals`, 2,679 rows), per blocking gate: what would the expectancy have been without that gate? Which gates save money, which cost money, which are neutral?
+
+**Hypotheses.** H1 gates save money (blocked signals have negative expectancy). H2 the S&P-regime gate is neutral or costs money. H3 S&P shorts have edge, so BUY-only costs money. H4 the hours gate costs money on Japan (the 09-01 backtest note: PF 1.27→0.98 with `entry_hours`). H5 the 55–59% confidence band trades like ≥60% (gate neutral). Null: nothing distinguishable from zero at these n.
+
+**Method.** `scripts/replay_rejected.py` (new; scratchpad `replay_all.py` is the same code). Archive window 2026-06-13→09-08 (archive starts 06-12). Skipped: 360 pre-archive rows, 122 on epics no longer configured, 1,236 breakout-observer rows (different model, already resolved in `benched_outcomes`), 29 observational would-blocks (they traded; outcomes are in `trades`). **930 rows replayed**, 616 after the per-gate sequential filter (skip a signal while the previous replayed trade on that market is open + 30 min). Signal candle = the one that closed at the row timestamp; entry = next candle open; stop = max(ATR×mult, min_stop) capped; limit = stop×R:R; exits per live rules (LIVE = MACD-5, BE 0.7R → entry+lock, ATR trail; RESOLVER = MACD-3, no BE, 96-candle horizon). Spread charged once (S&P 0.61, NASDAQ 2.28, Japan 9.63, HK 7.11 trading-hours figures; FTSE 1.3, WS 3.2, AI 7.9, Russell 0.3, BTC 32.7 from `benched_outcomes`). "Placeable today" = no OTHER current gate (hours, direction, confidence, shadow, breakout mode) would also block the row. Current config applied throughout — this measures what TODAY's bot would do with those signals.
+
+**Calibration (before trusting anything).**
+- 44 resolved momentum benches vs RESOLVER rules: 34/44 (77%) same exit type AND R within 0.15; the misses are MACD-hist near zero (in-memory 100-candle frame vs full archive) and 3 stop-vs-MACD same-candle ties.
+- 144 real closed trades (their entry + stop, MACD-3 before 09-01) vs LIVE rules: 91% same exit type, median |ΔR| 0.04, mean 0.16. Sum real −9.78R vs replay −3.63R → **engine is ≈ +0.04R/trade OPTIMISTIC** (tick-level BE/trail is harsher than candle-level; Gold's pre-07-24 BE=0.5 shows up as four big misses). So every blocked-set expectancy below is, if anything, slightly too kind.
+
+**Evidence — LIVE rules, sequential, closed rows (RESOLVER in brackets). z = mean/SE.**
+
+| Gate | n | ΣR | mean R | z | placeable-today n / ΣR / z |
+|---|---|---|---|---|---|
+| Direction-restricted (S&P/FTSE/AI BUY-only) | 98 | −16.9 | −0.17 | −2.2 [−2.0] | 38 / −3.8 / −0.7 [39 / +0.0 / 0.0] |
+| Outside-hours | 105 | −14.7 | −0.14 | −1.7 [−2.8] | 83 / −11.6 / −1.5 [−2.5] |
+| Confidence < min | 83 | −10.6 | −0.13 | −1.6 [−2.7] | 19 / −2.5 / −0.7 |
+| Shadow-only (Russell/BTC/WS/FTSE/AI) | 38 | −7.9 | −0.21 | −1.8 [−1.3] | 38 / −7.9 / −1.8 |
+| Regime RANGING_HIGH | 21 | −6.2 | −0.30 | −1.6 [−1.1] | 6 / −1.1 |
+| **Regime BEARISH/BULLISH (S&P daily trend)** | 52 | −4.9 | −0.09 | −0.8 [−1.4] | **14 / +2.7 / +0.6** [+0.5] |
+| Screener-inactive | 11 | −4.7 | −0.42 | −2.2 [−2.2] | 2 |
+| Already-in-position | 49 | −3.2 | −0.07 | −0.6 [−1.8] | 27 / −3.6 / −1.0 |
+| Pullback-expired | 88 | −1.5 | −0.02 | −0.2 [+0.4] | 29 / −3.1 / −1.3 |
+| Regime NEUTRAL | 46 | −1.2 | −0.03 | −0.2 [−1.5] | 15 / +0.9 / +0.3 |
+| Loss/Re-entry/Startup cooldown + Position-sizing | 25 | +4.1 | +0.16 | all < 1 [+2.4] | 15 / +3.1 |
+| **ALL GATES POOLED** | **616** | **−67.7 ≈ −£1,566** | **−0.11** | **−3.4 [−4.4]** | 286 / −27.5 / −2.0 [−2.6] |
+
+Independent (non-sequential, 929 rows): −122R, z −5.2. Monthly pooled mean: Jun −0.04, Jul −0.05, Aug −0.17, Sep −0.25 — the sign never flips and has been getting worse.
+
+Traded baseline over the same window (real fills): 144 momentum trades −9.78R = **−0.07R/trade** (SE 0.07); post-gate (≥07-24) 63 trades −0.06R/trade. In £: post-gate momentum-only **−£72.85 over 63 trades**; the era's +£64.70 is carried by **15 breakout trades +£137.55** (Gold). The "v2 worked book-wide" reading in memory is true book-wide and false for momentum alone.
+
+Slices that matter:
+- **S&P SELL (BUY-only gate):** inside hours 39 signals −4.9R (z −0.9), outside 13 −5.8R (z −1.8); by month Jun −0.45, Jul +0.03, Aug −0.08, Sep −0.40 R/trade. Under RESOLVER rules inside-hours S&P shorts are exactly 0.00R. **H3 rejected**: S&P shorts have no edge. Whether the gate *saves* money is only ~1σ.
+- **Regime-direction placeable-today (the gate the 09-07 question was about):** 14 signals in 12 weeks, 6W/7L, +2.7R (z +0.6). Japan 24 rows −0.2R flat; HK 12 rows −2.7R; WS 15 rows −0.6R. 44 of the 96 raw rows would be refused by the hours gate anyway. **H2 supported in its weak form: neutral.** The gate costs nothing measurable and saves nothing measurable.
+- **Outside-hours by UTC bucket:** Japan 17–24 UTC −4.4R/11, 08–13 −1.0R/10, 13–17 +0.1/9; HK 13–17 UTC (US session) −2.7R/14; S&P 00–04 −3.4R/6; FTSE 00–08 −3.3R/10. Positive pockets: NASDAQ 00–04 UTC +3.0R/11, WS 00–04 +3.2R/4 (post-hoc, small). **H4 not supported on live signals**: Japan out-of-hours is −0.18R/trade here vs the backtest's implied edge — open question (different window, different exit model, and the live rows are pre-filtered by regime/direction first).
+- **Confidence:** S&P 55–59% signals −6.9R/15 (−0.46/trade); NASDAQ +1.7/7. **H5 rejected** for S&P, unresolved elsewhere.
+- **Regime NEUTRAL:** Japan SELL +3.7R/12 (z 1.1), WS BUY −4.4R/14 — noise-level, post-hoc.
+- Cooldown/sizing families are the ONLY ones with positive blocked expectancy (+4.1R over 25). Not significant; re-check when n ≥ 30.
+
+**Confidence.** HIGH: pooled — the gates as a set refuse a population with negative expectancy (z −3.4/−4.4/−5.2 across three treatments, engine bias runs the other way). HIGH: S&P shorts have no positive edge in this window. MEDIUM: direction, hours, confidence, shadow, RANGING each individually save money (z 1.6–2.2, consistent signs under both rule sets). MEDIUM: the S&P-regime gate is neutral. LOW: every by-market/by-hour sub-slice (post-hoc, n ≤ 30). LOW: spreads for out-of-hours HK/Japan are understated (trading-hours figures used), which makes the Outside-hours loss a floor, not an estimate.
+
+**What would disprove this.** A systematic bias in the entry model (next-candle open vs live market fill after the candle close — checked: real vs modelled entry differs by well under 0.05R on the 144 trades). A gate whose blocked rows are systematically from a different volatility regime than traded rows (not checked). Sequential filter choice (checked: independent view agrees).
+
+**Simpler explanation considered.** "Everything momentum lost money in Jun–Sep, blocked or not." Partly true — the traded set is −0.07R/trade — but the blocked set is worse (−0.11) and the difference holds under both exit models. The gates are filtering, not curing.
+
+**Ruled out.** H3 (S&P shorts have edge). H4 (hours gate costs money on Japan) on live signals. H1 in its strong per-gate form for regime-direction and regime-NEUTRAL (neutral, not saving).
+
+**Next steps.** (1) No gate change is supported; in particular do not relax S&P BUY-only or the regime gate. (2) v3 agenda: the momentum-only post-gate ledger is −£73/63t — the "v2 worked" verdict needs re-stating as "breakout worked, momentum still ≈ −0.06R/trade". (3) Re-run this script monthly (`scripts/replay_rejected.py`, needs a fresh journal dump + archive copy); the cooldown families and the NASDAQ/WS 00–04 UTC pocket are the only things worth watching. (4) Reconcile the Japan hours result with the 09-01 backtest by running the backtest over exactly 06-13→09-08 with `entry_hours` and the LIVE exit set.
+
+# Why the momentum book loses — entry-signal diagnosis, 2026-09-09
+
+**Trigger.** User: down £53 on 09-09 by 08:00 BST (Japan SELL at the Tokyo cash open −£22.52 stopped in 85 s; Gold breakout SELL −£32.10; HK MACD −£8.90; Japan MACD +£10.30), "review is due, I want this the other way — strategy or entries?"
+
+**Question.** Is the loss an entry problem, an exit/stop problem, a session-timing problem, or the tape? Is anything mechanically broken?
+
+**Hypotheses.** H1 entries chase (late, extended). H2 stops inside 5-min noise. H3 exits (MACD-5/BE/trail) cut winners. H4 regime — the signal works in trends, Aug–Sep is chop. H5 session-open entries are mis-sized (pre-open ATR vs open-candle range). H6 nothing is wrong: the signal is a coin flip and the book loses its costs.
+
+**Method.** `scratchpad/diag_trades.py`, `diag2.py`, `diag3.py`, `diag4.py` on the fresh journal + archive (148 real closed momentum trades since 06-13 with archive coverage; 930 rejected momentum signals as a second population). Engine = `replay_all.py`/`scripts/replay_rejected.py` (calibrated 09-08).
+
+**Evidence.**
+- *Execution is not broken.* Real-vs-modelled entry error < 0.05R; stop/ATR median 1.50 (p10 1.50, p90 1.96) = config; 91% exit-type agreement. Gold's breakout short had HTF=BEARISH from the 09-08 22:30 refresh (checked).
+- *Losers are immediate, not managed away.* Of 43 losers (R < −0.5): 63% never reached +0.2R, 0% reached +0.7R, 65% stopped within 3 candles. Holding-time buckets: 5–15 min = 78 trades **−20.0R (−£364)**; 15–60 min = 57 trades **+7.1R (+£155)**. Winners captured 58% of their MFE — exits are not the leak.
+- *No exit or stop configuration rescues the same entries.* Grid on the 148 entries (mean R net): stop 1.5×ATR LIVE −0.108; 3.0× −0.056; no-MACD 2.0× −0.053; no-BE/trail worse (−0.14); R:R 1.5/3 no help; BE 0.5 −0.10. **Every cell negative.** Widening to 3× halves the bleed but the difference (0.05R) is inside SE 0.07 — v2's "S&P tight-stop hypothesis DISSOLVED" stands.
+- *Extension at entry is uncorrelated with outcome* (corr 0.04). H1-as-chasing not supported. ADX 35–45 bucket −14.2R/68 vs ADX 30–35 +9.9R/39 (2.5σ) — possibly real, possibly a sub-slice; not monotonic (45+ −0.11).
+- **DECISIVE — the signal carries no directional information.** Mean signed forward move from entry, in ATR: real 148 trades −0.10/−0.06/−0.09/+0.01/−0.07/+0.22 at 3/6/12/24/48/96 candles (z −1.0…+0.4, hit 44–52%); 930 rejected signals −0.00/−0.06/−0.10/+0.02/+0.03/−0.14 (z −1.1…+0.2, hit 46–49%). June trades +0.13…+0.23 ATR (z 0.5–0.7); Aug–Sep −0.13…−0.18 (z −1). Only the 9 RSI-exit winners show a move (+1.16 ATR at 3 candles, z 4.0) — that is selection on the outcome. n = 1,078 signals, two independent populations, same answer: **the EMA-alignment 5-min momentum signal predicts nothing over 15 min to 8 h. The book loses its costs (−0.07 to −0.13R/trade ≈ spread/stop + slippage).** H6.
+- *Entry-rule variants (both populations):* continuation-close −0.128/−0.170; break-of-signal-bar −0.114/−0.179; no-0.5ATR-retrace −0.037/−0.142; pullback-entry 0.75×ATR fills 65% at +0.018 (z 0.2) and the SKIPPED signals were the winners (+29R) — the runaway ones. Nothing positive on the rejected population. No entry filter found.
+- *Session-open (H5) — real, small, mechanistic.* Cash-open candle range ÷ pre-open ATR, median over 61–68 sessions: Japan 3.3× (first 15 min 4.8×), HK 4.5× (6.3×), S&P 3.3×, NASDAQ 4.0×, Wall St 3.7×, FTSE 3.3× — against a 1.5–2.0×ATR stop. Real trades ≤15 min after the cash open: 10, −2.65R, MAE 2.1R at the open itself. Today's Japan short is exactly this (00:55 signal, 01:00 BST = 09:00 JST entry; stop 113 pt vs a 380-pt median open candle). Excluding them: real set −12.5R → −9.8R. Not a turnaround, a leak.
+- *Lifetime (journal, momentum only, £):* Mar −238, Apr +128, May −114, Jun +32, Jul −119, Aug −89, Sep −47 → **−£447 over 318 trades, 2 positive months of 7**. Breakout: +£10 over 28 (Aug +86, Sep −52). H4 (regime) cannot be ruled out — April/June were the trending months — but there is no detector that picks those months (the S&P-trend regime gate is neutral, 09-08 replay), so H4 is not actionable.
+
+**Confidence.** HIGH: signal has no forward information (n=1,078, two populations, every horizon ≈ 0). HIGH: exits/stops are not the lever (every grid cell negative; v2 concurred). HIGH: nothing is mechanically broken. MEDIUM: session-open mis-sizing is a real leak (mechanism from 61+ sessions/market; only 10 affected trades). LOW: ADX 30–35 vs 35–45 split; every per-market/direction slice.
+
+**What would disprove this.** A forward-return test on a longer or different window showing +0.2 ATR at 6–12 candles (June came closest and was still z 0.7). A cost model error large enough to explain −0.1R/trade (S&P 0.61 pt on a 6-pt stop = 0.1R — it IS the loss; cost is the whole story on S&P).
+
+**Ruled out.** Late/extended entries (H1). Stop width as the fix (H2). Exit management as the fix (H3). Execution bugs.
+
+**Conclusion.** The strategy is amiss, not the plumbing: the momentum entry signal is empty, and no exit, stop, or entry-timing variant tested makes it positive. The only mechanistic fix with evidence is to not enter inside the first 15 minutes after a cash open, and it saves ~£60 a quarter, not the book. The pre-committed standard applied to Wall Street ("still net-negative → shadow") applies to the whole index momentum set on the same evidence.
+
+**Recommendation for the v3 review (user's decision; order-path change = full pre-flight).**
+1. Demote S&P, NASDAQ, Japan, HK momentum to `shadow_only` — signals keep being generated and benched, nothing keeps bleeding. Keep the breakout book (Gold, Crude) live; it is the only component with any positive evidence (thin, +£10 lifetime, +£85 post-gate after today).
+2. If any momentum market stays live: add a per-market cash-open exclusion (first 15 min).
+3. Do not spend the review on MACD/BE/stop tuning (item 14 etc.) — measured irrelevant.
+4. Spend it on what could earn a slot: item 15b (DAY HTF for indices, 8/9 markets improve in backtest), the breakout allocation (item 16), and Gold's min-size problem (£32 risk on a £23 budget — today's −£32.10 is 1.4× the budget).
