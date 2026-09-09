@@ -53,7 +53,8 @@ class DailyTrendConfig:
 # Per-EPIC configs. Only markets that PASSED the 22-year study belong here.
 # NASDAQ (IX.D.NASDAQ.CASH.IP) also passed and may be added by a later decision.
 DAILY_TREND_CONFIGS: dict[str, DailyTrendConfig] = {
-    "CS.D.USCGC.TODAY.IP": DailyTrendConfig(),   # Gold — 30/30 cells, both halves, z≈2
+    "CS.D.USCGC.TODAY.IP": DailyTrendConfig(),    # Gold — 30/30 cells, both halves, z≈2 (LIVE)
+    "IX.D.NIKKEI.DAILY.IP": DailyTrendConfig(),   # Japan 225 — 30/30 cells, both halves, lumpy years (SHADOW)
 }
 
 VALID_DAILY_TREND_MODES = ("off", "shadow", "live")

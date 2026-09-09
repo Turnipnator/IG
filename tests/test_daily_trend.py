@@ -241,11 +241,13 @@ class TestRoutingAndCoexistence(unittest.TestCase):
 
 
 class TestModes(unittest.TestCase):
-    def test_gold_is_live_by_config_and_only_gold_has_a_config(self):
+    def test_config_defaults_match_the_evidence_tier(self):
+        JAPAN = "IX.D.NIKKEI.DAILY.IP"
         self.assertEqual(BY_EPIC[GOLD].daily_trend, "live")
-        self.assertEqual(set(daily_trend.DAILY_TREND_CONFIGS), {GOLD})
+        self.assertEqual(BY_EPIC[JAPAN].daily_trend, "shadow")     # Tier 2: plateau positive, lumpy years
+        self.assertEqual(set(daily_trend.DAILY_TREND_CONFIGS), {GOLD, JAPAN})
         for m in MARKETS:
-            if m.epic != GOLD:
+            if m.epic not in (GOLD, JAPAN):
                 self.assertIsNone(m.daily_trend, m.name)
 
     def test_main_and_telegram_resolve_identically(self):

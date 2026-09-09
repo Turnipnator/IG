@@ -961,6 +961,12 @@ MARKETS = [
         epic="IX.D.NIKKEI.DAILY.IP",
         name="Japan 225",
         sector="Indices",
+        daily_trend="shadow",  # 2026-09-09 sweep 2: daily long-only Donchian positive in 30/30 cells and
+                               # both 11-year halves, but only ~45% of years positive (two years carry
+                               # it) — Tier 2. SHADOW because (a) IG's 24h Japan bar differs most from
+                               # the cash bar (close diff 0.9%, range 1.39x), so the IG-native record is
+                               # the missing evidence, and (b) it is equity_index: going live would need
+                               # the 2-per-group rule weighed against S&P + NASDAQ pullback.
         shadow_only=True,  # 2026-09-09 v3 review: momentum demoted to shadow — see S&P 500 note.
                            # Also the type specimen of the cash-open leak: 09-09 01:00 BST SELL
                            # (= Tokyo 09:00 open) stopped in 85 s; the open candle runs 3.3× the
