@@ -258,6 +258,14 @@ def _load_breakout_deals(open_deal_ids: set[str]) -> None:
         logger.warning(f"Failed to load breakout_deals: {e}")
 
 
+def _live_breakout_position(epic: str) -> bool:
+    """True when an open position on this epic is a BREAKOUT deal (tagged in
+    breakout_deals). Momentum and daily-trend positions deliberately do not count:
+    the breakout shadow observer must keep measuring independently of them."""
+    return any(p.epic == epic and deal_id in breakout_deals
+               for deal_id, p in known_positions.items())
+
+
 def _save_daily_trend_deals() -> None:
     try:
         DAILY_TREND_DEALS_FILE.write_text(json.dumps(sorted(daily_trend_deals)))
@@ -1325,6 +1333,8 @@ def _check_breakout_tick_trigger(epic: str, market: MarketStream) -> None:
     slip = (exec_price - level) if direction == "BUY" else (level - exec_price)
     slip_r = (slip / ch.stop_distance) if ch.stop_distance else 0.0
     tag = "LIVE" if (armed["live"] and BREAKOUT_TICK_ENTRY == "live") else "log"
+    if tag != "LIVE" and _live_breakout_position(epic):
+        return  # already in this trade: a log-only cross on it is noise (latch stays consumed)
     logger.info(
         f"⚡ Breakout TICK-CROSS [{market_config.name}] {direction} @ {exec_price:.1f} "
         f"(level {level:.1f}, slip {slip:+.1f}pt = {slip_r:+.3f}R, stop {ch.stop_distance}) "
@@ -1397,7 +1407,13 @@ def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mo
             _log_blocked_break(epic, market.name, signal)
             return
         if fx_mode != "breakout":
-            # SHADOW — observe-only.
+            # SHADOW — observe-only. If a LIVE breakout position is already open on
+            # this epic (entered before a /mode flip to shadow — Crude 2026-09-09),
+            # the strategy could not re-enter anyway: the live trade IS the outcome,
+            # and an hourly "would BUY" would double-count it in rejected_signals.
+            # Momentum / daily-trend positions are not counted (see the helper).
+            if _live_breakout_position(epic):
+                return
             logger.info(
                 f"🔬 Breakout [{market.name}] (shadow): would {signal.signal.value} "
                 f"@ {current_price:.1f} — {signal.reason}"
