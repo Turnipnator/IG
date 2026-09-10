@@ -45,17 +45,68 @@ TICKER_MAP = {
     "Dollar Index": "DX-Y.NYB",
 }
 
-# Minimum stop distances per market in PRICE UNITS (not IG points)
-# These ensure reasonable stop distances that align with each market's volatility
-# Calculated as approximately 0.5% of typical price for each instrument
-MIN_STOP_DISTANCE_MAP = {
-    "S&P 500": 30.0,      # ~0.5% of 6000 = 30 pts
-    "NASDAQ 100": 100.0,  # ~0.5% of 20000 = 100 pts
-    "Gold": 25.0,         # ~0.5% of 5000 = 25 pts (~$25)
-    "Crude Oil": 0.35,    # ~0.5% of 70 = 0.35 (~35 cents)
-    "EUR/USD": 0.005,     # ~0.5% of 1.08 = 0.005 (~50 pips)
-    "Dollar Index": 0.50, # ~0.5% of 108 = 0.54
+# Minimum stop distances per market in PRICE UNITS (Yahoo's units, NOT IG points).
+#
+# EXPLICIT OVERRIDES ONLY, and an entry here wins. The study scripts
+# (backtest_min_hold, backtest_ranging_exit, backtest_copper_extended,
+# backtest_usdjpy_extended) patch their market into this dict; everything else
+# resolves through _min_stop_for(), which reads the live MarketConfig.
+#
+# Empty by default since 2026-09-01. The hand-written "~0.5% of price" table that
+# used to live here (now _LEGACY_MIN_STOP_DISTANCE_MAP, fallback only) was wrong: the
+# live bot has never applied it. Live uses MarketConfig.min_stop_distance (then clamps
+# up to IG's own live minimum at main.py:1699). The two disagreed by 15-25x --
+#     S&P 30.0 vs config 2.0 | NASDAQ 100.0 vs config 4.0 | Gold 25.0 vs config 2.0
+# -- and because 1.5xATR(5m) on S&P is ~5.8, max(atr_stop, 30.0) returned the FLOOR on
+# EVERY trade: the ATR risk model was inert and every stop identical. Consequences that
+# bit real conclusions (2026-09-01): stops were ~3.4x too wide so price almost never
+# reached them (2/24 trades vs 12/27 live), the 2R target at 60pts was unreachable, so
+# MACD swept up ~96% of exits and R-dispersion collapsed to 0.36 against live's 0.86.
+# The "S&P never reaches its 2R target" finding was an artefact of THIS table.
+MIN_STOP_DISTANCE_MAP: dict[str, float] = {}
+
+# Fallback for market names config.py does not know (Yahoo-only tickers). Price units.
+_LEGACY_MIN_STOP_DISTANCE_MAP = {
+    "S&P 500": 30.0, "NASDAQ 100": 100.0, "Gold": 25.0,
+    "Crude Oil": 0.35, "EUR/USD": 0.005, "Dollar Index": 0.50,
 }
+
+# config.py names a few markets differently from TICKER_MAP.
+_CONFIG_NAME_ALIASES = {"Dollar Index": "Dollar Index (DXY)"}
+
+# IG quotes several instruments in scaled points while Yahoo quotes the underlying, so
+# a MarketConfig.min_stop_distance (IG points) must be divided by this to land in the
+# backtester's price units. Indices and Gold are 1:1 and need no entry.
+#     Crude   IG 9355.2  vs CL=F     93.55   -> 100
+#     DXY     IG 9848.1  vs DX-Y.NYB 98.48   -> 100
+#     EUR/USD IG 11636.4 vs EURUSD=X 1.16364 -> 10000     (quotes read 2026-09-10)
+_IG_POINTS_PER_PRICE_UNIT = {
+    "Crude Oil": 100.0,
+    "Dollar Index (DXY)": 100.0,
+    "EUR/USD": 10000.0,
+    "GBP/USD": 10000.0,
+    "USD/JPY": 100.0,
+}
+
+
+def _min_stop_for(market: str) -> float:
+    """Live-faithful minimum stop distance in PRICE UNITS, by market NAME.
+
+    Precedence: an explicit MIN_STOP_DISTANCE_MAP override (a study script patched
+    it) > MarketConfig.min_stop_distance converted from IG points > the legacy table
+    for names config.py does not know > 0.0 (no floor).
+    """
+    if market in MIN_STOP_DISTANCE_MAP:
+        return float(MIN_STOP_DISTANCE_MAP[market])
+    cfg_name = _CONFIG_NAME_ALIASES.get(market, market)
+    try:
+        from config import MARKETS as _M
+        for _m in _M:
+            if _m.name == cfg_name:
+                return float(_m.min_stop_distance) / _IG_POINTS_PER_PRICE_UNIT.get(cfg_name, 1.0)
+    except Exception:
+        pass
+    return _LEGACY_MIN_STOP_DISTANCE_MAP.get(market, 0.0)
 
 # Minimum confidence thresholds per market (matching config.py)
 MIN_CONFIDENCE_MAP = {
@@ -855,7 +906,7 @@ class Backtester:
 
                 # Calculate ATR-based stop, but respect minimum stop distance from config
                 atr_stop = atr * stop_atr_mult
-                min_stop = MIN_STOP_DISTANCE_MAP.get(market, 0.0)
+                min_stop = _min_stop_for(market)
                 stop_distance = max(atr_stop, min_stop)
 
                 # Use market-specific reward:risk ratio
