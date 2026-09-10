@@ -203,6 +203,35 @@ class HtfWeekendBootTests(unittest.TestCase):
         self.assertFalse(main.market_regime_confirmed)
         main._htf_staleness_guard()  # no marker file -> returns early
 
+    # 8. A market removed from config.py must not be resurrected from the persisted
+    #    file. Bitcoin lingered as a 14th key after its 2026-09-09 removal because the
+    #    restore copied every key and the save wrote the whole dict back.
+    def test_weekend_restore_prunes_epics_no_longer_configured(self):
+        main.client = _Client(weekend=True)
+        main.LAST_HTF_REFRESH_FILE.write_text(
+            (datetime.now() - timedelta(hours=30)).isoformat())
+        main.HTF_TRENDS_FILE.write_text(
+            json.dumps(dict(FRIDAY_LABELS, **{"CS.D.BITCOIN.TODAY.IP": "NEUTRAL"})))
+
+        main.update_htf_trends()  # 30h > cooldown -> fetch loop -> weekend restore + save
+
+        self.assertEqual(dict(main.htf_trends), FRIDAY_LABELS)
+        self.assertNotIn("CS.D.BITCOIN.TODAY.IP",
+                         json.loads(main.HTF_TRENDS_FILE.read_text()),
+                         "save must drop the retired epic, not persist it forever")
+
+    def test_cooldown_restore_prunes_epics_no_longer_configured(self):
+        main.client = _Client(weekend=False)
+        main.LAST_HTF_REFRESH_FILE.write_text(
+            (datetime.now() - timedelta(hours=1)).isoformat())
+        main.HTF_TRENDS_FILE.write_text(
+            json.dumps(dict(FRIDAY_LABELS, **{"CS.D.BITCOIN.TODAY.IP": "NEUTRAL"})))
+
+        main.update_htf_trends()  # 1h < 6h cooldown -> disk-restore branch, no fetch
+
+        self.assertEqual(dict(main.htf_trends), FRIDAY_LABELS)
+        self.assertEqual(main.client.calls, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

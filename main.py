@@ -603,8 +603,11 @@ def _restore_htf_from_disk(only_missing: bool = False) -> int:
     except Exception as e:
         logger.warning(f"Could not read {HTF_TRENDS_FILE.name}: {e}")
         return 0
+    configured = {m.epic for m in MARKETS}
     applied = 0
     for epic, label in cached.items():
+        if epic not in configured:
+            continue    # market since removed from config.py (Bitcoin, 2026-09-09): don't resurrect it
         if only_missing and epic in htf_trends:
             continue
         htf_trends[epic] = label
@@ -632,7 +635,9 @@ def update_htf_trends(force: bool = False) -> None:
                 last_ts = datetime.fromisoformat(LAST_HTF_REFRESH_FILE.read_text().strip())
                 since = datetime.now() - last_ts
                 if since < HTF_REFRESH_COOLDOWN:
-                    cached_trends = json.loads(HTF_TRENDS_FILE.read_text())
+                    configured = {m.epic for m in MARKETS}
+                    cached_trends = {e: l for e, l in json.loads(HTF_TRENDS_FILE.read_text()).items()
+                                     if e in configured}
                     htf_trends.update(cached_trends)
                     # Also restore S&P 500 regime if present so trade decisions
                     # don't fall back to BULLISH default unnecessarily.
@@ -745,7 +750,12 @@ def update_htf_trends(force: bool = False) -> None:
         try:
             LAST_HTF_REFRESH_FILE.parent.mkdir(parents=True, exist_ok=True)
             LAST_HTF_REFRESH_FILE.write_text(datetime.now().isoformat())
-            HTF_TRENDS_FILE.write_text(json.dumps(dict(htf_trends)))
+            # Configured markets only, so a market removed from config.py ages out of
+            # the file instead of being restored and re-saved forever (Bitcoin lingered
+            # as a 14th key after its 2026-09-09 removal).
+            configured = {m.epic for m in MARKETS}
+            HTF_TRENDS_FILE.write_text(json.dumps(
+                {e: l for e, l in htf_trends.items() if e in configured}))
         except Exception as e:
             logger.warning(f"Could not write HTF refresh cache: {e}")
 
