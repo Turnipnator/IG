@@ -3508,3 +3508,93 @@ the cost picture — at a 47-night mean hold, financing is ≈ **0.35R per trade
 `daily_trend.py` docstring, and `GO_LIVE_CRITERIA.md` (Gold all-in 0.032–0.072R at 1–3 nights; the G1
 table's Gold financing 0.010→0.020/night) — a factual correction that changes no gate outcome, made at
 the owner's instruction.
+
+---
+
+# 2026-09-10 — Gold #348 "sold on the bounce": hour-close confirmation vs tick entry, measured
+
+## Question
+Gold breakout #348 (SELL 4351.37 at 14:05 London, 10 pt ABOVE the 4341.4 break level, 27 pt off the
+bar low) prompted: does the hour-close confirmation systematically hurt fills, and should
+`BREAKOUT_TICK_ENTRY` go from `log` to `live`? The code comment premises tick entry on recovering the
+~0.14R entry-timing cost of the flat cost convention.
+
+## Hypotheses
+- H1: hour-close fills are systematically worse than the channel level (tick entry recovers ~0.14R).
+- H2: the post-break hour is as likely to revert as to continue, so the fill effect averages ≈0.
+- H3: the delay is costly only in trending regimes; 08-20→09-10 was RANGING, so any measurement here is
+  regime-conditional.
+
+## Method
+424 `Breakout-tick[log]` rows (08-20 → 09-10, 14 markets). Deduplicated to 397 armed bars, 385 matched
+to the candle archive. Hour-close fill proxy = close of the first native candle after the break bar
+(5m markets: the :00 candle, i.e. the price at :05; verified against the two real Gold fills, 4351.25 vs
+4351.37 and 4358.23 vs 4358.08). Cost = signed (fill − level) in armed-stop R, + = worse than level.
+Script: session scratchpad `tickstudy.py`, output `tickstudy_out.csv`.
+
+## Evidence
+| | n | mean cost R | median | fills worse than level | stop ratio (ATR incl. break bar / prior) | break bar closed back inside |
+|---|---:|---:|---:|---:|---:|---:|
+| sub-hourly pooled | 357 | **−0.028** (t −1.09) | −0.044 | 46% | 1.08 | 57% |
+| BUY / SELL | 142 / 215 | −0.043 / −0.017 | | | | |
+| Gold | 23 | −0.078 | −0.155 | 30% | 1.06 | 65% |
+| FTSE / S&P / WS / NDX / Japan / HK / Russell | 63/49/53/39/41/36/30 | −0.11/+0.02/+0.02/+0.06/−0.08/−0.14/+0.10 | | | | |
+
+Magnitude is symmetric: +0.32R when worse, −0.32R when better. Quantiles 10/50/90 = −0.51 / −0.04 / +0.44.
+
+Mechanism findings from the same rows:
+- **Latch is not restart-safe**: 17 armed bars fired more than once; 16 of the 17 coincide with a bot
+  restart within 20 min (`_breakout_armed` is in-memory and re-arms the same bar). Phase 1's "fires
+  exactly once per bar" is FALSE across restarts.
+- **Startup blackout**: 37 restarts since 08-20 (9 on 08-21, 8 on 09-09). 51/424 fires and 25/385 (6.5%)
+  distinct breaks landed inside a 15-min `STARTUP_COOLDOWN`, where `_execute_breakout_entry` returns
+  with no log and no journal row (one-per-epic and loss-cooldown returns are silent too). Gold: 1 such
+  break, unactionable anyway (position #315 was open).
+- Stale arm across session gaps: lags of 20–66 h on Japan/AI Index/Russell = the channel armed at the
+  last session bar firing on the reopen tick (gap-through case). Lags of 120–125 min = the :05 re-arm
+  window. Shadow-only effect.
+- #348 specifics: tick at 13:34:37 (4340.9 bid), hour-close fill 14:05 (4351.37), stop 34.6 → 44.25
+  because the 53-pt break bar entered ATR14 (ratio 1.28). Nothing blocked an earlier entry: loss
+  cooldown expired 09-09 07:38, restarts 10:17/10:24 cleared by 10:39, hours open, HTF BEARISH.
+
+## Confidence
+- H2 supported, H1 not supported: **MEDIUM-HIGH**. n=357, proxy validated on real fills, t ≈ −1.1.
+  Regime caveat (H3) is real: three weeks of mostly RANGING indices; in a trending run delayed fills
+  would skew worse. Not enough to reverse the sign, enough to keep this out of the cost model as a
+  constant.
+- Latch/restart duplication: **HIGH** (16/17 co-timed with restarts).
+- Blackout share (6.5% of distinct breaks, 12% of fires) is inflated by deploy timing (restarts happen mid-session) — **MEDIUM** as a
+  rate, **HIGH** as a mechanism.
+
+## What would disprove this
+A trending month where the pooled cost turns clearly positive; or evidence the archive :00-candle close
+misrepresents the :05 fill for indices (it matched Gold to 0.2 pt; not checked per market).
+
+## Ruled out
+- Flipping `BREAKOUT_TICK_ENTRY=live` on current evidence: the +0.14R it was built to recover is not
+  present at the 1h horizon on this sample; measured effect is 0 to slightly negative.
+- Any change to Gold breakout entry rules (close-confirmed break etc.) without a study-engine backtest:
+  65% of Gold break bars close back inside the channel, which is the observation behind "entered on
+  the bounce", but the validated model is a stop-entry at the level and today's trade may still win.
+
+## Next steps — 1–3 EXECUTED 2026-09-11 (owner approved the pre-flight "yes to all"; see git log "breakout tick latch"), 4–5 open
+1. Instrumentation: log + journal the three silent returns in `_execute_breakout_entry`
+   (`Breakout-blocked:` convention). Zero order-path behaviour change.
+2. Persist the tick latch `(epic, bar_time, consumed)` to disk so a restart cannot re-fire it; also
+   de-dup on `(epic, bar)` in any analysis of `Breakout-tick` rows.
+3. Update the `BREAKOUT_TICK_ENTRY` comment: the +0.143R premise is the cost convention, not a
+   measured fill gap; direct measurement n=357 = −0.03R.
+4. Question for the owner: should the breakout path be exempt from `STARTUP_COOLDOWN`? Its frame is
+   archive-built, so the "let candles re-accumulate" rationale does not apply; but it is an order-path
+   change and needs the pre-flight.
+5. Candidate study (not a change): close-confirmed vs touch-confirmed 55-bar breaks on the IG archive,
+   costed, with `entry_hours`.
+
+Executed 2026-09-11: `BREAKOUT_TICK_LATCH_FILE` (`data/breakout_tick_latch.json`, epic → last consumed
+bar) written on every latch claim, restored at boot, and a re-arm of the same bar starts consumed;
+`_log_entry_refusal` makes the three silent gates visible (throttled 1/epic/kind/hour; journal rows
+`Breakout-blocked: entry-gate loss cooldown|startup cooldown (...)`, the position-open case log-only);
+tick-entry comment rewritten to the measured result. `tests/test_breakout_tick_latch.py`, 11 tests;
+suite 213 → 224. Blackout finding refined during implementation: the :05 path retries every 5 min, so a
+startup cooldown is a DELAY not a loss unless it outlives the confirmation hour. Startup-cooldown
+exemption (item 4) deliberately NOT done — order-path decision, still open.

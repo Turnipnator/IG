@@ -22,6 +22,7 @@ LAST_STARTUP_FILE = _DATA_DIR / "last_startup.txt"
 LAST_HTF_REFRESH_FILE = _DATA_DIR / "last_htf_refresh.txt"
 HTF_TRENDS_FILE = _DATA_DIR / "htf_trends.json"
 BREAKOUT_DEALS_FILE = _DATA_DIR / "breakout_deals.json"
+BREAKOUT_TICK_LATCH_FILE = _DATA_DIR / "breakout_tick_latch.json"
 DAILY_TREND_DEALS_FILE = _DATA_DIR / "daily_trend_deals.json"
 DAILY_TREND_STATE_FILE = _DATA_DIR / "daily_trend_state.json"
 PULLBACK_DEALS_FILE = _DATA_DIR / "pullback_deals.json"
@@ -359,10 +360,19 @@ _cluster_lock = threading.Lock()
 # --- Tick-triggered breakout entry (2026-08-20) --------------------------------------
 # The breakout path enters at CANDLE CLOSE: analyze_breakout confirms the break at the
 # close of bar T, then sends a MARKET order at whatever price has arrived by then. On a
-# 1h frame that is up to an hour after price first crossed the channel. The measured gap
-# between the channel level and the price actually paid is +0.143R/trade against a pooled
-# gross edge of +0.191R (t=+3.85, n=676) — ~73% of the edge is spent getting in late, and
-# it is the single reason the net residual (+0.048R) is unmeasurable.
+# 1h frame that is up to an hour after price first crossed the channel (for 5m-native
+# markets the confirming pass runs at :05, so every Gold entry is stamped :05).
+#
+# PREMISE, AS BUILT (2026-08-20): the entry-timing cost was taken to be +0.143R/trade —
+# but that figure is the flat COST CONVENTION (0.286xATR round trip / 2xATR stop), not
+# a measurement of the fill gap.
+# MEASURED (2026-09-10, research_notes.md "Gold #348"): 424 [log] rows -> 397 armed
+# bars -> 385 matched to the archive. Sub-hourly pooled n=357: the hour-close fill is
+# -0.028R vs the level (median -0.044R, t -1.09), 46% of fills worse, symmetric +/-0.32R.
+# Gold n=23: -0.08R. The post-break hour reverts as often as it continues (57% of break
+# bars close back inside the channel; Gold 65%). There is NO measured fill gap for a
+# live tick entry to recover in that (ranging) sample; a trending month could differ.
+# Do not flip this to live on the original premise.
 #
 # The channel is fully known at the close of bar T-1, so the crossing can be caught on
 # the STREAM instead of at the next close. Arm (upper, lower) once per closed bar, then
@@ -380,7 +390,9 @@ _cluster_lock = threading.Lock()
 #          carries no money risk, and it runs on SHADOW markets too — which is where the
 #          sample is (36 shadow signals in 10 days vs a handful live). Phase 1 validates
 #          the MECHANISM (fires exactly once per bar, at the right level), not the
-#          hypothesis; the +0.143R is already measured.
+#          hypothesis. Phase 1 FAILED across restarts until 2026-09-11: the latch was
+#          in-memory, so 16 of 17 double-fired bars were restart re-arms — now persisted
+#          in BREAKOUT_TICK_LATCH_FILE. De-dup on (epic, bar) when analysing old rows.
 #   live  — the tick trigger places the order. The close-based path then self-suppresses
 #          for that bar via the existing one-position-per-epic guard in
 #          _execute_breakout_entry; if the tick order FAILS, the close path still runs
@@ -395,6 +407,49 @@ _breakout_armed: dict[str, dict] = {}
 # Guards claim-the-latch and re-arm. Held for a dict read plus one flag write, never
 # across I/O — same discipline as _cluster_lock above.
 _breakout_tick_lock = threading.Lock()
+
+# epic -> bar_time of the LAST armed bar whose latch was consumed. The latch above is
+# in-memory, so a restart used to re-arm the same closed bar fresh and the crossing
+# fired again: 16 of the 17 bars that fired more than once between 2026-08-20 and
+# 09-10 coincide with a restart. Persisted to BREAKOUT_TICK_LATCH_FILE on every
+# consume; a re-arm whose bar_time matches starts consumed. Written under
+# _breakout_tick_lock, flushed to disk OUTSIDE it (file I/O must not stall arming).
+_breakout_tick_consumed: dict[str, str] = {}
+
+# Entry-gate refusal throttle: epic -> (reason kind, last_logged_at). Separate from
+# _breakout_block_last so an HTF block and an entry-gate refusal on the same epic
+# cannot silence each other. Keyed on the KIND, not the full message, because the
+# message carries minutes-left counters that change on every 5-minute pass.
+_breakout_entry_refusal_last: dict[str, tuple] = {}
+
+
+def _save_tick_latch() -> None:
+    """Flush the consumed-bar map. Called from the stream thread right after a latch is
+    claimed — ~300 bytes, at most a few times a day book-wide, and that thread already
+    does a sqlite insert at the same point. data/ is gitignored, survives rebuilds."""
+    try:
+        with _breakout_tick_lock:
+            snapshot = dict(_breakout_tick_consumed)
+        BREAKOUT_TICK_LATCH_FILE.write_text(json.dumps(snapshot, sort_keys=True))
+    except Exception as e:
+        logger.warning(f"Failed to persist breakout tick latch: {e}")
+
+
+def _load_tick_latch() -> None:
+    """Restore the consumed-bar map at boot, before the first analysis pass can re-arm.
+    A missing or corrupt file is harmless: behaviour is then exactly the pre-2026-09-11
+    one (fresh latch), never worse."""
+    try:
+        if not BREAKOUT_TICK_LATCH_FILE.exists():
+            return
+        saved = json.loads(BREAKOUT_TICK_LATCH_FILE.read_text())
+        if not isinstance(saved, dict):
+            return
+        with _breakout_tick_lock:
+            _breakout_tick_consumed.update({str(k): str(v) for k, v in saved.items()})
+        logger.info(f"Restored breakout tick latch for {len(saved)} epic(s)")
+    except Exception as e:
+        logger.warning(f"Failed to load breakout tick latch: {e}")
 
 # MTF pullback-entry state (StrategyConfig.pullback_entry_atr_frac/window). When a
 # signal arms a pullback, we hold it here until price retraces frac×ATR toward the
@@ -463,6 +518,9 @@ def initialize() -> bool:
     # re-adopted breakout position keeps its Donchian trail instead of falling
     # through to the momentum exit (review item 11). Cross-check against live
     # positions to prune deals that closed while we were down.
+    # Tick-entry latch: which armed bar already fired before this restart. Needs no
+    # broker call, so it sits outside the try below and cannot be skipped by one.
+    _load_tick_latch()
     try:
         open_ids = {p.deal_id for p in (client.get_positions() or []) if p.deal_id}
         _load_breakout_deals(open_ids)
@@ -1067,6 +1125,40 @@ def on_candle_complete(epic: str, market: MarketStream) -> None:
     ).start()
 
 
+def _log_entry_refusal(epic: str, market_config, signal, kind: str, detail: str,
+                       journal_it: bool) -> None:
+    """Make the breakout entry gate visible. Until 2026-09-11 the three gates below
+    returned with no log line and no journal row, so a break that fired during a
+    startup cooldown (25 of 385 breaks in the tick log, 37 restarts in three weeks)
+    left no trace — the same silent class _log_blocked_break closed for HTF blocks.
+
+    Throttled to once per epic per KIND per hour: the hour-close path re-calls
+    _execute_breakout_entry on every 5-minute candle for the whole confirmation hour
+    (same closed 1h bar each time), so an unthrottled line would repeat 12x/hour.
+
+    journal_it=False for the one-per-epic case by design: a journal row for "already
+    in this trade" would double-count the trade, the distortion the shadow observer
+    was silenced for in 46b1351. The two cooldown cases are real delayed or lost
+    entries and do get a `Breakout-blocked: entry-gate` row."""
+    try:
+        now = datetime.now()
+        prev = _breakout_entry_refusal_last.get(epic)
+        if prev and prev[0] == kind and (now - prev[1]) < timedelta(minutes=60):
+            return
+        _breakout_entry_refusal_last[epic] = (kind, now)
+        logger.info(f"⛔ Breakout entry refused [{market_config.name}]: {kind} — {detail}")
+        if journal_it and journal:
+            journal.log_rejected_signal(
+                epic=epic, market_name=market_config.name,
+                direction=(signal.signal.value if signal.signal else "HOLD"),
+                confidence=float(getattr(signal, "confidence", 0.0) or 0.0),
+                adx=float(getattr(signal, "atr", 0.0) or 0.0), rsi=0.0,
+                reject_reason=f"Breakout-blocked: entry-gate {kind} ({detail})",
+            )
+    except Exception as e:   # instrumentation must never break the order path
+        logger.debug(f"Entry-refusal logging failed for {epic}: {e}")
+
+
 def _execute_breakout_entry(epic: str, market: MarketStream, market_config, signal, df) -> None:
     """Place a LIVE breakout order (market mode 'breakout'). ISOLATED from the
     momentum pipeline with its own essential gates (one-per-epic, loss cooldown,
@@ -1076,13 +1168,29 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
     # One breakout position per epic. Daily-trend positions on the same epic are
     # IGNORED here (user decision 2026-09-09): the two strategies coexist on Gold,
     # otherwise a multi-week daily hold would block every 1h breakout entry.
-    if any(p.epic == epic and not _daily_managed(p.deal_id) for p in known_positions.values()):
+    blocker = next((p for p in known_positions.values()
+                    if p.epic == epic and not _daily_managed(p.deal_id)), None)
+    if blocker is not None:
+        _log_entry_refusal(epic, market_config, signal, "position open",
+                           f"{blocker.direction} {blocker.deal_id} already open on epic",
+                           journal_it=False)
         return
     # Loss cooldown (shared map) — don't immediately re-enter after a stop-out.
     if epic in loss_cooldown_until and datetime.now() < loss_cooldown_until[epic]:
+        left = (loss_cooldown_until[epic] - datetime.now()).total_seconds() / 60
+        _log_entry_refusal(epic, market_config, signal, "loss cooldown",
+                           f"{left:.0f}m left", journal_it=True)
         return
     # Post-restart cooldown — let streaming candles re-accumulate before acting.
-    if (datetime.now() - bot_start_time).total_seconds() / 60 < STARTUP_COOLDOWN_MINUTES:
+    # NB the breakout frame is archive-built, so this is a pure blackout for it; it
+    # is a DELAY not a loss unless the cooldown outlives the confirmation hour,
+    # because the :05 path retries every 5 minutes. Exempting it is an order-path
+    # decision left open on 2026-09-11 — for now it is merely visible.
+    mins_up = (datetime.now() - bot_start_time).total_seconds() / 60
+    if mins_up < STARTUP_COOLDOWN_MINUTES:
+        _log_entry_refusal(epic, market_config, signal, "startup cooldown",
+                           f"{mins_up:.0f}/{STARTUP_COOLDOWN_MINUTES}m since boot",
+                           journal_it=True)
         return
     # Trading hours (same logic as the momentum gate). UTC — see utc_hour().
     h = utc_hour()
@@ -1288,13 +1396,18 @@ def _arm_breakout_levels(epic: str, market_config, df, htf_trend: str, live: boo
             if prev is not None and prev["channel"].bar_time == ch.bar_time:
                 prev["live"] = live
                 return
+            # A bar whose crossing already fired before a restart stays consumed —
+            # otherwise the first analysis pass after boot re-arms it fresh and the
+            # same crossing fires a second time (the 16-of-17 restart double-fires).
+            consumed = _breakout_tick_consumed.get(epic) == ch.bar_time
             _breakout_armed[epic] = {
-                "channel": ch, "live": live, "consumed": False,
+                "channel": ch, "live": live, "consumed": consumed,
                 "armed_at": datetime.now(),
             }
         logger.debug(
             f"[TICK-ARM] {market_config.name}: {ch.lower:.1f}-{ch.upper:.1f} "
             f"stop={ch.stop_distance} htf={ch.htf_trend} bar={ch.bar_time} live={live}"
+            + (" — latch restored CONSUMED (fired before restart)" if consumed else "")
         )
     except Exception as e:   # arming must never break the analysis path
         logger.debug(f"Breakout arm failed for {epic}: {e}")
@@ -1336,6 +1449,8 @@ def _check_breakout_tick_trigger(epic: str, market: MarketStream) -> None:
         if cur is None or cur is not armed or cur["consumed"]:
             return
         cur["consumed"] = True
+        _breakout_tick_consumed[epic] = ch.bar_time
+    _save_tick_latch()   # outside the lock: disk must never stall an arming thread
 
     market_config = next((m for m in MARKETS if m.epic == epic), None)
     if market_config is None:
