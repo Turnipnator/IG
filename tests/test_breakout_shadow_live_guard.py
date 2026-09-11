@@ -11,6 +11,7 @@ other strategies' positions. The guard is the breakout_deals tag, nothing else.
 """
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -52,22 +53,32 @@ class _Globals(unittest.TestCase):
     """Save/restore the module state every test touches."""
 
     def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
         self._saved = (dict(main.known_positions), set(main.breakout_deals), main.journal,
-                       dict(main.htf_trends), dict(main._breakout_armed), main.BREAKOUT_TICK_ENTRY)
+                       dict(main.htf_trends), dict(main._breakout_armed), main.BREAKOUT_TICK_ENTRY,
+                       dict(main._breakout_tick_consumed), main.BREAKOUT_TICK_LATCH_FILE)
         main.known_positions.clear()
         main.breakout_deals.clear()
         main._breakout_armed.clear()
+        main._breakout_tick_consumed.clear()
         main.journal = MagicMock()
         main.htf_trends[EPIC] = "BULLISH"
+        # Consuming the tick latch persists it (9b4bc77). Redirect the file, or a run
+        # of this suite inside the live container overwrites the bot's real latch
+        # with the Crude fixture below (seen 2026-09-11, twice).
+        main.BREAKOUT_TICK_LATCH_FILE = Path(self._tmp.name) / "breakout_tick_latch.json"
 
     def tearDown(self):
-        kp, bd, journal, htf, armed, tick = self._saved
+        kp, bd, journal, htf, armed, tick, consumed, latch_file = self._saved
         main.known_positions.clear(); main.known_positions.update(kp)
         main.breakout_deals.clear(); main.breakout_deals.update(bd)
         main.journal = journal
         main.htf_trends.clear(); main.htf_trends.update(htf)
         main._breakout_armed.clear(); main._breakout_armed.update(armed)
+        main._breakout_tick_consumed.clear(); main._breakout_tick_consumed.update(consumed)
         main.BREAKOUT_TICK_ENTRY = tick
+        main.BREAKOUT_TICK_LATCH_FILE = latch_file
+        self._tmp.cleanup()
 
 
 class LiveBreakoutPositionHelper(_Globals):
