@@ -681,7 +681,7 @@ def update_htf_trends(force: bool = False) -> None:
 
     The startup call is skipped if a successful refresh ran within
     HTF_REFRESH_COOLDOWN. Without this guard, every container restart spends
-    ~570 API points re-fetching HTF — disastrous during a watchdog-induced
+    ~390 API points (13 markets × 30) re-fetching HTF — disastrous during a watchdog-induced
     restart loop. The scheduled 24h refresh sets force=True to bypass the guard.
     """
     global market_regime, market_regime_confirmed
@@ -707,7 +707,7 @@ def update_htf_trends(force: bool = False) -> None:
                         f"Skipping HTF refresh on startup — last successful refresh "
                         f"was {since.total_seconds()/3600:.1f}h ago "
                         f"(cooldown {HTF_REFRESH_COOLDOWN.total_seconds()/3600:.0f}h). "
-                        f"Restored {len(cached_trends)} HTF trends from cache; saves ~570 API points."
+                        f"Restored {len(cached_trends)} HTF trends from cache; saves ~{30 * len(cached_trends)} API points."
                     )
                     return
         except Exception as e:
@@ -3856,7 +3856,7 @@ def _observe_archive_htf(force: bool = False, tag: str = "drift") -> None:
 
     Why (2026-08-10): computing HTF from the archive would make the trend refreshable
     hourly at zero API cost and would remove the dominant consumer of the 10k/week
-    allowance (~570pts/day). But a one-off replay of 195 logged readings agreed only
+    allowance (~390pts/day at 13 markets). But a one-off replay of 195 logged readings agreed only
     82.4% (Wall Street 60%, AI Index 67%, Gold 80%) — on 08-10 the archive said
     NEUTRAL for Gold where REST said BULLISH, which would have switched off live Gold
     breakout entries. Agreement is worst where the archive is gappiest, so the swap is
@@ -4403,7 +4403,7 @@ async def main_async():
         schedule.every(6).hours.do(refresh_session)
         # Fixed wall clock, explicit UTC (container TZ is Europe/London — a bare
         # .at() would shift an hour at each DST boundary, the bug class already
-        # fixed in c1e244f/5bcb5dd). 1x/day: 19 markets × 30pts = 570pts/day.
+        # fixed in c1e244f/5bcb5dd). 1x/day: 13 markets × 30pts = 390pts/day.
         _htf_job = schedule.every().day.at(HTF_REFRESH_TIME, "UTC").do(
             update_htf_trends, force=True)
         schedule.every(15).minutes.do(_scheduled_save_candles)  # Persist candles for restarts (calls CURRENT stream_service — see wrapper note)

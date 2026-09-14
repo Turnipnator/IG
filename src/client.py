@@ -48,6 +48,17 @@ POSITION_FAILURES_BEFORE_EXIT = 25
 # are not. Skip the call while the same deal wants the same rejected level, and
 # never let that delay a level that has CHANGED — a tighter stop always goes
 # straight through.
+# Observations so far (the measurement the diagnostics line exists for):
+#   2026-08-18 DXY (CO.D.DX.Month1.IP, BUY): amendment SUCCEEDED ~3.5pt above the
+#     offer against a stated minimum of 10.0 — LOOSER than the strict rule.
+#   2026-09-11 GBP/USD (CS.D.GBPUSD.TODAY.IP, SELL, stop 13539.7): REFUSED at
+#     dist_bid 10.00 / dist_offer 9.10 against a stated 12.00; three strikes
+#     16:00-16:02, accepted 16:03 once price moved away — CONSISTENT with strict.
+# n=2 and they disagree, so there is deliberately NO pre-clamp on the trail
+# (decision 2026-09-14, option B): a pre-skip on the strict rule would hold
+# back tightens IG may well accept, for as long as price sits inside the stated
+# minimum — weaker protection on every trade to save three log lines a month.
+# Revisit once n>=5 episodes point the same way. Add each new episode here.
 STOP_AMEND_FAILURES_BEFORE_BACKOFF = 3
 STOP_AMEND_BACKOFF_SECONDS = 60
 STOP_AMEND_BACKOFF_MAX_SECONDS = 300
