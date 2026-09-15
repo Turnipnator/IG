@@ -3757,3 +3757,68 @@ walk-forward if needed, to get the spread-betting bot on S&P in the best shape.
    assumed number in the chain, and the one that decides daily-horizon viability.
 4. G3 (30 IG-native trades) unchanged: ~4 years at ~8 trades/yr. This work is
    Tier 2 backtest evidence and does not bypass §7.
+
+---
+
+# Index DFB financing MEASURED (2026-09-15) — the assumption holds
+
+Artefact: `scripts/measure_dfb_financing.py` (read-only: login → `/history/transactions`
+→ logout). Run inside the container, 30-day window, 2026-09-15.
+
+## Question
+Index DFB overnight financing had **never been observed on this account** — the bot
+had never held an index position overnight. Every daily-horizon number in the repo
+charged IG's published formula (index long = bench + 2.5%, /365, on notional per
+night) rather than a reading. The S&P pullback arm changed that: trade **#349**
+(S&P 500 BUY, 0.77 £/pt @ 7589.66, entered 2026-09-10) held through 5 nights.
+
+## Evidence — the index rows
+IG labels the index DFB charge as a bare **`Long Interest for <date>`** with NO
+instrument name, unlike every other family (`... FX Interest for 1 day Spot Gold`,
+`... Commodities Interest for 1 day Oil - US Crude`, `... FX Interest for 1 day
+GBP/USD`). Attribution to #349 is solid: it is the only index position held
+overnight in the window, the dates line up exactly, Crude and Gold and GBP/USD all
+carry their own separately-labelled rows on the same dates, and the magnitude
+matches its notional.
+
+| IG row | nights | charge | £/night |
+|---|--:|--:|--:|
+| `Long Interest for 10/09/26` | 1 | −1.15 | 1.150 |
+| `Long Interest for 11/09/26 to 13/09/26` | 3 | −3.46 | 1.153 |
+| `Long Interest for 14/09/26` | 1 | −1.15 | 1.150 |
+| **total** | **5** | **−5.76** | **1.152** |
+
+Notional 0.77 × 7589.66 = £5,844. **£1.152/night × 365 ÷ £5,844 = 7.20%/yr.**
+
+## Confidence
+- **HIGH — the modelled 7.00% (bench 4.5% + 2.5%) is right to within 2.8%.** Measured
+  7.20%. Backtest impact: **−0.002R/trade** (2004–26) and −0.004R (1985–2003). The
+  41y verdict is unchanged; mean R +0.219 → +0.217.
+- **HIGH — 1R costs 1.151%/night** (1R = 2×ATR×size = £100.07). 4 nights 0.046R,
+  6 nights 0.069R, 9 nights 0.104R. Consistent with the sweep's 40-night S&P 0.41R.
+- **HIGH — the 2026-09-09 Gold correction is confirmed.** Gold rows (admin +
+  adjustment, per night): 08-22 −0.71, 08-24 −0.727, 08-25 −0.74 ⇒ ~£0.72/night at
+  size 1.0 on ~£4,350 notional ≈ **6.0%/yr**, against the corrected 5.8%. The
+  08-19 "halved" figure stays refuted.
+- **MEDIUM-HIGH — financing is NOT a uniform drag; sign varies by product AND by
+  day.** Crude Oil's `Commodities Basis` rows are **CREDITS** (+1.82, +1.63, +1.80,
+  +5.63, +2.21 = +£13.09) against only −£1.04 of admin interest ⇒ **Crude long is
+  financing-POSITIVE, net +£12.05** over the window (backwardation basis exceeds the
+  interest charge). Gold flipped positive on 09-12 (+0.49 adjustment vs −0.18 admin
+  = **+0.31/night**). Net across ALL financing rows in 30 days: **−£1.63**, because
+  Crude's credit nearly cancels everything else.
+
+## Self-critique
+- One position, 5 nights, one rate environment. The rate is a 2026 reading; the
+  backtest's pre-2004 step function remains assumed and untested.
+- `Long Interest` carries no instrument name, so attribution is inferential (though
+  strongly supported — see above). A second concurrent index position would make
+  future rows ambiguous; if two ever overlap, split by notional or stagger them.
+- The 30-day window happens to contain a backwardated Crude market. The basis credit
+  is a market-state fact, not a permanent property.
+
+## Next steps
+1. **Nothing to change.** The model was right; no backtest or config is affected.
+2. Fold the Crude basis credit into any future Crude cost table — it is currently
+   charged as a drag, which is wrong in sign.
+3. Re-measure if IG's benchmark moves materially, or if a second index arm goes live.
