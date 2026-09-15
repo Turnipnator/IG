@@ -3598,3 +3598,162 @@ tick-entry comment rewritten to the measured result. `tests/test_breakout_tick_l
 suite 213 → 224. Blackout finding refined during implementation: the :05 path retries every 5 min, so a
 startup cooldown is a DELAY not a loss unless it outlives the confirmation hour. Startup-cooldown
 exemption (item 4) deliberately NOT done — order-path decision, still open.
+
+---
+
+## 2026-09-14 — Two breakout losses today; is the strategy map wrong?
+
+**Question (user):** "two losses today, were they both breakout? … I may have some of it wrong in regards to momentum, pullback, breakout etc?"
+
+**Sub-questions:** (1) which strategy opened today's losers; (2) is the live config what the v3/sweep decisions say; (3) is a losing streak this long unusual for the breakout book; (4) is there a structural pattern (direction, correlation) rather than variance.
+
+**Hypotheses:** H1 normal variance of a ~30% hit-rate trend system · H2 the breakout SHORT leg has no edge on Gold/GBP (payoff is long-bias + trailing exit) · H3 correlated exposure — Gold short and GBP/USD short are one long-USD bet · H4 misconfiguration.
+
+**Evidence.**
+- Today: GBP/USD SELL #351 (10:00, −£22.25) and Gold SELL #352 (11:05, −£35.80), both `strategy=breakout`, 55-bar channel break, HTF=BEARISH, stopped 17:48 and 17:53 BST. Archive 15:00→17:45 BST: DXY 9943→9913, Gold 4268→4314, GBP/USD rising — one dollar-weakness move.
+- Since v3 (09-09): breakout 5t 0W/5L −£143.13, **all five SELLs** (Gold ×3, GBP ×2).
+- Lifetime live breakout by direction: Gold BUY 7t 5W/2L +£158.83 **+3.48R**; Gold SELL 4t 0W/4L −£122.17 **−3.29R**; GBP BUY 5t −0.87R; GBP SELL 4t 0W/4L −1.71R. Gold+GBP shorts 8t 0W/8L −£160.63 −5.0R; longs 12t 7W/5L +2.61R. (DXY SELL 4t +0.87R, EUR SELL 4t −0.51R.)
+- Shadow breakout (benched_outcomes, all markets): BUY 70t −0.146R/t vs SELL 63t −0.098R/t — **shorts are NOT worse book-wide**; Gold shadow n=2 = no information.
+- Backtest (already recorded above, 2026-09 benchmark section): Gold 730d long-only leg gross PF 2.55/+0.725R; window had Gold +73.7% and random longs + the bot's exit gave PF 1.44–1.57 — "the payoff came from long-bias-plus-trailing-exit". Flagged there as a POST-HOC leg selection.
+- Config (H4): `config.py` + VPS `market_modes.json` match the decisions — momentum shadow everywhere; Gold + GBP/USD 1h breakout live; Gold daily-trend live, Japan shadow; S&P + NASDAQ pullback live; Crude/DXY/EUR breakout-shadow (Crude #343 is a legacy live position, trail at 9620.7 vs entry 9260.1). No stray overrides.
+- Naming trap: `📉 Pullback [..]` (main.py:2102) = the daily pullback strategy; `🔬/✅ Pullback [..]` (main.py:2342–2409) = momentum's retrace-entry timing, shadow-only.
+
+**Confidence.** H4 refuted — HIGH. H3 (today = one USD bet) — HIGH for today; `correlation_group` only covers `equity_index`, so Gold/GBP/EUR/DXY can stack USD risk — HIGH as a fact, impact unmeasured. H2 — LOW-MEDIUM: 0/8 is ≈3–6% under independence at a 30–35% hit rate, but the losses are clustered (one gold rally, one dollar move today) so the effective n is ~4–5, and the split was chosen after seeing it; the shadow book does not corroborate a book-wide short problem. H1 cannot be rejected.
+
+**Next steps (no change now).** Pre-register for the next review (Gold breakout n≥30 or 2026-12-09): judge the Gold/GBP breakout short leg ONLY on shorts taken after 2026-09-14 (out-of-sample from this observation); review whether FX + Gold need a `usd` correlation_group. Every other live strategy is already long-only for the drift reason; the 1h breakout is the only one still shorting.
+
+---
+
+# Research: SPY daily EMA20 + RSI<35 long-only (2026-09-15)
+
+Artefacts: `scripts/backtest_spy_ema_rsi.py`, `SPY_EMA_RSI_TEARSHEET.md`.
+Source: `~/Downloads/SPY Historical Price Data.csv` (175 daily bars,
+2026-01-02 → 2026-09-14). **Not a 12-month file — ~8.3 months.**
+
+## Question
+Does a long-only "20-EMA trend filter + RSI(14) < 35 oversold entry" produce a
+profitable, repeatable edge on daily SPY over this sample?
+
+## Hypotheses considered
+1. The combination is a working dip-buy filter and will show a positive edge.
+2. The combination is *rare but real* — few trades, high win rate.
+3. **The two conditions are mechanically incompatible** and the rule cannot fire.
+4. Any positive result is a bull-regime artefact, not an edge.
+
+## Evidence
+- **Arm A (as specified) fires ZERO times in 175 bars.** Hypothesis 3 confirmed.
+- The conditions partition the sample almost exactly at RSI 50:
+  RSI(14) while close > EMA20 → **min 48.0** (102 bars);
+  while close < EMA20 → **max 52.1** (60 bars).
+  RSI<35 is 13 points clear of ever being reachable above the EMA.
+- Loosening does not rescue it: `close>EMA20 & RSI14<45` is **also empty**;
+  `close>EMA50 & RSI14<35` is empty; `EMA20 rising & RSI14<35` is empty.
+- **The same collision hits the exit.** A bare `RSI(14) >= 55` level exit fires on
+  the bar after entry for any `close > EMA20` arm, because RSI is already >55 at
+  entry. Engine now arms that exit only after RSI has traded *below* the level.
+  Correctness fix to a degenerate rule, not a tuned parameter.
+- All 6 RSI(14)<35 bars in the sample lie in **one** 3-week drawdown
+  (2026-03-13 → 2026-03-30). The oversold "signal" is a single episode.
+- Best-populated arm fired **2 trades**. Buy & hold: +10.94%, max DD −9.13%,
+  beating every arm by an order of magnitude.
+
+## Confidence
+- **HIGH** — arm A is unimplementable as written; the collision is structural
+  (both legs measure net change over a similar lookback), not a 2026 quirk.
+- **HIGH** — this sample cannot support *any* long-only verdict: one-directional
+  bull window, and n≤2 on every arm vs the ≥30 bar in `GO_LIVE_CRITERIA.md`.
+- **MEDIUM** — the RSI<35 trigger is one episode, not a pattern. Arm E's +£163
+  is that episode's bounce; treat as anecdote.
+- **LOW** — no "most consistent profitable pattern" was identified. Searching 175
+  bars for one is the curve-fit the brief explicitly rules out.
+
+## Self-critique
+- *What would disprove this?* A multi-year sample with bear/range regimes. If
+  arm A is still ~empty there, the structural claim holds; if it trades, the
+  claim narrows to trending markets.
+- *Simpler explanation?* Yes, and it is the one adopted: the rule is
+  self-contradictory, not merely unlucky.
+- *Data snooping?* Arms B–D were declared before results were read and all are
+  reported. Arm E is flagged post-hoc. No arm was selected on its own score.
+- SMA200 could not be tested — the file has 175 bars.
+
+## Next steps
+1. Re-run on 10+ years of SPY before concluding anything about the rule itself.
+2. If the shape is still wanted, separate the timescales (SMA200 + RSI(14), or
+   EMA20 + RSI(2)) rather than tuning the 35 threshold.
+3. Overlaps with live work: the daily pullback arm on S&P 500 / NASDAQ 100
+   (close > SMA200, buy 5-session low, deployed 2026-09-09 `7ebd4e8`) is arm D's
+   sibling. Extending that arm's evidence base beats qualifying a new rule.
+
+---
+
+# Research: S&P 500 pullback — 41y replication, true OOS, walk-forward, rotation null (2026-09-15)
+
+Artefacts: `scripts/spy_pullback_walkforward.py`, `SPY_PULLBACK_41Y_TEARSHEET.md`,
+`data/backtest_cache/GSPC_1d_full.csv` (^GSPC daily, 10,505 sessions, 1985-01-02
+→ 2026-09-14). Costs: 0.6pt spread + (bench+2.5%)/365/night; R = 2×ATR20.
+
+## Question
+User asked for "the most consistent long-only pattern" on S&P over a long period,
+walk-forward if needed, to get the spread-betting bot on S&P in the best shape.
+(The 10-year CSV they supplied was byte-identical to the 8-month one — MD5
+`7393e81f…`, 175 rows. Used a fresh yfinance ^GSPC pull instead.)
+
+## Hypotheses
+1. A better long-only S&P pattern exists than the live pullback arm.
+2. The live pullback arm is the answer, and the 09-09 sweep understates it.
+3. The 09-09 result is in-sample/parameter-lucky and dies under walk-forward.
+4. It is drift, not timing — a randomly-timed long in the same regime does as well.
+
+## Evidence
+- **Engine parity EXACT.** An independently written engine reproduces
+  `src/pullback.replay` byte-for-byte over all 363 trades (entry/exit dates,
+  both fills, exit reason). The live engine is confirmed by reimplementation.
+- **R1 replication (2004–2026):** n 192, **+0.219R**, z +2.84, PF 1.58, hit 70%,
+  73% yrs+. Sweep published n 183, +0.22R, z 2.4, PF 1.57, 73%. Reproduced.
+- **R2 TRUE OOS (1985–2003, never fitted):** n 165, **+0.207R**, z +2.75, PF 1.65,
+  hit 69%, **76% of years positive**, at *double* the modelled cost (0.162R/trade
+  vs 0.079R). Hypothesis 3 weakened; the edge predates the post-2000 reversal era.
+- **R3 walk-forward** (8y train / 2y trade, 17 rolling windows, 72-cell grid):
+  re-optimised **+0.288R** z 3.93 vs **live defaults +0.230R** z 3.70 over the
+  identical spans. Difference +0.058R, SE 0.096, **t +0.60 — noise**, and the two
+  arms share most trades. **Both survive.** Parameter picks: `sma_n=200` 14/17,
+  `n_out=7` 14/17, `max_hold=15` 11/17, `n_in=7` 10/17.
+- **R4 rotation null** (2,000 circular rotations, regime + exits preserved):
+  observed +0.203R vs null mean +0.024R (sd 0.039), 95th pct +0.088,
+  **p < 0.0005, ≈4.5σ**. Entry timing carries it; drift is +0.024R.
+- **Beta:** 39% of buy-and-hold points in **22% of calendar time**; worst
+  drawdown 628 pts vs B&H 1,220 pts (−56.8%, 2007–09).
+- **R5:** `close>EMA20 & RSI(14)<35` = **0 bars in 10,505**. Also 0 at RSI<45,
+  and 0 for `close>EMA50 & RSI<35`. Min RSI(14) while above the EMA20 = **46.5**.
+  The collision is structural, confirmed on 41 years.
+
+## Confidence
+- **HIGH** — the live S&P pullback arm is a real, costed, positive-expectancy edge.
+  Four independent checks (replication, 17y untouched OOS, walk-forward, null).
+  Stronger than 09-09 could claim: evidence base ~doubled, WF and null added.
+- **HIGH** — EMA20+RSI<35 is unimplementable on daily bars; not a sample artefact.
+- **MEDIUM** — the wider exit (`n_out=7`, `max_hold=15`) may be genuinely better.
+  Modal in the WF picks but the margin is inside noise. Do NOT act on it now.
+- **LOW** — that any of this transfers to IG execution. Yahoo cash closes ≠ IG DFB
+  fills; index DFB financing still never observed on this account.
+
+## Self-critique
+- *What would disprove it?* Live IG-native trades diverging from the backtest, or
+  the wider-exit test coming back flat (would suggest the WF picks were noise).
+- *Simpler explanation?* Drift — ruled out by the rotation null (4.5σ).
+- *Data snooping?* The rule was pre-registered on 09-09 and NOT re-chosen here;
+  this run only tested it. The WF grid is the sweep's own 72 cells. The wider-exit
+  observation is flagged post-hoc and explicitly not acted on.
+- 41 years is one price path; 2008/2020 are single events.
+- Pre-2004 bench rates are assumed (repo table starts 2004); they make that
+  window harsher, so the error direction is safe.
+
+## Next steps
+1. **Change nothing.** Parameters stay at 5/5/10/200.
+2. Carry ONE pre-registered item to the next review: wider exit `n_out=7`,
+   `max_hold=15`. Not a change, a test.
+3. Measure index DFB financing with a single overnight index position — the last
+   assumed number in the chain, and the one that decides daily-horizon viability.
+4. G3 (30 IG-native trades) unchanged: ~4 years at ~8 trades/yr. This work is
+   Tier 2 backtest evidence and does not bypass §7.
