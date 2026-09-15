@@ -1105,6 +1105,17 @@ MARKETS = [
                                 # (daily_trend_max_risk_gbp). User decision after the 22y study
                                 # (research_notes "Optimum strategy per instrument"): live on the
                                 # DEMO account from the first signal, coexisting with the 1h breakout.
+        allowed_direction="BUY",   # 2026-09-15: LONG-ONLY (user decision). Live breakout by
+                                   # direction — BUY 7t 5W/2L +3.48R vs SELL 4t 0W/4L -3.29R;
+                                   # pooled with GBP/USD, shorts are 8t 0W/8L -£160.63 against
+                                   # longs 12t 7W/5L +2.61R. Graded a RISK STANCE, not a proven
+                                   # result: 0/8 is only ~3-6% under independence, the losses
+                                   # cluster into two moves, the split was chosen post-hoc, and
+                                   # the shadow book shows shorts are NOT worse book-wide
+                                   # (BUY -0.146R/t vs SELL -0.098R/t). Every other live
+                                   # strategy is already long-only for the drift reason. The
+                                   # blocked side is still snapshotted and resolved in R, so
+                                   # the pre-registered 09-14 short-leg test still settles.
         min_stop_distance=2.0,  # Raised from 1.0 — cap was 20pts (20x), ATR*2.5 = 25-35, every trade capped
         default_size=1.0,      # IG minimum is 1.0 per point (was 0.1 - all trades rejected!)
         min_confidence=0.55,   # Lowered 0.60→0.55 (2026-06-30): the 0.60 gate threw away
@@ -1323,6 +1334,9 @@ MARKETS = [
         epic="CS.D.GBPUSD.TODAY.IP",
         name="GBP/USD",
         sector="Forex",
+        allowed_direction="BUY",   # 2026-09-15: LONG-ONLY (user decision) — see the Gold entry
+                                   # for the evidence and its grade. GBP/USD's own split is
+                                   # BUY 5t -0.87R vs SELL 4t 0W/4L -1.71R.
         min_stop_distance=4.0,  # Raised from 3.0 — IG rejects at 3.0 when pre-London spread widens
         default_size=0.5,
         candle_interval=60,    # Switched from 5m — 5m bled live on spread vs tiny stops; 1h has the durable edge

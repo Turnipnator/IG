@@ -1159,12 +1159,46 @@ def _log_entry_refusal(epic: str, market_config, signal, kind: str, detail: str,
         logger.debug(f"Entry-refusal logging failed for {epic}: {e}")
 
 
+def _breakout_direction_blocked(market_config, signal) -> bool:
+    """True when a LIVE breakout entry is the wrong way round for a market pinned to
+    one direction by MarketConfig.allowed_direction.
+
+    Until 2026-09-15 `allowed_direction` was read in exactly ONE place —
+    analyze_market_from_stream, the MOMENTUM path — and src/breakout.py never
+    referenced it at all. Setting it on a breakout market was therefore a SILENT
+    NO-OP: the flag looked applied, logged nothing, and blocked nothing. Same class
+    as the Crude epic sitting OFFLINE for 16 days while every other subsystem
+    reported it alive. The gate below is checked in _execute_breakout_entry, which
+    is the single funnel BOTH live routes pass through (hour-close via
+    analyze_forex_breakout, and tick-cross via _check_breakout_tick_trigger), so a
+    future third caller inherits it rather than bypassing it.
+
+    Live only, by construction: shadow and observer arms return before
+    _execute_breakout_entry, and analyze_forex_breakout deliberately routes a
+    blocked LIVE signal into the shadow branch so the counterfactual is still
+    snapshotted and resolved in R. The pre-registered 2026-09-14 test — judge the
+    Gold/GBP short leg on shorts taken AFTER that date — therefore still resolves."""
+    allowed = (getattr(market_config, "allowed_direction", "") or "").strip()
+    if not allowed or signal is None or getattr(signal, "signal", None) is None:
+        return False
+    return signal.signal.value != allowed
+
+
 def _execute_breakout_entry(epic: str, market: MarketStream, market_config, signal, df) -> None:
     """Place a LIVE breakout order (market mode 'breakout'). ISOLATED from the
     momentum pipeline with its own essential gates (one-per-epic, loss cooldown,
     trading hours, IG min-stop clamp, spread, position sizing) so a bug here cannot
     touch the momentum book. Exit is the Donchian-trail (_update_breakout_trail) plus
     the broker stop; a stop/limit fill is cleaned up by external-close detection."""
+    # Direction restriction (MarketConfig.allowed_direction). FIRST gate, so a
+    # blocked entry is journalled as direction-restricted rather than being
+    # attributed to whichever later gate happened to catch it. Entry-only: open
+    # positions, trails and exits are untouched.
+    if _breakout_direction_blocked(market_config, signal):
+        _log_entry_refusal(
+            epic, market_config, signal, "direction-restricted",
+            f"market is {market_config.allowed_direction}-only", journal_it=True)
+        return
     # One breakout position per epic. Daily-trend positions on the same epic are
     # IGNORED here (user decision 2026-09-09): the two strategies coexist on Gold,
     # otherwise a multi-week daily hold would block every 1h breakout entry.
@@ -1531,23 +1565,41 @@ def analyze_forex_breakout(epic: str, market: MarketStream, market_config, fx_mo
         if signal.signal == Signal.HOLD:
             _log_blocked_break(epic, market.name, signal)
             return
-        if fx_mode != "breakout":
-            # SHADOW — observe-only. If a LIVE breakout position is already open on
-            # this epic (entered before a /mode flip to shadow — Crude 2026-09-09),
-            # the strategy could not re-enter anyway: the live trade IS the outcome,
-            # and an hourly "would BUY" would double-count it in rejected_signals.
-            # Momentum / daily-trend positions are not counted (see the helper).
+        # Scoped to LIVE mode on purpose. S&P 500 / FTSE / AI Index already carry
+        # allowed_direction="BUY" for the momentum path while running the breakout
+        # SHADOW observer; without this scope their SELL shadow rows would silently
+        # change reject_reason prefix and drop out of any existing
+        # "Breakout-shadow:" query.
+        direction_blocked = (fx_mode == "breakout"
+                             and _breakout_direction_blocked(market_config, signal))
+        if fx_mode != "breakout" or direction_blocked:
+            # SHADOW — observe-only. Also reached when this market trades breakout
+            # LIVE but the signal is the wrong way for its allowed_direction: reusing
+            # the shadow branch (rather than returning) keeps the blocked side
+            # measured in R via _snapshot_breakout_shadow/_resolve_breakout_shadow,
+            # which is what the 2026-09-14 pre-registration needs. The hard gate in
+            # _execute_breakout_entry still backstops the tick route.
+            #
+            # If a LIVE breakout position is already open on this epic (entered
+            # before a /mode flip to shadow — Crude 2026-09-09), the strategy could
+            # not re-enter anyway: the live trade IS the outcome, and an hourly
+            # "would BUY" would double-count it in rejected_signals. Momentum /
+            # daily-trend positions are not counted (see the helper).
             if _live_breakout_position(epic):
                 return
+            tag = (f"direction-restricted {market_config.allowed_direction}-only"
+                   if direction_blocked else "shadow")
             logger.info(
-                f"🔬 Breakout [{market.name}] (shadow): would {signal.signal.value} "
+                f"🔬 Breakout [{market.name}] ({tag}): would {signal.signal.value} "
                 f"@ {current_price:.1f} — {signal.reason}"
             )
             try:
                 journal.log_rejected_signal(
                     epic=epic, market_name=market.name, direction=signal.signal.value,
                     confidence=signal.confidence, adx=signal.atr, rsi=0.0,
-                    reject_reason=f"Breakout-shadow: {signal.reason}",
+                    reject_reason=(
+                        f"Breakout-shadow{'[direction-restricted]' if direction_blocked else ''}: "
+                        f"{signal.reason}"),
                 )
             except Exception:
                 pass

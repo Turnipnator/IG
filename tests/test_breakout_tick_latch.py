@@ -175,10 +175,16 @@ class LatchSurvivesRestart(_Globals):
 class EntryRefusalsAreVisible(_Globals):
     def setUp(self):
         super().setUp()
+        # BUY, not SELL: Gold went allowed_direction="BUY" on 2026-09-15 and the
+        # direction gate is the FIRST gate in _execute_breakout_entry, so a SELL
+        # fixture would be refused there and never reach the cooldown/position gates
+        # these tests exist to cover. Direction is incidental to what is asserted
+        # here (which gate fired, logged once, journalled once); the restriction
+        # itself is covered by tests/test_breakout_direction_restriction.py.
         self.sig = main.TradeSignal(
-            signal=main.Signal.SELL, epic=EPIC, market_name="Gold", confidence=0.7,
+            signal=main.Signal.BUY, epic=EPIC, market_name="Gold", confidence=0.7,
             entry_price=4351.37, stop_distance=44.25, limit_distance=0.0,
-            reason="Breakout: SELL break of 55-bar channel @ 4341.4", atr=22.1, break_level=4341.4)
+            reason="Breakout: BUY break of 55-bar channel @ 4361.4", atr=22.1, break_level=4361.4)
 
     def _enter(self):
         with self.assertLogs(main.logger, level="INFO") as cm:
