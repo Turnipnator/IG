@@ -3822,3 +3822,115 @@ Notional 0.77 × 7589.66 = £5,844. **£1.152/night × 365 ÷ £5,844 = 7.20%/yr
 2. Fold the Crude basis credit into any future Crude cost table — it is currently
    charged as a drag, which is wrong in sign.
 3. Re-measure if IG's benchmark moves materially, or if a second index arm goes live.
+
+---
+
+# Finance LLM (inclusionai/ling-3.0-flash-fin via OpenRouter) — signal or research value? 2026-09-15
+
+## Question
+- **Q1 blind forecast.** Given an anonymised 40-bar daily OHLC window (no ticker, no dates, rebased to 100), does the
+  model's P(close[t+5] > close[t]) rank 5-session forward moves better than chance AND better than trivial rules?
+- **Q2 knowledge probe.** On 8 questions this repo has already MEASURED, does the model's answer match, and does it
+  flag uncertainty when it should?
+
+## Hypotheses
+- **H1 no information** — rho ≈ 0. Prior favourite: liquid-index daily direction is near-random and the model sees
+  only prices.
+- **H2 repackaged heuristic** — rho ≠ 0 but fully explained by ret5/ret20 (a momentum/reversal rule in disguise).
+- **H3 genuine incremental signal** — rho > 0 AND p_up survives controlling for ret5, ret20 and market.
+- **H4 memorisation** — the model recognises famous episodes. Mitigated by rebasing and hiding dates/ticker; would
+  show as an implausibly high rho concentrated in 2008/2020-type windows.
+
+## Design — PRE-REGISTERED, written before any forecast was requested
+- Data: `^GSPC` 1985–2026 (`data/backtest_cache/GSPC_1d_full.csv`), NDX + GC=F 2004–2026 (`tests/fixtures`).
+  100 anchors/market, seed 20260915, ≥20 bars apart, ≥250 bars history ⇒ 300 windows, shuffled across markets,
+  10 per request (30 requests). Model `inclusionai/ling-3.0-flash-fin:free`, reasoning on, seed fixed.
+  Sample up-rates: SPX 0.55, NDX 0.50, GOLD 0.56.
+- Outcome: 5-session forward close move in ATR14 units.
+- **PRIMARY:** within-market rank correlation of p_up vs forward move; one-sided permutation p (20k).
+- **PASS requires all three:** rho > 0 with p < 0.05; high-minus-low tercile forward move > 0; p_up coefficient
+  t > 2 in OLS `fwd_atr ~ p_up + ret5 + ret20 + market`. Anything else = no usable signal at this n.
+- **Power, stated up front:** 2σ-detectable |rho| ≈ 0.115 at n=300. A real-but-small daily edge (rho 0.03–0.05 —
+  what a tradeable one looks like) is BELOW detection. A FAIL rules out a LARGE edge only.
+- Secondary, not decisive: Brier vs long-run climatology; hit rate vs always-up; baselines (ret20, −ret5, −RSI14,
+  >SMA200, pullback flag); which features p_up tracks.
+- Script: session scratchpad `ling_forecast.py` (build | run | score). Only anonymised public index prices are
+  sent — no journal, config or strategy parameters leave the machine.
+
+## Evidence — Q2 knowledge probe (8 questions, one sample each, reasoning on unless stated)
+| Question | Repo truth (measured) | Model answer | Verdict |
+|---|---|---|---|
+| IG index DFB financing | **7.20%/yr** (bench + 2.5%) | "SOFR ~5.3% + ~2.5% ≈ 7.5–8%, as of mid-2024", flagged unsure | structure RIGHT, level stale |
+| 5-min EMA-alignment momentum | **≈0 ATR** fwd move at every horizon, n=1,078 | "weak positive edge before costs" — YES, low | **WRONG** on the signal; right that it loses after costs |
+| S&P pullback-in-uptrend, 41y | **+0.203R, hit 69%**, holds on never-fitted 1985–2003 | "~0.0R, ~50% win", low | **WRONG** — reasoning charged 2.5%/yr financing as a heavy drag on a ≤10-session hold |
+| Cash-open 15-min fade | NO (z ≤ 1.3) | NO, medium | RIGHT |
+| Overnight drift on a DFB | NO (HIGH) | NO, medium | RIGHT |
+| Gold daily Donchian 55/20 | **+0.69R, PF 2.06** | declined ("cannot backtest") | honest abstain |
+| EUR/USD 1h breakout + daily trend | **PF ≈0.57** (truth MEDIUM) | "PF 1.1–1.3, marginally profitable", medium | **WRONG and confident** |
+| Drawdown maths (p=0.40, +1.75R/−1R, 300 trades) | **P(DD≥21R)=0.293, median 17.0R** (MC n=100k) | reasoning ON: **no content** after 26.8k reasoning tokens · reasoning OFF (2s): "25–30%, median ≈17R" | RIGHT with reasoning off |
+
+**Pattern.** Every correct strategy answer is a "NO", which is also what a generic "retail edges don't survive
+costs" prior says. The one measured YES (S&P pullback) it called zero; the measured NO (EUR/USD breakout) it called
+marginally profitable, with medium confidence. Nothing here shows knowledge of a specific strategy beyond that
+prior. Its closed-form risk maths is genuinely good, but only with reasoning OFF — with reasoning ON, the same
+question spiralled into a token-cap failure.
+
+## Evidence — Q1 blind forecast (230/300 forecasts parsed; 7 of 30 batches failed)
+- **Coverage.** 23 batches parsed 10/10. **5 batches hit the 32,768-token output cap mid-reasoning and returned no
+  answer** (the same spiral as the drawdown question). 2 were rate-limited upstream (429), then hung ~11 min and
+  returned nothing usable. Median 85 s and 25k output tokens per batch. The missing 70 are ex-ante random: batches
+  were shuffled and the outcome was invisible to the model. Flipping the verdict at n=300 would need rho ≈ +0.5 on
+  those 70.
+- **Forecasts:** mean 0.504, sd 0.060, range 0.30–0.65, 12% exactly 0.50.
+- **PRIMARY:** within-market rho = **−0.064**, one-sided permutation p = 0.835 ⇒ **FAIL**. By market: SPX −0.01
+  (n 77), NDX +0.09 (n 74), GOLD −0.26 (n 79).
+- **Terciles:** low p (0.44) → **+0.30 ATR**, 60% up; high p (0.57) → **−0.02 ATR**, 51% up. High − low =
+  **−0.32 ATR, t −1.14** ⇒ **FAIL** (wrong sign).
+- **OLS** `fwd_atr ~ p_up + ret5 + ret20 + market`: p_up_z −0.09, **t −0.66** ⇒ **FAIL**.
+- **Brier 0.2587** vs always-0.50 **0.2500** vs long-run base rate 0.2515 — worse than answering 0.50 every time.
+  Hit rate 46.8% vs always-up 53.7%.
+- **What it keys on:** p_up's rank correlation is RSI14 **+0.61**, ret5 **+0.56**, ret20 **+0.45**, above-SMA200
+  +0.21, pullback flag **−0.17**. **Its probabilities are a momentum/RSI-chasing rule:** recent strength reads as
+  bullish and dips as bearish, the OPPOSITE of the validated S&P pullback edge. In this sample that heuristic is
+  worth nothing (ret20 −0.03; pullback flag +0.04).
+
+**Pre-registered verdict: FAIL on all three criteria.**
+
+## Confidence
+- **HIGH — no large edge from price-only windows.** rho −0.06, every secondary metric has the wrong sign, and
+  Brier is worse than a coin.
+- **MEDIUM-HIGH — H2 mechanism.** The forecasts are a repackaged momentum/RSI heuristic (rank corr 0.45–0.61), and
+  that heuristic has no 5-day value here. This agrees with the repo's own finding that momentum signals are empty
+  (n=1,078).
+- **LOW — Gold rho −0.26.** Post-hoc subgroup (1 of 3, n=79). Do not act on it.
+- **NOT ruled out — a small real edge (rho 0.03–0.05).** Below detection, but the point estimate is negative, so
+  nothing to chase.
+- **MEDIUM — Q2.** No strategy-specific knowledge beyond a "most things don't work" prior; closed-form risk maths
+  fine with reasoning off.
+
+## Self-critique
+- 10 windows per prompt may degrade a 5B-active model compared with 1 per prompt. That costs 10× the free quota
+  (~50 req/day). Its reasoning shows it computing MA/RSI/momentum either way, so more attention is unlikely to
+  change what it computes.
+- **Price-only.** The model's pitch is finance TEXT (filings, news, research), not chart reading. This says nothing
+  about headline/event classification — the only plausible bot use.
+- One sample per probe question at default temperature; the S&P and EUR/USD misses could flip on resampling, and
+  n=8 cannot separate knowledge from prior.
+- The free endpoint is itself unreliable: 23% of batches failed, plus 429s and 11-minute hangs. It is unfit for
+  anything on the order path whatever its skill.
+
+## Next steps
+1. **Nothing to build. Keep LLM price forecasts away from the order path** — worse than a coin on Brier, and it
+   leans against the one validated edge.
+2. If a finance LLM is revisited, the only untested use with a mechanism is **headline → direction/event
+   classification**, pre-registered against timestamped forward moves, reasoning OFF, `max_tokens` capped.
+3. Do not take strategy verdicts from it: of the 3 non-obvious measured cases it got 2 wrong and abstained on 1.
+4. Scripts: `scripts/ling_forecast.py` (build | run | score) and `scripts/ling_probe.py`; key from
+   `OPENROUTER_API_KEY`; outputs in `data/ling_forecast/`.
+
+## Summary
+- **Most supported:** H1 + H2 — no usable signal. The forecasts are a momentum/RSI heuristic with no 5-day value.
+- **Ruled out:** H3 incremental signal (FAILED all three pre-registered criteria); H4 memorisation (it would show as
+  a high rho; the observed rho is negative).
+- **Open:** text/news classification (untested); single-window prompting (unlikely to matter, 10× the cost).
+- **Action:** none.
