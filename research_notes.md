@@ -3934,3 +3934,173 @@ question spiralled into a token-cap failure.
   a high rho; the observed rho is negative).
 - **Open:** text/news classification (untested); single-window prompting (unlikely to matter, 10× the cost).
 - **Action:** none.
+
+---
+
+# GARCH vol-targeted sizing (milesdeutscher/garchmethod) — can it stop the bleed? 2026-09-17
+
+## Question
+User: the bot "has been bleeding slowly on a daily basis over a long time" — can https://github.com/milesdeutscher/garchmethod help?
+Repo (commit `e1e93d9`, 617 lines): walk-forward GARCH(1,1) (Student-t, refit every 21 days) → 1-day vol forecast →
+regime (calm/normal/storm by 1y percentile) → size multiplier `clip(target_vol / forecast_vol, 0.25, 2.0)`, plus a
+fixed-vs-vol-targeted comparison harness. It states plainly that it never predicts direction. It is a SIZING layer only.
+
+Sub-questions:
+- Q1. What does the repo do, and does the bot already do it? (the bot's sizing = `risk £ / stop_distance`, stop = k×ATR)
+- Q2. Can re-weighting trades by a vol forecast turn a losing book positive? (only if R per trade co-varies with vol)
+- Q3. Does R co-vary with GARCH vol on (a) the 352 real journal trades, (b) the long-history replays of the live daily arms?
+- Q4. Where is the bleed actually coming from?
+
+## Hypotheses
+- H1 — GARCH sizing helps: trades taken in high-forecast-vol ("storm") regimes earn less R, so sizing them down raises
+  risk-weighted mean R and cuts drawdown.
+- H2 — Redundant: the bot's ATR-stop sizing is already inverse-vol; a GARCH swap changes weights little, and any
+  change is noise.
+- H3 — Wrong lever: the bleed is negative expectancy per trade (signal + costs), which no mean-1 re-weighting can fix.
+
+## Design — PRE-REGISTERED, written before any GARCH forecast was computed
+- Vol forecast: the repo's `walkforward_garch` imported verbatim from the clone, periods 252, Yahoo daily closes.
+  For each trade, use the latest forecast dated STRICTLY BEFORE the entry date (no look-ahead).
+- Variants: **SWAP** (replace the bot's vol estimate with GARCH): w = (stop_distance / entry_price) / σ_garch; for the
+  daily replays w = (ATR20 / entry) / σ_garch. **OVERLAY** (repo pattern A on top of current sizing):
+  w = clip(trailing-252 median σ / σ, 0.25, 2.0). **THROTTLE** (repo pattern B): w = 0.5 in "storm", else 1.
+- Metric: risk-weighted mean R = Σ R·w / Σ w (scale-invariant, so it is risk-matched) minus plain mean R.
+  Null: permute w within market, 5,000 iterations, two-sided p. Also report R max drawdown with w scaled to mean 1.
+- Samples: (a) journal 2026-03→09 closed trades (all strategies, Yahoo proxy per epic; AI Index skipped);
+  (b) S&P + NASDAQ pullback `src/pullback.py:replay` on Yahoo daily since 1990; (c) Gold + Japan daily-trend
+  `src/daily_trend.py:replay` on Yahoo daily since 2000.
+- **Decision rule:** worth building only if risk-weighted mean R improves with p < 0.05 on sample (b)+(c) pooled
+  AND has the same sign on (a). Anything else = do not build.
+- _Deviation noted after the fact:_ none on the rule; I added two robustness splits (era halves, breakout by
+  direction) for the only p<0.05 cells. They are post-hoc and labelled as such.
+
+## Evidence — Q1 (the repo)
+- Code read in full. Walk-forward is honest: each forecast uses only returns through that close. One small slip: at
+  each 21-day refit, `sigma2` is seeded with the last in-sample variance (day t−1) and stepped once, so ε²(t−1) is
+  skipped. It decays at β≈0.9 per day. Negligible.
+- `compare.py`'s "fixed size" baseline takes the SAME notional every day, with no vol adjustment at all. Its demo gain
+  is the jump from no vol sizing to vol sizing. **The bot made that jump long ago:** `risk_manager.py`
+  `size = risk £ / stop_distance`, with stop = k × ATR. It is already inverse-vol sizing.
+
+## Evidence — Q3 (scripts/garch_sizing_test.py, outputs data/garch_test/)
+Δ = risk-weighted mean R − plain mean R; weights mean-1 within market; p = 5,000 within-market permutations.
+
+| sample | n | mean R | ρ(bot vol, GARCH) | SWAP Δ (p) | OVERLAY Δ (p) | THROTTLE Δ (p) |
+|---|---|---|---|---|---|---|
+| **(b)+(c) replay pooled — the decision sample** | 775 | +0.397 | 0.90 | +0.008 (0.42) | +0.022 (0.17) | +0.021 (0.18) |
+| (b) S&P + NASDAQ pullback 1990→ | 653 | +0.298 | 0.92 | +0.012 (0.008) | +0.025 (0.010) | +0.008 (0.35) |
+| (c) Gold + Japan daily-trend 2000→ | 122 | +0.929 | 0.78 | −0.009 (0.89) | +0.004 (0.96) | +0.089 (0.31) |
+| (a) journal, all closed trades | 347 | −0.043 | 0.06 | +0.037 (0.27) | −0.007 (0.48) | −0.010 (0.49) |
+| (a) journal, momentum family | 313 | −0.038 | 0.30 | −0.002 (0.95) | **−0.017 (0.047)** | −0.019 (0.18) |
+| (a) journal, breakout | 34 | −0.091 | 0.17 | **+0.081 (0.006)** | +0.005 (0.53) | 0 (no storm trades) |
+
+- **R by GARCH regime.** Journal: calm −0.100 (83), normal −0.097 (108), **storm +0.025 (156)**, so the bot's
+  losing trades did BETTER in storms. The repo's throttle would have deepened the loss. Replays pooled: calm +0.489
+  (416), normal +0.313 (204), storm +0.237 (154). Spearman R vs vol percentile: journal +0.055, replay −0.074.
+- **Max drawdown (R), plain → weighted.** Replay pooled 10.71 → SWAP 10.91 / OVERLAY 10.29 / THROTTLE 10.70.
+  Journal 24.33 → 18.92 / 29.29 / 29.45. No consistent drawdown benefit.
+- **Robustness (post-hoc).** Pullback OVERLAY by era: 1990–2008 **+0.0006**, 2009–2026 **+0.052**, so the p=0.010
+  comes from one half. Pullback SWAP is +0.009 and +0.013 in the two halves: consistent but tiny, as expected when
+  GARCH ≈ ATR (ρ 0.92). Journal breakout SWAP: BUY +0.091 (17), SELL +0.054 (17).
+- **£ scale.** Pullback runs 17.8 trades/yr across both markets at ≈£23 risk. SWAP +0.012R ≈ **£5/yr**;
+  OVERLAY +0.025R ≈ £10/yr.
+
+## Evidence — Q4 (where the bleed is; fresh journal copy 2026-09-17, 352 closed, −£485.90)
+- Momentum family (now shadow everywhere since `0d37793`, 09-09): 318 trades, **−£447.26**.
+- Breakout SELLs: 17 trades, **−£171.53, 2W/15L, −0.33R**. Breakout BUYs: 17 trades, **+£132.89, +0.15R**.
+  Long-only since `20271a9` (09-15, verified live 09-17).
+- Every closed loss since the 09-09 live-set change is a breakout SHORT: Gold ×2 −£80.00, GBP/USD ×3 −£53.23. The
+  only other close is Crude's legacy BUY, +£85.14.
+- Both leaks are negative expectancy PER TRADE. Sizing re-weights trades with mean weight 1, so it cannot flip that
+  sign: it moved mean R by at most ±0.04 anywhere here.
+- Literature agrees. Harvey et al. (JPM 2018, 60 assets): vol targeting raises Sharpe only for risk assets
+  (equity/credit), is negligible for bonds/FX/commodities, and trims left tails everywhere. Cederburg et al. (JFE
+  2020, 103 strategies): real-time vol-managed versions do not systematically beat unmanaged ones.
+
+## Confidence
+- **HIGH: GARCH sizing will not stop the bleed.** The decision sample fails (p 0.17–0.42). The journal has no
+  consistent sign, and storms were the momentum book's best regime. The bleed's two identified sources are sign
+  problems, and both are already switched off.
+- **HIGH: redundant on the daily arms.** Bot ATR vol vs GARCH ρ = 0.78–0.93; SWAP weights vary only ±11–18%.
+- **MEDIUM: the pullback SWAP effect is real but worthless.** Same sign in both eras, about +0.01R ≈ £5/yr.
+- **LOW: journal breakout SWAP +0.081R (p 0.006).** Post-hoc, n=34, 1 of 27 cells (Bonferroni 0.0019 not met),
+  half the trades are shorts that are now blocked. Do NOT act; re-check at the next review.
+- **LOW: pullback OVERLAY +0.025R (p 0.010).** All of it sits in 2009–2026.
+
+## Self-critique
+- Yahoo proxies (GC=F futures, ^GSPC cash) are not IG's DFB series. Daily vol on these is close enough to rank
+  regimes, but the percentiles near roll dates on GC=F are noisy.
+- Replays are gross of costs. Spread and financing scale with size, and financing in R is inversely proportional
+  to ATR, so up-weighting calm periods raises financing per R. Net effects would be a little SMALLER than shown.
+- Not tested: the Gold 1h breakout on long history (no Gold archive locally), which is the main live arm. Its profit
+  is tail-driven (3 trades = 84%), and a storm throttle risks shrinking exactly those trades.
+- The journal mixes config eras. Weights are within market but not within era.
+- Not reconciled: account balance vs journal P&L. Overnight funding never reaches the journal, and the pullback and
+  daily-trend arms now hold overnight.
+
+## Next steps
+1. **Build nothing.** The pre-registered rule failed, and the best-case £ value is under £10/yr.
+2. Add to the next review (Gold breakout n≥30 or ~2026-12-09): re-run `scripts/garch_sizing_test.py test` on a fresh
+   journal and check whether breakout SWAP holds on post-09-15 LONG-only trades. Pre-register p<0.05 on that fresh
+   sample alone.
+3. Judge the current live set (long-only breakout + pullback + daily-trend) on its own trades, not on the lifetime
+   −£486 that momentum and breakout shorts produced.
+4. Optional, cheap: reconcile the IG balance/transactions against the journal to size overnight funding.
+
+## Summary
+- **Most supported:** H2 + H3. The bot already vol-sizes through ATR stops, so GARCH ≈ ATR on the daily arms. The
+  bleed was negative expectancy in the momentum family and breakout shorts, and no mean-1 sizing can fix a sign.
+- **Ruled out:** H1 as a fix (pooled p 0.17–0.42; journal throttle −0.010R, overlay −0.007R).
+- **Open:** breakout SWAP (LOW, n=34); Gold 1h breakout long-history; funding vs journal gap.
+- **Action:** none now. Re-check breakout SWAP at the next review.
+
+---
+
+# DXY 2026-09-10 HTF-blocked BUY break — what would it have done? 2026-09-18
+
+## Question
+User: DXY is breakout-shadow. Did it break out on 9–10 Sep, and how would the 09-10 BUY have played out if the HTF
+filter had not blocked it?
+
+## Method
+Replayed on the VPS from `candle_archive/CC.D.DX.USS.IP.jsonl` (15m → 1h, as `_breakout_frame_1h` does), using the
+bot's own `breakout.analyze_breakout` (HTF forced BULLISH) and `breakout.exit_channel`, with the resolver rules from
+`_resolve_breakout_shadow`: check the stop first, then ratchet the M=27 trail for the next bar. Gross of costs.
+Scratch scripts, not committed: `dxy_replay.py`, `dxy_replay2.py`.
+
+## Evidence
+- 09-09: SELL breaks at 06:00–13:00 BST, HTF BEARISH agreed → shadow #221 SELL @ 9840.6, stop 20, **−1.00R** at 17:15.
+- 09-10 13:00 1h bar: H 9895.1 through the 55-bar high 9876.4 (the 13:30 15m spike). HTF BEARISH → blocked
+  (logged 14:15). ATR14(1h) 10.55, so stop 21.1 = 2×ATR (the 20pt min-stop does not bind).
+- **Close entry (the bot's actual path)**, mid ≈ 9886.7 at 14:15, stop 9865.6: **−1.00R** in the 15:00 hour
+  (low 9862.2), MFE +0.07R. Entering at the break-bar close (9882.9) also stops, −1.00R.
+- **Tick entry** (level + 2.5 slip = 9878.9, stop 9857.8): the 09-10 low of 9861.7 clears the stop by 3.9pt.
+  Still open at 10019.8, **+6.68R**, trail 9974.7 (locks ≈ +4.5R).
+- 09-11 13:00: a second BUY break (level 9895.1), also HTF-blocked. With the filter off, in the close-entry world it
+  re-enters @ 9879.9, stop 9859.4, survives (09-11 low 9872.9) and is **+6.81R** open (trail locks ≈ +4.6R).
+  Filter-off close-entry total: −1R + 6.8R ≈ **+5.8R** marked, ≈ +3.6R locked.
+- Actual filter-on outcome: the HTF turned, and shadow #266 BUY @ 9940.7 (09-16 13:00, stop 20) is **+3.96R** open
+  (locks ≈ +1.7R). So the filter cost ≈ 1.8R on this episode, marked to market.
+- Costs, not charged above: the recorded spread is 4.8–5.4pt ≈ 0.25R per round trip. DXY DFB financing is roughly
+  0.08R/night at a 20pt stop (earlier estimate, sign unverified), which is material over a week-long hold.
+
+## Confidence
+- HIGH: DXY broke out on both days. The 09-09 short lost −1R, and the 09-10 long was blocked only by the HTF filter.
+- HIGH: through the bot's close-entry path, the 09-10 BUY would have stopped out at −1R the same afternoon.
+- MEDIUM: filter-off would have caught the 09-11 → 09-18 rally for ≈ +5.8R vs +4.0R filter-on. This is marked to
+  market on open trades, and the difference is smaller net of financing.
+- LOW: tick entry would have survived. That rests on a 3.9pt margin and an assumed 2.5pt slip.
+
+## Self-critique
+- n=1, cherry-picked by the question (the user asked because DXY then rallied). The 930-signal gate replay
+  (2026-09) found the gates refuse a −0.11R/trade population. One counterexample does not overturn that.
+- DXY breakout is UNTESTED (archive starts 07-24; retest planned ≈2026-10). This episode is one data point for it.
+- The archive's 15m OHLC is the stream mid. The real bid/offer path near the stop could differ by about half the spread.
+
+## Next steps
+- None now. Fold this into the ≈2026-10 DXY breakout retest, as one HTF-blocked episode.
+
+## Summary
+DXY broke out on 09-10 (BUY above 9876.4) and was blocked by HTF BEARISH. Taken at the close, it would have been a
+−1R stop within about 90 minutes. The rally it anticipated came a day later, and the 09-11 re-break would have
+caught it (+6.8R open). The filter-on path caught part of it via #266 (+4.0R open). No action: n=1.
