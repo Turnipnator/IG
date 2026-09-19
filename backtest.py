@@ -192,15 +192,26 @@ def calculate_htf_trend(htf_df: pd.DataFrame) -> pd.DataFrame:
         return "NEUTRAL"
 
     htf_df["htf_trend"] = htf_df.apply(get_trend, axis=1)
-    return htf_df[["date", "htf_trend"]]
+    # Rows are stamped at bar START (Yahoo and IG both), so a bar's close is only
+    # known at start + span. Same convention as Backtester.calculate_htf_trend.
+    span = htf_df["date"].diff().median()
+    if pd.isna(span):
+        span = pd.Timedelta(0)
+    htf_df["closed_at"] = htf_df["date"] + span
+    return htf_df[["date", "closed_at", "htf_trend"]]
 
 
 def lookup_htf_trend(htf_trends: pd.DataFrame, timestamp: datetime) -> str:
     """Find the HTF trend at a given timestamp."""
     if htf_trends is None or htf_trends.empty:
         return "NEUTRAL"
-    # Find the most recent HTF candle before this timestamp
-    mask = htf_trends["date"] <= timestamp
+    # Most recent HTF candle that has actually CLOSED by this timestamp.
+    # 2026-09-19: this was `date <= timestamp`, which selects the bar still
+    # FORMING — its close is up to 55 min in the future of the 5m bar being
+    # traded, and it mislabelled 2-10% of bars (median 3.8%) on the backtest
+    # cache, concentrated at trend flips. Third copy of the look-ahead fixed in
+    # htf_series (5cba8b3) and the engine (117a4e8); live fetches COMPLETED bars.
+    mask = htf_trends["closed_at"] <= timestamp
     if not mask.any():
         return "NEUTRAL"
     return htf_trends.loc[mask, "htf_trend"].iloc[-1]
