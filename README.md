@@ -33,7 +33,12 @@ cd IG
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
+pip install -r requirements-test.txt   # test-only (Hypothesis); never installed in the image
 ```
+
+Run the tests with `python -m unittest discover -s tests -t .`. The generated
+property tests replay fixed examples by default, the same ones CI's deploy gate
+uses; `HYPOTHESIS_PROFILE=deep` explores fresh random ones (see `tests/pbt.py`).
 
 ### 2. Configure Environment
 

@@ -69,18 +69,32 @@ jobs:
           sys.exit(1 if failed else 0)
           PY
 
-      # The test suite. Three layers, deliberately: property tests assert what
+      # Test-only dependencies (Hypothesis) come from their own pinned file,
+      # never the lock: requirements.lock.txt is defined as exactly what the
+      # container installs, and a step below asserts that. Installed only AFTER
+      # the import gate above, deliberately, so that gate still runs against the
+      # container's package set. A stray `import hypothesis` in src/ must fail
+      # there, not pass CI and then crash-loop the image that lacks it.
+      - name: Install test-only dependencies
+        run: pip install --no-cache-dir -r requirements-test.txt
+
+      # The test suite. Four layers, deliberately: property tests assert what
       # MUST hold (the Donchian window bounds, the trail's tighten-only rule),
-      # golden files catch any silent numeric drift against real archive
-      # candles, and the config-coherence tests catch the string references
-      # nothing type-checks. Every one of them was verified to FAIL against a
-      # deliberately mutated source before being committed — a test that has
-      # never been seen to fail is not evidence of anything.
+      # generated property tests hunt for counterexamples to the look-ahead
+      # rule across frames nobody wrote by hand, golden files catch any silent
+      # numeric drift against real archive candles, and the config-coherence
+      # tests catch the string references nothing type-checks. Every one of
+      # them was verified to FAIL against a deliberately mutated source before
+      # being committed — a test that has never been seen to fail is not
+      # evidence of anything.
       #
-      # stdlib unittest, no pytest: requirements.lock.txt is defined as exactly
-      # what the container installs and a step below asserts that. Adding a
-      # test-only dependency to it would break that invariant.
+      # stdlib unittest, no pytest. HYPOTHESIS_PROFILE=ci replays the SAME
+      # generated examples on every run, because this job is the deploy gate:
+      # a fresh random seed must never block an unrelated fix. The random,
+      # 20x-deeper exploration runs weekly in health.yml (see tests/pbt.py).
       - name: Tests
+        env:
+          HYPOTHESIS_PROFILE: ci
         run: python -m unittest discover -s tests -t . -v
 
       # Guards the split between requirements.txt (human-edited intent) and

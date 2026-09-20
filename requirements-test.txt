@@ -1,0 +1,12 @@
+# Test-only dependencies. Installed by CI (ci.yml, health.yml) and the local venv,
+# NEVER by the Docker image: requirements.lock.txt is defined as exactly what the
+# container runs, so a package only the tests need cannot live there.
+#
+#   pip install -r requirements.lock.txt -r requirements-test.txt
+#
+# Pinned for the same reason the lock is. A Hypothesis bump changes which
+# examples the derandomized CI profile generates, and a deploy gate whose inputs
+# shift under you without a commit is not a gate. Dependabot scans this file too,
+# so bumps arrive as PRs that CI has to pass.
+hypothesis==6.168.0
+sortedcontainers==2.4.0

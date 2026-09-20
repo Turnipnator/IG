@@ -39,9 +39,33 @@ jobs:
           # Deliberately NO `cache: pip`. A cache hit would hide exactly the
           # failure this job exists to find: a pin that no longer resolves.
       - run: pip install --no-cache-dir -r requirements.lock.txt
+      # The test pins must still resolve too; the property tests import them.
+      - run: pip install --no-cache-dir -r requirements-test.txt
       - run: python -m unittest discover -s tests -t .
+        env:
+          HYPOTHESIS_PROFILE: ci
       - name: Cold docker build
         run: docker build --no-cache -t ig-bot:health .
+
+  # The exploration half of the property tests. ci.yml replays the SAME
+  # generated examples on every push so the deploy gate stays reproducible;
+  # this run draws FRESH random ones at 20x the count, on code nobody has
+  # touched, which is where a counterexample the gate never saw turns up.
+  # A failure prints an @reproduce_failure(...) line that replays it exactly.
+  explore:
+    name: property tests, random and deep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install --no-cache-dir -r requirements.lock.txt -r requirements-test.txt
+      - name: Deep property run
+        env:
+          HYPOTHESIS_PROFILE: deep
+        run: python -m unittest discover -s tests -t . -p 'test_*_properties.py' -v
 
   # The watchdog on the watchdog. rebuild-watcher.sh refuses to deploy unless a
   # check run named `verify` reports success for the target commit — so if that
@@ -75,12 +99,12 @@ jobs:
   # a failed scheduled run is otherwise just a red tick nobody visits.
   alert:
     name: raise or clear the tracking issue
-    needs: [rot, gate]
+    needs: [rot, gate, explore]
     if: always()
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      FAILED: ${{ needs.rot.result != 'success' || needs.gate.result != 'success' }}
+      FAILED: ${{ needs.rot.result != 'success' || needs.gate.result != 'success' || needs.explore.result != 'success' }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Ensure the label exists
@@ -97,8 +121,12 @@ jobs:
 
           - cold rebuild from the lock: \`${{ needs.rot.result }}\`
           - deploy gate still answers: \`${{ needs.gate.result }}\`
+          - property tests, random and deep: \`${{ needs.explore.result }}\`
 
-          A failure here means a deploy would likely fail or be refused. Run: ${RUN_URL}"
+          A rot or gate failure means a deploy would likely fail or be refused.
+          An explore failure is a generated counterexample: deploys still pass, but a
+          property the suite asserts is false. The log's @reproduce_failure line replays it.
+          Run: ${RUN_URL}"
           existing=$(gh issue list --label health --state open --json number --jq '.[0].number')
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "$body"

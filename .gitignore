@@ -9,6 +9,9 @@ IG_BOT_FIX_INSTRUCTIONS.md
 .claude/
 
 # Python
+# Hypothesis example database. The tests/pbt.py profiles set database=None, so
+# this only appears if Hypothesis is run with its own defaults.
+.hypothesis/
 __pycache__/
 *.py[cod]
 *$py.class
