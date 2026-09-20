@@ -212,8 +212,15 @@ class EntryRefusalsAreVisible(_Globals):
 
     def test_daily_trend_position_does_not_block(self):
         # A daily-trend hold on Gold must not refuse the 1h breakout (user decision 2026-09-09).
+        #
+        # The clock is pinned because _execute_breakout_entry checks Gold's 23->21 UTC
+        # window (main.py:1229) before it reaches get_market_info. Unpinned, this test
+        # and the expired-cooldown one below FAILED between 21:00 and 23:00 UTC — and
+        # CI is the deploy gate, so for those two hours every push was unshippable for
+        # a reason the commit had nothing to do with. Same fix as test_dead_market_guard.
         main.known_positions["DAILY1"] = _pos("DAILY1", direction="BUY")
-        with patch.object(main, "_daily_managed", return_value=True):
+        with patch.object(main, "utc_hour", return_value=13), \
+             patch.object(main, "_daily_managed", return_value=True):
             main.client.get_market_info.return_value = None
             main.risk_manager = MagicMock()
             main.risk_manager.calculate_position_size.return_value = MagicMock(approved=False, reason="test stop")
@@ -257,7 +264,8 @@ class EntryRefusalsAreVisible(_Globals):
         main.client.get_market_info.return_value = None
         main.risk_manager = MagicMock()
         main.risk_manager.calculate_position_size.return_value = MagicMock(approved=False, reason="test stop")
-        main._execute_breakout_entry(EPIC, _Market(), self.cfg, self.sig, None)
+        with patch.object(main, "utc_hour", return_value=13):   # see the note above
+            main._execute_breakout_entry(EPIC, _Market(), self.cfg, self.sig, None)
         main.client.get_market_info.assert_called_once()
         self.assertNotIn(EPIC, main._breakout_entry_refusal_last)
 
