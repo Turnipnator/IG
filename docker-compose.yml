@@ -31,9 +31,12 @@ services:
         reservations:
           memory: 128M
     # Health check - ensures container restarts if unhealthy
+    # Checks the BOT, not the internet. The old check fetched demo-api.ig.com,
+    # which passed throughout the 62-hour feed outage of 2026-09-18 — it proved
+    # only that the container had a route to IG. See docker_healthcheck.py.
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('https://demo-api.ig.com', timeout=10)"]
+      test: ["CMD", "python", "/app/docker_healthcheck.py"]
       interval: 5m
       timeout: 30s
       retries: 3
-      start_period: 30s
+      start_period: 2m

@@ -152,6 +152,20 @@ STREAM_DISCONNECT_GRACE = timedelta(minutes=2)
 STREAM_STALE_GRACE = timedelta(minutes=3)
 STREAM_POST_RECOVERY_GRACE = timedelta(seconds=60)
 
+# When the stream has delivered no ticks at all, its own MARKET_STATE is
+# meaningless, so the watchdog asks IG over REST whether markets are actually
+# open (see _tradeable_count_for_watchdog). get_market_info shares IG's per-key
+# non-trading rate limit with the live bot, so this is cached and sampled, never
+# a per-minute sweep of all 13 markets.
+_watchdog_rest_tradeable = 0
+_watchdog_rest_probed_at: Optional[datetime] = None
+WATCHDOG_REST_PROBE_TTL = timedelta(minutes=10)
+WATCHDOG_REST_PROBE_SAMPLE = 3
+# Refused-subscription nag cadence — an entitlement problem needs a human, so
+# alert on a slow loop rather than restarting into a crash-loop.
+_subscription_alert_last: Optional[datetime] = None
+SUBSCRIPTION_ALERT_INTERVAL = timedelta(hours=1)
+
 # Dead-market guard (see _dead_market_guard). A market whose stream state is not
 # TRADEABLE while ticks keep arriving, inside its own trading window, for longer
 # than DEAD_MARKET_GRACE. This is the Crude 2026-08-19 -> 09-04 failure: the
@@ -3762,18 +3776,119 @@ def _maybe_rotate_daily_stats() -> None:
         logger.debug(f"Failed to rotate daily stats: {e}")
 
 
+def _notify_streaming_problem(message: str) -> None:
+    """Telegram on a streaming fault. Fire-and-forget; never raises.
+
+    Previously only the terminal os._exit(1) notified, so an outage that never
+    reached the exit — exactly the 2026-09-18 case — was entirely silent.
+    """
+    if not (telegram and telegram_loop):
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(telegram.notify_error(message), telegram_loop)
+    except Exception:
+        pass
+
+
+def _tradeable_count_for_watchdog() -> int:
+    """How many markets are open, trusting REST when the stream can't be trusted.
+
+    stream_service.tradeable_market_count() reads MARKET_STATE out of the last
+    tick, so it returns 0 both on a genuine weekend and on a dead feed. Using it
+    alone is what let the weekend suppressor silence a Friday-evening outage for
+    62 hours.
+
+    So: if any tick has arrived since the subscribe, the stream's own count is
+    authoritative and free. If NOTHING has ticked, that number carries no
+    information and we ask the broker instead — a REST snapshot, cached, and
+    capped at a small sample because get_market_info shares IG's per-key
+    per-minute non-trading limit with the live bot.
+    """
+    global _watchdog_rest_tradeable, _watchdog_rest_probed_at
+
+    if not stream_service:
+        return 0
+    if stream_service.has_ever_ticked():
+        return stream_service.tradeable_market_count()
+    if not client:
+        return 0
+
+    now = datetime.now()
+    if (
+        _watchdog_rest_probed_at is not None
+        and now - _watchdog_rest_probed_at < WATCHDOG_REST_PROBE_TTL
+    ):
+        return _watchdog_rest_tradeable
+
+    open_count = 0
+    for m in MARKETS[:WATCHDOG_REST_PROBE_SAMPLE]:
+        try:
+            info = client.get_market_info(m.epic)
+            if info and info.market_status == "TRADEABLE":
+                open_count += 1
+        except Exception as e:
+            logger.debug(f"Watchdog REST tradeable probe failed for {m.epic}: {e}")
+    _watchdog_rest_tradeable = open_count
+    _watchdog_rest_probed_at = now
+    logger.info(
+        f"Watchdog REST probe: {open_count}/{WATCHDOG_REST_PROBE_SAMPLE} sampled markets "
+        f"TRADEABLE while the stream has delivered no ticks since subscribe"
+    )
+    return open_count
+
+
+def _alert_subscription_entitlement(now: datetime, reason: str) -> None:
+    """Nag about a refused subscription without crash-looping the container."""
+    global _subscription_alert_last
+    if (
+        _subscription_alert_last is not None
+        and now - _subscription_alert_last < SUBSCRIPTION_ALERT_INTERVAL
+    ):
+        return
+    _subscription_alert_last = now
+    groups = list(getattr(stream_service, "SUBSCRIPTION_GROUPS", ()))
+    logger.critical(
+        f"Streaming watchdog: {reason}. Tried {groups}. NOT restarting — a restart "
+        f"cannot fix an entitlement. Check the API key at labs.ig.com."
+    )
+    _notify_streaming_problem(
+        f"🔴 Market feed DEAD: every subscription group {groups} refused by IG.\n"
+        f"The bot is up and positions are still polled, but NO new prices are "
+        f"arriving and no signals can fire.\n"
+        f"A restart will not fix this — the API key needs checking at labs.ig.com."
+    )
+
+
 def _streaming_watchdog() -> None:
     """Detect dead/stalled streaming and recover.
 
-    Two failure modes get tripped:
+    Three failure modes get tripped:
       1. status flips to DISCONNECTED for >= STREAM_DISCONNECT_GRACE
-      2. last tick across all markets is older than STREAM_STALE_GRACE while
-         at least one market is still TRADEABLE (suppresses weekend silence)
+      2. connected but the feed has been silent for >= STREAM_STALE_GRACE while
+         at least one market is open (suppresses weekend silence)
+      3. every subscription group was refused — the socket is up, the feed is dead
 
     Recovery ladder:
       - First trip: call refresh_session() to logout/login/resubscribe
       - Still bad >= STREAM_POST_RECOVERY_GRACE after that attempt: os._exit(1)
         so Docker restarts us clean
+
+    2026-09-18 post-mortem — why this sat silent through a 62-hour outage, and
+    what each guard below now does differently:
+
+      * Signal 1 never fired: a REFUSED SUBSCRIPTION leaves the socket connected.
+      * Signal 2 disarmed itself. resubscribing rebuilds every MarketStream, so
+        `last_update` went back to None and `most_recent_tick_age()` returned
+        None — which the old code read as "not started yet, benign". Worse, the
+        same reset put `market_state` back to its "CLOSED" default, so
+        `tradeable_market_count()` read 0 and the weekend suppressor engaged.
+        Both inputs were derived from the very feed being diagnosed, so the one
+        recovery attempt destroyed the evidence needed to justify a second one.
+      * There was no signal 3: the [21] error was logged and read by nothing.
+
+    The rule this encodes: NEVER infer feed liveness solely from feed data.
+    Silence is measured from the subscribe (feed_silence), and "is the market
+    open?" is answered by REST when the stream cannot be trusted to say.
     """
     global _streaming_disconnect_since, _streaming_stale_since
     global _streaming_recovery_attempted_at
@@ -3792,14 +3907,20 @@ def _streaming_watchdog() -> None:
         _streaming_disconnect_since = None
         disconnect_age = timedelta(0)
 
-    # Signal 2: connected but no ticks while markets are open
+    # Signal 3: the subscription itself was refused. Checked before signal 2
+    # because it is a definite fact rather than an inference from silence.
+    subscription_refused = bool(getattr(stream_service, "subscription_failed", False))
+
+    # Signal 2: connected but no ticks while markets are open. feed_silence()
+    # counts from the subscribe, so "never ticked" is a failure, not an excuse.
     tick_age = stream_service.most_recent_tick_age()
-    tradeable = stream_service.tradeable_market_count()
+    silence = stream_service.feed_silence()
+    tradeable = _tradeable_count_for_watchdog()
     is_stale = (
         stream_service.connected
-        and tick_age is not None
+        and silence is not None
         and tradeable > 0
-        and tick_age > STREAM_STALE_GRACE
+        and silence > STREAM_STALE_GRACE
     )
     if is_stale:
         if _streaming_stale_since is None:
@@ -3812,6 +3933,7 @@ def _streaming_watchdog() -> None:
     tripped = (
         disconnect_age > STREAM_DISCONNECT_GRACE
         or stale_duration > timedelta(0)
+        or subscription_refused
     )
 
     if not tripped:
@@ -3822,15 +3944,19 @@ def _streaming_watchdog() -> None:
                 _streaming_recovery_attempted_at = None
         return
 
-    reason = (
-        f"disconnected for {disconnect_age}"
-        if disconnect_age > STREAM_DISCONNECT_GRACE
-        else f"no ticks for {tick_age} ({tradeable} markets tradeable)"
-    )
+    if subscription_refused:
+        reason = "every subscription group refused (feed dead, socket up)"
+    elif disconnect_age > STREAM_DISCONNECT_GRACE:
+        reason = f"disconnected for {disconnect_age}"
+    else:
+        reason = f"no ticks for {silence} ({tradeable} markets tradeable)"
 
     if _streaming_recovery_attempted_at is None:
         logger.warning(f"Streaming watchdog tripped: {reason} — attempting refresh_session()")
         _streaming_recovery_attempted_at = now
+        _notify_streaming_problem(
+            f"Streaming watchdog tripped: {reason}. Attempting in-process recovery."
+        )
         try:
             refresh_session()
         except Exception as e:
@@ -3845,6 +3971,15 @@ def _streaming_watchdog() -> None:
             f"{since_attempt.total_seconds():.0f}s after recovery — "
             f"giving it until {STREAM_POST_RECOVERY_GRACE.total_seconds():.0f}s"
         )
+        return
+
+    # An entitlement refusal does not heal by restarting: the container would
+    # come back, be refused again, and crash-loop — burning ~680 API points on
+    # every cold start while a human is the only thing that can actually fix it.
+    # Alert loudly on a slow cadence and keep the process up so positions stay
+    # managed and Telegram stays answerable.
+    if subscription_refused:
+        _alert_subscription_entitlement(now, reason)
         return
 
     logger.critical(

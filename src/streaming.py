@@ -115,10 +115,19 @@ class IGStreamListener(SubscriptionListener if LIGHTSTREAMER_AVAILABLE else obje
         stream_service: "IGStreamService",
         on_price_update: Optional[Callable] = None,
         on_candle_complete: Optional[Callable] = None,
+        group: Optional[str] = None,
+        outcome: Optional[threading.Event] = None,
     ):
         self.stream_service = stream_service
         self.on_price_update = on_price_update
         self.on_candle_complete = on_candle_complete
+        # Which item group this listener was subscribed with, and an event the
+        # subscriber waits on so a refused subscription is detected synchronously
+        # instead of being assumed successful (see subscribe_markets).
+        self.group = group
+        self.outcome = outcome
+        self.active = False
+        self.error: Optional[tuple[int, str]] = None
 
     def onItemUpdate(self, update: ItemUpdate) -> None:
         """Handle incoming price update."""
@@ -248,16 +257,43 @@ class IGStreamListener(SubscriptionListener if LIGHTSTREAMER_AVAILABLE else obje
         return candle_completed
 
     def onSubscription(self) -> None:
-        logger.info("Market subscription active")
+        logger.info(f"Market subscription active (group: {self.group})")
+        self.active = True
+        self.error = None
+        if self.outcome is not None:
+            self.outcome.set()
 
     def onSubscriptionError(self, code: int, message: str) -> None:
-        logger.error(f"Subscription error: [{code}] {message}")
+        logger.error(f"Subscription error on group {self.group}: [{code}] {message}")
+        self.active = False
+        self.error = (code, message)
         if "Invalid account type" in message:
             logger.error(
                 "This error typically means your demo account default is set to CFD "
                 "instead of Spreadbet. Contact IG helpdesk to change your default "
                 "demo account to Spreadbet Demo."
             )
+        if code == 21:
+            logger.error(
+                f"'[21] Invalid group' means this account/key is not entitled to the "
+                f"'{self.group}' item group. L1 was revoked ~2026-05-15 and MARKET on "
+                f"2026-09-18; the subscriber will try the next group in the ladder."
+            )
+        # A refusal on the subscription that is CURRENTLY BOUND is the 19:31
+        # case: the socket dropped, the library silently re-subscribed, and IG
+        # refused. Latch it so the watchdog reacts now instead of inferring it
+        # from four minutes of silence. Guarded on subscription_group so a
+        # refusal while the ladder is still trying groups — when the service has
+        # no bound group yet — cannot false-latch.
+        svc = self.stream_service
+        if svc is not None and getattr(svc, "subscription_group", None) == self.group:
+            logger.error(
+                "The live subscription was refused mid-session — treating the feed "
+                "as dead immediately rather than waiting for the staleness timer."
+            )
+            svc.subscription_failed = True
+        if self.outcome is not None:
+            self.outcome.set()
 
     def onUnsubscription(self) -> None:
         logger.info("Market subscription ended")
@@ -297,6 +333,18 @@ class IGStreamService:
     DEMO_ENDPOINT = "https://demo-apd.marketdatasystems.com"
     LIVE_ENDPOINT = "https://apd.marketdatasystems.com"
 
+    # Item groups to try, in order, when subscribing. IG has now revoked two of
+    # these on this key (L1 ~2026-05-15, MARKET 2026-09-18) and each revocation
+    # killed the feed silently, so a single hardcoded group is a known single
+    # point of failure. Both entries here serve the SAME MERGE field set, which
+    # is why they are interchangeable and onItemUpdate can strip either prefix.
+    # CHART:TICK is deliberately NOT in this ladder: it is a different mode with
+    # different field names (BID/OFR/UTM/LTP), so "binding" to it would yield an
+    # active subscription producing no usable data — worse than a clean failure.
+    SUBSCRIPTION_GROUPS = ("MARKET", "L1")
+    # How long to wait for IG's async verdict on a subscribe before giving up.
+    SUBSCRIBE_CONFIRM_TIMEOUT = 8.0
+
     def __init__(
         self,
         cst: str,
@@ -327,6 +375,14 @@ class IGStreamService:
         self.connected = False
         self.connection_status = "DISCONNECTED"
         self._lock = threading.Lock()
+
+        # Subscription health. A refused subscription leaves the SOCKET connected
+        # (CONNECTED:WS-STREAMING) and only the data flow dead, so `connected` alone
+        # says nothing about whether the feed works — on 2026-09-18 that gap hid a
+        # 62-hour outage. These three are what the watchdog actually reads.
+        self.subscription_group: Optional[str] = None   # group that bound, if any
+        self.subscription_failed = False                # every group refused
+        self.subscribed_at: Optional[datetime] = None   # when we last tried
 
         # Append-only candle-archive cursor: last-archived timestamp per epic, so
         # archive_candles_to_disk() appends only NEW closed candles before the
@@ -389,6 +445,11 @@ class IGStreamService:
         self.connected = False
         self.client = None
         self.subscription = None
+        # Not a failure — an intentional teardown. Leaving the latch set here
+        # would trip the watchdog on every planned reconnect.
+        self.subscription_failed = False
+        self.subscription_group = None
+        self.subscribed_at = None
 
     def subscribe_markets(self, epics: list[str], names: list[str] = None, candle_intervals: list[int] = None) -> bool:
         """
@@ -413,46 +474,93 @@ class IGStreamService:
             for epic, name, interval in zip(epics, names, candle_intervals):
                 self.markets[epic] = MarketStream(epic=epic, name=name, candle_interval=interval)
 
-            # Create subscription using MARKET prefix for price data.
-            # NB: the older "L1:" group was deauthorised on the account ~2026-05-15
-            # (subscriptions return "[21] Invalid group"). The MARKET group serves the
-            # same BID/OFFER/HIGH/LOW/CHANGE/MARKET_STATE fields and works fine — verified
-            # with scripts/stream_alt_probe.py. The parser below strips either prefix.
-            items = [f"MARKET:{epic}" for epic in epics]
-            logger.info(f"Subscribing to items: {items[:2]}...")
+            self.subscribed_at = datetime.now()
+            self.subscription_group = None
+            self.subscription_failed = False
 
-            self.subscription = Subscription(
-                mode="MERGE",
-                items=items,
-                fields=[
-                    "UPDATE_TIME",
-                    "BID",
-                    "OFFER",
-                    "CHANGE",
-                    "CHANGE_PCT",
-                    "HIGH",
-                    "LOW",
-                    "MARKET_STATE",
-                ],
+            for group in self.SUBSCRIPTION_GROUPS:
+                if self._try_subscribe(group, epics):
+                    self.subscription_group = group
+                    logger.info(
+                        f"Subscribed to {len(epics)} markets via '{group}': {', '.join(names)}"
+                    )
+                    return True
+                logger.warning(f"Group '{group}' refused — falling back to the next one")
+
+            self.subscription_failed = True
+            logger.critical(
+                f"Every subscription group {list(self.SUBSCRIPTION_GROUPS)} was refused. "
+                f"The feed is DEAD while the socket stays connected. This is an account "
+                f"entitlement problem, not a network one — check the API key at "
+                f"labs.ig.com. (CHART:TICK may still be entitled but carries a different "
+                f"field set and is not wired into the parser.)"
             )
-
-            # Add listener
-            listener = IGStreamListener(
-                self,
-                on_price_update=self.on_price_update,
-                on_candle_complete=self.on_candle_complete,
-            )
-            self.subscription.addListener(listener)
-
-            # Subscribe
-            self.client.subscribe(self.subscription)
-
-            logger.info(f"Subscribed to {len(epics)} markets: {', '.join(names)}")
-            return True
+            return False
 
         except Exception as e:
             logger.error(f"Failed to subscribe to markets: {e}")
+            self.subscription_failed = True
             return False
+
+    def _try_subscribe(self, group: str, epics: list[str]) -> bool:
+        """Subscribe with one item group and WAIT for IG's verdict.
+
+        The old code called client.subscribe() and immediately logged success.
+        That is a lie: the result arrives asynchronously on the listener, so a
+        refused subscription was logged as "Subscribed to 13 markets" and the
+        [21] error a few lines later went unread by everything downstream.
+        """
+        outcome = threading.Event()
+        items = [f"{group}:{epic}" for epic in epics]
+        logger.info(f"Subscribing to {len(items)} items via '{group}': {items[:2]}...")
+
+        subscription = Subscription(
+            mode="MERGE",
+            items=items,
+            fields=[
+                "UPDATE_TIME",
+                "BID",
+                "OFFER",
+                "CHANGE",
+                "CHANGE_PCT",
+                "HIGH",
+                "LOW",
+                "MARKET_STATE",
+            ],
+        )
+        listener = IGStreamListener(
+            self,
+            on_price_update=self.on_price_update,
+            on_candle_complete=self.on_candle_complete,
+            group=group,
+            outcome=outcome,
+        )
+        subscription.addListener(listener)
+        self.client.subscribe(subscription)
+
+        if not outcome.wait(self.SUBSCRIBE_CONFIRM_TIMEOUT):
+            # Neither callback fired. Treat silence as failure — an unconfirmed
+            # subscription is exactly the state that hid the 09-18 outage.
+            logger.error(
+                f"Group '{group}': no subscription verdict within "
+                f"{self.SUBSCRIBE_CONFIRM_TIMEOUT}s — treating as refused"
+            )
+            self._safe_unsubscribe(subscription)
+            return False
+
+        if listener.active:
+            self.subscription = subscription
+            return True
+
+        self._safe_unsubscribe(subscription)
+        return False
+
+    def _safe_unsubscribe(self, subscription) -> None:
+        """Drop a subscription that did not bind, so the next group starts clean."""
+        try:
+            self.client.unsubscribe(subscription)
+        except Exception as e:
+            logger.debug(f"Unsubscribe of a non-bound subscription failed (ignoring): {e}")
 
     def initialize_candles(self, epic: str, historical_df: pd.DataFrame) -> None:
         """
@@ -735,14 +843,46 @@ class IGStreamService:
 
         Used to suppress the staleness watchdog when all markets are closed
         (e.g. forex weekend) — no ticks are expected, so silence is fine.
+
+        CAUTION: this is derived from tick data, so it reads 0 both when every
+        market is genuinely closed AND when the feed is dead (MarketStream
+        defaults market_state to "CLOSED" and no tick ever corrects it). Callers
+        must not treat 0 as proof of a weekend — see has_ever_ticked().
         """
         return sum(1 for m in self.markets.values() if m.market_state == "TRADEABLE")
 
+    def has_ever_ticked(self) -> bool:
+        """Whether any market has delivered a tick since the last subscribe."""
+        return any(m.last_update is not None for m in self.markets.values())
+
+    def feed_silence(self) -> Optional[timedelta]:
+        """How long the feed has been silent, counting from the last subscribe.
+
+        This exists because most_recent_tick_age() returns None when no market
+        has ever ticked, and the watchdog used to read that None as "streaming
+        hasn't started yet — benign". After a subscribe, "never ticked" is not
+        benign: it is precisely the failure mode that went unnoticed for 62
+        hours on 2026-09-18, because resubscribing resets every MarketStream and
+        so resets last_update to None.
+
+        Returns None only when no subscribe has been attempted at all.
+        """
+        tick_age = self.most_recent_tick_age()
+        if tick_age is not None:
+            return tick_age
+        if self.subscribed_at is None:
+            return None
+        return datetime.now() - self.subscribed_at
+
     def get_status(self) -> dict:
         """Get streaming service status."""
+        silence = self.feed_silence()
         return {
             "connected": self.connected,
             "connection_status": self.connection_status,
+            "subscription_group": self.subscription_group,
+            "subscription_failed": self.subscription_failed,
+            "feed_silence_seconds": silence.total_seconds() if silence else None,
             "subscribed_markets": len(self.markets),
             "markets": {
                 epic: {
