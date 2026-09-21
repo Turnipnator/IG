@@ -50,6 +50,74 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class GroupSpec:
+    """One way of asking IG for prices: item shape, mode and field names.
+
+    IG serves the same prices through several Lightstreamer groups and has now
+    withdrawn two of them from this key (L1 ~2026-05-15, MARKET 2026-09-18),
+    each time killing the feed silently. The groups are NOT interchangeable by
+    string substitution — they differ in subscription mode, item-name shape and
+    field names — so the ladder carries a full spec per group rather than a bare
+    prefix, and the parser reads fields through `aliases` instead of literals.
+
+    `aliases` maps the canonical name the parser uses to that group's actual
+    field name. A canonical name absent from the map is simply not served by
+    this group (CHART has no MARKET_STATE), and the parser leaves the existing
+    value alone rather than overwriting it with "UNKNOWN".
+    """
+    name: str
+    mode: str
+    item_template: str           # "{epic}" is substituted
+    fields: tuple[str, ...]
+    aliases: dict[str, str]
+
+    def item(self, epic: str) -> str:
+        return self.item_template.format(epic=epic)
+
+    def value(self, update: Any, canonical: str) -> Optional[Any]:
+        """Read a canonical field, or None if this group doesn't serve it."""
+        actual = self.aliases.get(canonical)
+        if actual is None:
+            return None
+        return update.getValue(actual)
+
+    def serves(self, canonical: str) -> bool:
+        return canonical in self.aliases
+
+
+# The quote groups. Identical field semantics, so they share a spec shape and
+# the parser needs no special-casing between them.
+_QUOTE_FIELDS = ("UPDATE_TIME", "BID", "OFFER", "CHANGE", "CHANGE_PCT", "HIGH", "LOW", "MARKET_STATE")
+_QUOTE_ALIASES = {
+    "bid": "BID", "offer": "OFFER", "high": "HIGH", "low": "LOW",
+    "change": "CHANGE", "change_pct": "CHANGE_PCT", "market_state": "MARKET_STATE",
+}
+
+GROUP_MARKET = GroupSpec(
+    name="MARKET", mode="MERGE", item_template="MARKET:{epic}",
+    fields=_QUOTE_FIELDS, aliases=_QUOTE_ALIASES,
+)
+GROUP_L1 = GroupSpec(
+    name="L1", mode="MERGE", item_template="L1:{epic}",
+    fields=_QUOTE_FIELDS, aliases=_QUOTE_ALIASES,
+)
+# Tick-by-tick chart data. Verified entitled on this key 2026-09-21 while both
+# quote groups were refused, which is what got the feed back. DISTINCT (not
+# MERGE) because every tick is delivered rather than coalesced; "OFR" not
+# "OFFER"; and there is no MARKET_STATE, so tradeable state comes from REST.
+# DAY_HIGH/DAY_LOW are the session extremes, the same thing HIGH/LOW carried.
+GROUP_CHART_TICK = GroupSpec(
+    name="CHART:TICK", mode="DISTINCT", item_template="CHART:{epic}:TICK",
+    fields=("BID", "OFR", "UTM", "DAY_HIGH", "DAY_LOW", "DAY_NET_CHG_MID", "DAY_PERC_CHG_MID"),
+    aliases={
+        "bid": "BID", "offer": "OFR", "high": "DAY_HIGH", "low": "DAY_LOW",
+        "change": "DAY_NET_CHG_MID", "change_pct": "DAY_PERC_CHG_MID",
+        # no market_state — deliberately absent, see _refresh_market_states
+    },
+)
+
+
 @dataclass
 class Candle:
     """OHLCV candle data."""
@@ -117,6 +185,7 @@ class IGStreamListener(SubscriptionListener if LIGHTSTREAMER_AVAILABLE else obje
         on_candle_complete: Optional[Callable] = None,
         group: Optional[str] = None,
         outcome: Optional[threading.Event] = None,
+        spec: Optional[GroupSpec] = None,
     ):
         self.stream_service = stream_service
         self.on_price_update = on_price_update
@@ -124,7 +193,8 @@ class IGStreamListener(SubscriptionListener if LIGHTSTREAMER_AVAILABLE else obje
         # Which item group this listener was subscribed with, and an event the
         # subscriber waits on so a refused subscription is detected synchronously
         # instead of being assumed successful (see subscribe_markets).
-        self.group = group
+        self.spec = spec
+        self.group = spec.name if spec is not None else group
         self.outcome = outcome
         self.active = False
         self.error: Optional[tuple[int, str]] = None
@@ -133,11 +203,13 @@ class IGStreamListener(SubscriptionListener if LIGHTSTREAMER_AVAILABLE else obje
         """Handle incoming price update."""
         try:
             item_name = update.getItemName()
-            # Item name format: "L1:IX.D.SPTRD.DAILY.IP" or "MARKET:IX.D.SPTRD.DAILY.IP"
-            epic = item_name.replace("L1:", "").replace("MARKET:", "")
+            epic = self._epic_for(item_name)
+            if epic is None:
+                return
 
-            bid = self._safe_float(update.getValue("BID"))
-            offer = self._safe_float(update.getValue("OFFER"))
+            spec = self.spec or GROUP_MARKET
+            bid = self._safe_float(spec.value(update, "bid"))
+            offer = self._safe_float(spec.value(update, "offer"))
 
             if bid is None or offer is None:
                 return
@@ -179,11 +251,15 @@ class IGStreamListener(SubscriptionListener if LIGHTSTREAMER_AVAILABLE else obje
                 market.bid = bid
                 market.offer = offer
                 market.mid_price = mid_price
-                market.high = self._safe_float(update.getValue("HIGH")) or market.high
-                market.low = self._safe_float(update.getValue("LOW")) or market.low
-                market.change = self._safe_float(update.getValue("CHANGE")) or 0.0
-                market.change_pct = self._safe_float(update.getValue("CHANGE_PCT")) or 0.0
-                market.market_state = update.getValue("MARKET_STATE") or "UNKNOWN"
+                market.high = self._safe_float(spec.value(update, "high")) or market.high
+                market.low = self._safe_float(spec.value(update, "low")) or market.low
+                market.change = self._safe_float(spec.value(update, "change")) or 0.0
+                market.change_pct = self._safe_float(spec.value(update, "change_pct")) or 0.0
+                # Only groups that actually serve MARKET_STATE may write it. CHART
+                # does not, and clobbering the REST-sourced value with "UNKNOWN"
+                # would break the weekend suppressor and the dead-market guard.
+                if spec.serves("market_state"):
+                    market.market_state = spec.value(update, "market_state") or "UNKNOWN"
                 market.last_update = datetime.now()
 
                 # Update candle
@@ -198,6 +274,27 @@ class IGStreamListener(SubscriptionListener if LIGHTSTREAMER_AVAILABLE else obje
 
         except Exception as e:
             logger.error(f"Error processing price update: {e}")
+
+    def _epic_for(self, item_name: str) -> Optional[str]:
+        """Resolve an item name back to its epic.
+
+        Built from the exact map recorded at subscribe time rather than by
+        stripping prefixes: CHART items are "CHART:{epic}:TICK", so the epic sits
+        in the MIDDLE and the old `.replace("MARKET:", "")` approach silently
+        yields a key that matches no market — which would look exactly like a
+        dead feed. The fallback below only covers the two quote groups and exists
+        so a stray update arriving before the map is populated still parses.
+        """
+        svc = self.stream_service
+        if svc is not None:
+            epic = getattr(svc, "_item_to_epic", {}).get(item_name)
+            if epic is not None:
+                return epic
+        if item_name.startswith("CHART:"):
+            parts = item_name.split(":")
+            return parts[1] if len(parts) >= 3 else None
+        stripped = item_name.replace("L1:", "").replace("MARKET:", "")
+        return stripped or None
 
     def _safe_float(self, value: Any) -> Optional[float]:
         """Safely convert value to float."""
@@ -333,15 +430,17 @@ class IGStreamService:
     DEMO_ENDPOINT = "https://demo-apd.marketdatasystems.com"
     LIVE_ENDPOINT = "https://apd.marketdatasystems.com"
 
-    # Item groups to try, in order, when subscribing. IG has now revoked two of
-    # these on this key (L1 ~2026-05-15, MARKET 2026-09-18) and each revocation
-    # killed the feed silently, so a single hardcoded group is a known single
-    # point of failure. Both entries here serve the SAME MERGE field set, which
-    # is why they are interchangeable and onItemUpdate can strip either prefix.
-    # CHART:TICK is deliberately NOT in this ladder: it is a different mode with
-    # different field names (BID/OFR/UTM/LTP), so "binding" to it would yield an
-    # active subscription producing no usable data — worse than a clean failure.
-    SUBSCRIPTION_GROUPS = ("MARKET", "L1")
+    # Item groups to try, in order. IG has revoked two of these on this key
+    # (L1 ~2026-05-15, MARKET 2026-09-18) and each revocation killed the feed
+    # silently, so a single hardcoded group is a known single point of failure.
+    #
+    # Order is cheapest-first: the quote groups coalesce updates (MERGE) and
+    # carry MARKET_STATE, so they are preferred whenever IG will serve them, and
+    # the bot drops back to them automatically if entitlement is restored.
+    # CHART:TICK is the fallback that is actually entitled as of 2026-09-21 —
+    # it is DISTINCT, names its fields differently and has no MARKET_STATE,
+    # which is why each group carries a full spec rather than a bare prefix.
+    SUBSCRIPTION_GROUPS = (GROUP_MARKET, GROUP_L1, GROUP_CHART_TICK)
     # How long to wait for IG's async verdict on a subscribe before giving up.
     SUBSCRIBE_CONFIRM_TIMEOUT = 8.0
 
@@ -381,8 +480,10 @@ class IGStreamService:
         # says nothing about whether the feed works — on 2026-09-18 that gap hid a
         # 62-hour outage. These three are what the watchdog actually reads.
         self.subscription_group: Optional[str] = None   # group that bound, if any
+        self.subscription_spec: Optional[GroupSpec] = None
         self.subscription_failed = False                # every group refused
         self.subscribed_at: Optional[datetime] = None   # when we last tried
+        self._item_to_epic: dict[str, str] = {}
 
         # Append-only candle-archive cursor: last-archived timestamp per epic, so
         # archive_candles_to_disk() appends only NEW closed candles before the
@@ -478,22 +579,28 @@ class IGStreamService:
             self.subscription_group = None
             self.subscription_failed = False
 
-            for group in self.SUBSCRIPTION_GROUPS:
-                if self._try_subscribe(group, epics):
-                    self.subscription_group = group
+            for spec in self.SUBSCRIPTION_GROUPS:
+                if self._try_subscribe(spec, epics):
+                    self.subscription_group = spec.name
+                    self.subscription_spec = spec
                     logger.info(
-                        f"Subscribed to {len(epics)} markets via '{group}': {', '.join(names)}"
+                        f"Subscribed to {len(epics)} markets via '{spec.name}': "
+                        f"{', '.join(names)}"
                     )
+                    if not spec.serves("market_state"):
+                        logger.info(
+                            f"'{spec.name}' does not serve MARKET_STATE — tradeable "
+                            f"state will be sourced from REST (see refresh_market_states)"
+                        )
                     return True
-                logger.warning(f"Group '{group}' refused — falling back to the next one")
+                logger.warning(f"Group '{spec.name}' refused — falling back to the next one")
 
             self.subscription_failed = True
             logger.critical(
-                f"Every subscription group {list(self.SUBSCRIPTION_GROUPS)} was refused. "
-                f"The feed is DEAD while the socket stays connected. This is an account "
-                f"entitlement problem, not a network one — check the API key at "
-                f"labs.ig.com. (CHART:TICK may still be entitled but carries a different "
-                f"field set and is not wired into the parser.)"
+                f"Every subscription group "
+                f"{[s.name for s in self.SUBSCRIPTION_GROUPS]} was refused. The feed is "
+                f"DEAD while the socket stays connected. This is an account entitlement "
+                f"problem, not a network one — check the API key at labs.ig.com."
             )
             return False
 
@@ -502,7 +609,7 @@ class IGStreamService:
             self.subscription_failed = True
             return False
 
-    def _try_subscribe(self, group: str, epics: list[str]) -> bool:
+    def _try_subscribe(self, spec: GroupSpec, epics: list[str]) -> bool:
         """Subscribe with one item group and WAIT for IG's verdict.
 
         The old code called client.subscribe() and immediately logged success.
@@ -511,28 +618,22 @@ class IGStreamService:
         [21] error a few lines later went unread by everything downstream.
         """
         outcome = threading.Event()
-        items = [f"{group}:{epic}" for epic in epics]
-        logger.info(f"Subscribing to {len(items)} items via '{group}': {items[:2]}...")
+        items = [spec.item(epic) for epic in epics]
+        # Exact item->epic map for the parser. CHART puts the epic in the middle
+        # of the item name, so prefix-stripping cannot recover it.
+        self._item_to_epic = {spec.item(epic): epic for epic in epics}
+        logger.info(f"Subscribing to {len(items)} items via '{spec.name}': {items[:2]}...")
 
         subscription = Subscription(
-            mode="MERGE",
+            mode=spec.mode,
             items=items,
-            fields=[
-                "UPDATE_TIME",
-                "BID",
-                "OFFER",
-                "CHANGE",
-                "CHANGE_PCT",
-                "HIGH",
-                "LOW",
-                "MARKET_STATE",
-            ],
+            fields=list(spec.fields),
         )
         listener = IGStreamListener(
             self,
             on_price_update=self.on_price_update,
             on_candle_complete=self.on_candle_complete,
-            group=group,
+            spec=spec,
             outcome=outcome,
         )
         subscription.addListener(listener)
@@ -542,7 +643,7 @@ class IGStreamService:
             # Neither callback fired. Treat silence as failure — an unconfirmed
             # subscription is exactly the state that hid the 09-18 outage.
             logger.error(
-                f"Group '{group}': no subscription verdict within "
+                f"Group '{spec.name}': no subscription verdict within "
                 f"{self.SUBSCRIBE_CONFIRM_TIMEOUT}s — treating as refused"
             )
             self._safe_unsubscribe(subscription)
@@ -850,6 +951,44 @@ class IGStreamService:
         must not treat 0 as proof of a weekend — see has_ever_ticked().
         """
         return sum(1 for m in self.markets.values() if m.market_state == "TRADEABLE")
+
+    def needs_rest_market_state(self) -> bool:
+        """True when the bound group does not serve MARKET_STATE (CHART does not)."""
+        spec = self.subscription_spec
+        return spec is not None and not spec.serves("market_state")
+
+    def refresh_market_states(self, client) -> int:
+        """Fill MarketStream.market_state from REST for groups that omit it.
+
+        CHART:TICK carries prices but no MARKET_STATE, and that field is not
+        decoration: tradeable_market_count() feeds the watchdog's weekend
+        suppressor, and _dead_market_guard uses it to catch an epic that has gone
+        OFFLINE while ticks keep flowing (the Crude 2026-08-19 failure, 16 days
+        silent). Losing it would quietly disable both.
+
+        Caller controls cadence — get_market_info shares IG's per-key
+        non-trading rate limit with everything else the bot does, so this is
+        driven from the screener's schedule, not per tick. Returns the number of
+        markets updated.
+        """
+        if not self.needs_rest_market_state() or client is None:
+            return 0
+        updated = 0
+        for epic, market in self.markets.items():
+            try:
+                info = client.get_market_info(epic)
+            except Exception as e:
+                logger.debug(f"REST market-state refresh failed for {epic}: {e}")
+                continue
+            if info is not None and getattr(info, "market_status", None):
+                market.market_state = info.market_status
+                updated += 1
+        if updated:
+            logger.info(
+                f"Refreshed MARKET_STATE from REST for {updated}/{len(self.markets)} "
+                f"markets (bound group '{self.subscription_group}' does not serve it)"
+            )
+        return updated
 
     def has_ever_ticked(self) -> bool:
         """Whether any market has delivered a tick since the last subscribe."""

@@ -908,6 +908,16 @@ def run_daily_screen(periodic: bool = False) -> None:
     if not screener or not stream_service:
         return
 
+    # Groups that carry prices but not MARKET_STATE (CHART:TICK) need tradeable
+    # state from REST instead. Piggy-backed on the screener's cadence — it is
+    # already the right frequency, and get_market_info shares IG's per-key
+    # non-trading rate limit with the live bot. No-op on the quote groups.
+    if stream_service.needs_rest_market_state():
+        try:
+            stream_service.refresh_market_states(client)
+        except Exception as e:
+            logger.warning(f"REST market-state refresh skipped: {e}")
+
     prev_active = set(screener.active_epics)
 
     # Collect spreads from streaming data
@@ -3846,7 +3856,10 @@ def _alert_subscription_entitlement(now: datetime, reason: str) -> None:
     ):
         return
     _subscription_alert_last = now
-    groups = list(getattr(stream_service, "SUBSCRIPTION_GROUPS", ()))
+    groups = [
+        getattr(s, "name", s)
+        for s in getattr(stream_service, "SUBSCRIPTION_GROUPS", ())
+    ]
     logger.critical(
         f"Streaming watchdog: {reason}. Tried {groups}. NOT restarting — a restart "
         f"cannot fix an entitlement. Check the API key at labs.ig.com."

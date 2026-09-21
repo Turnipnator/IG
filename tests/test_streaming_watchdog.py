@@ -228,21 +228,38 @@ class TestWatchdogTrips(unittest.TestCase):
 class TestSubscriptionGroupLadder(unittest.TestCase):
     """IG has revoked two groups on this key; one hardcoded group is a SPOF."""
 
-    def test_ladder_holds_only_same_shape_groups(self):
-        # CHART:TICK uses different field names, so binding to it would produce
-        # an "active" subscription delivering nothing the parser can read.
-        self.assertEqual(IGStreamService.SUBSCRIPTION_GROUPS, ("MARKET", "L1"))
+    def test_ladder_order_is_cheapest_first(self):
+        """Quote groups first; CHART is the entitled fallback, not the default."""
+        names = [s.name for s in IGStreamService.SUBSCRIPTION_GROUPS]
+        self.assertEqual(names, ["MARKET", "L1", "CHART:TICK"])
 
-    def test_parser_strips_every_group_in_the_ladder(self):
+    def test_parser_resolves_the_epic_for_every_group_in_the_ladder(self):
+        """CHART puts the epic in the MIDDLE — prefix-stripping silently fails."""
         from src.streaming import IGStreamListener
-        for group in IGStreamService.SUBSCRIPTION_GROUPS:
-            item = f"{group}:IX.D.FTSE.DAILY.IP"
-            epic = item.replace("L1:", "").replace("MARKET:", "")
+
+        epic = "IX.D.FTSE.DAILY.IP"
+        svc = _service(markets=(epic,))
+        for spec in IGStreamService.SUBSCRIPTION_GROUPS:
+            item = spec.item(epic)
+            svc._item_to_epic = {spec.item(epic): epic}
+            listener = IGStreamListener(svc, spec=spec)
             self.assertEqual(
-                epic, "IX.D.FTSE.DAILY.IP",
-                f"onItemUpdate cannot resolve the epic for group {group}",
+                listener._epic_for(item), epic,
+                f"cannot resolve the epic from item {item!r} (group {spec.name})",
             )
-        self.assertTrue(hasattr(IGStreamListener, "onSubscriptionError"))
+
+    def test_epic_resolves_without_the_map_too(self):
+        """Fallback path, for an update arriving before the map is populated."""
+        from src.streaming import IGStreamListener, GROUP_CHART_TICK, GROUP_MARKET
+
+        svc = _service()
+        svc._item_to_epic = {}
+        for spec in (GROUP_MARKET, GROUP_CHART_TICK):
+            listener = IGStreamListener(svc, spec=spec)
+            self.assertEqual(
+                listener._epic_for(spec.item("CS.D.EURUSD.TODAY.IP")),
+                "CS.D.EURUSD.TODAY.IP",
+            )
 
     def test_listener_latches_the_verdict_instead_of_only_logging_it(self):
         import threading
