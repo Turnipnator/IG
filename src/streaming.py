@@ -118,6 +118,100 @@ GROUP_CHART_TICK = GroupSpec(
 )
 
 
+# Disk-cache staleness. The old test asked how long ago the FILE was written,
+# which stayed permanently fresh because save_candles_to_disk kept rewriting the
+# same frozen candles every 15 minutes throughout the 2026-09-18 outage — so the
+# bot restored 62-hour-old candles logging "age: 17m" and spliced today's prices
+# onto Friday's, a +0.80% step that pegged RSI(7) near 100 for hours.
+#
+# What actually matters is not elapsed wall-clock time but whether the market
+# TRADED during the gap. Over a weekend it did not: Friday's candles really are
+# the latest data, and refetching would spend ~680 API points to download bytes
+# we already hold. After an outage it did, and the cache is missing real bars.
+# The threshold is a cost/accuracy dial, and it was chosen by measuring real
+# restart shapes against the live config rather than by picking a round number.
+# Points cost per scenario (13 markets, 50 pts each, 10,000/week allowance):
+#
+#   threshold      10min   1h down   3h US   wknd->Sun  wknd->Mon06   62h OUTAGE
+#        10           0       350      400       100         450          600
+#        20           0         0      350         0         450          500
+#        40           0         0        0         0         150          450
+#
+# 20 keeps routine deploys and short blips free while still charging for any
+# multi-hour hole. 10 taxes every one-hour restart; 40 accepts a 3-hour US-session
+# gap, and a gap sits at the END of the deque right after a restart — exactly
+# where RSI(7) and the MACD exit look — so its position makes it more harmful
+# than its size suggests. The residual ~450 on a Monday-06:00 restart is real
+# missed trading (Japan, Hong Kong and Gold trade overnight), not waste.
+CACHE_MAX_MISSING_BARS = 20   # ~20% of the 100-bar deque, measured (see table)
+CACHE_MAX_AGE_DAYS = 7        # backstop: never resurrect an abandoned file
+
+
+def in_session(trading_start: int, trading_end: int, when: datetime) -> bool:
+    """Is this market trading at `when` (UTC)?
+
+    `trading_start > trading_end` means the window wraps midnight, which is how
+    the 24/5 markets are configured (Crude/Gold/DXY/EUR-USD are 23 -> 21).
+
+    Weekend rules are deliberately coarse and err toward "closed", because a
+    false "open" costs API points while a false "closed" only keeps a cache
+    that a real outage would have to be short to make harmful:
+      * Saturday  — everything is shut.
+      * Sunday    — only the 22:00 UTC forex/commodity reopen counts, and only
+                    for markets whose own window reaches that hour.
+    """
+    hour = when.hour
+    if trading_start < trading_end:
+        within = trading_start <= hour < trading_end
+    else:
+        within = hour >= trading_start or hour < trading_end
+    if not within:
+        return False
+    weekday = when.weekday()
+    if weekday == 5:            # Saturday
+        return False
+    if weekday == 6:            # Sunday — only the late reopen
+        return hour >= 22
+    return True
+
+
+def _fmt_age(age: timedelta) -> str:
+    """Readable age. The old log used `age.seconds // 60`, which silently drops
+    whole days — a 62-hour-old cache printed as '17m'."""
+    total_min = int(age.total_seconds() // 60)
+    if total_min < 60:
+        return f"{total_min}m"
+    if total_min < 60 * 24:
+        return f"{total_min // 60}h{total_min % 60:02d}m"
+    return f"{total_min // (60 * 24)}d{(total_min // 60) % 24:02d}h"
+
+
+def expected_bars_between(
+    trading_start: int, trading_end: int, interval_minutes: int,
+    start: datetime, end: datetime,
+) -> int:
+    """How many in-session bars SHOULD exist between two times.
+
+    Zero across a weekend, which is the property that keeps a normal Monday
+    restart free; non-zero across an outage that spanned a live session.
+    """
+    if end <= start or interval_minutes <= 0:
+        return 0
+    step = timedelta(minutes=interval_minutes)
+    bars = 0
+    cursor = start
+    # Hard cap so a corrupt timestamp can't spin here. 20k bars is ~70 days of
+    # 5m sessions — far beyond CACHE_MAX_AGE_DAYS, so the cap is unreachable in
+    # any case we would still accept.
+    for _ in range(20000):
+        if cursor >= end:
+            break
+        if in_session(trading_start, trading_end, cursor):
+            bars += 1
+        cursor += step
+    return bars
+
+
 @dataclass
 class Candle:
     """OHLCV candle data."""
@@ -155,6 +249,13 @@ class MarketStream:
     candles: deque = field(default_factory=lambda: deque(maxlen=100))
     current_candle: Optional[Candle] = None
     candle_interval: int = 5  # minutes
+
+    # This market's own trading window (UTC hours), mirrored from MarketConfig so
+    # load_candles_from_disk can tell "the market was shut" from "we were blind"
+    # without importing config here. start > end means the window wraps midnight
+    # (forex/commodities run 23:00 -> 21:00 the next day).
+    trading_start: int = 0
+    trading_end: int = 24
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert candles to DataFrame for indicator calculation."""
@@ -552,7 +653,13 @@ class IGStreamService:
         self.subscription_group = None
         self.subscribed_at = None
 
-    def subscribe_markets(self, epics: list[str], names: list[str] = None, candle_intervals: list[int] = None) -> bool:
+    def subscribe_markets(
+        self,
+        epics: list[str],
+        names: list[str] = None,
+        candle_intervals: list[int] = None,
+        trading_windows: list[tuple[int, int]] = None,
+    ) -> bool:
         """
         Subscribe to market price updates.
 
@@ -560,6 +667,9 @@ class IGStreamService:
             epics: List of market EPICs to subscribe to
             names: Optional list of market names (for logging)
             candle_intervals: Optional list of candle intervals in minutes per market
+            trading_windows: Optional (trading_start, trading_end) UTC hours per
+                market, used by the disk-cache staleness test. Defaults to
+                always-open, which makes that test maximally cautious.
 
         Returns:
             True if subscription successful
@@ -572,8 +682,14 @@ class IGStreamService:
             # Initialize market streams
             names = names or epics
             candle_intervals = candle_intervals or [5] * len(epics)
-            for epic, name, interval in zip(epics, names, candle_intervals):
-                self.markets[epic] = MarketStream(epic=epic, name=name, candle_interval=interval)
+            trading_windows = trading_windows or [(0, 24)] * len(epics)
+            for epic, name, interval, window in zip(
+                epics, names, candle_intervals, trading_windows
+            ):
+                self.markets[epic] = MarketStream(
+                    epic=epic, name=name, candle_interval=interval,
+                    trading_start=window[0], trading_end=window[1],
+                )
 
             self.subscribed_at = datetime.now()
             self.subscription_group = None
@@ -868,6 +984,48 @@ class IGStreamService:
         except Exception as e:
             logger.warning(f"Archive prune failed: {e}")
 
+    def _cache_is_usable(self, item: dict, market: Optional[MarketStream]) -> tuple[bool, str]:
+        """Should this cached series seed the indicators?
+
+        Judged on MISSED TRADING, not elapsed wall-clock. `saved_at` only records
+        when we last wrote the file, and the writer kept running for 62 hours
+        after the feed died on 2026-09-18 — so it said "17m" about candles that
+        were nearly three days stale. The newest CANDLE is the only honest clock.
+
+        Returns (usable, human-readable reason) so the log says why either way.
+        """
+        candles = item.get("candles") or []
+        if not candles:
+            return False, "cache holds no candles"
+
+        try:
+            newest = datetime.fromisoformat(candles[-1]["timestamp"])
+        except Exception:
+            return False, "cache has an unreadable newest timestamp"
+
+        now = datetime.now()
+        age = now - newest
+
+        # Backstop: an abandoned file is junk regardless of session arithmetic.
+        if age > timedelta(days=CACHE_MAX_AGE_DAYS):
+            return False, f"newest candle is {age.days}d old (>{CACHE_MAX_AGE_DAYS}d backstop)"
+
+        if market is None:
+            return True, f"newest candle {_fmt_age(age)} old"
+
+        missing = expected_bars_between(
+            market.trading_start, market.trading_end, market.candle_interval,
+            newest, now,
+        )
+        if missing > CACHE_MAX_MISSING_BARS:
+            return False, (
+                f"{missing} in-session bars missing since {newest:%Y-%m-%d %H:%M} "
+                f"({_fmt_age(age)} ago) — the market traded while we were blind"
+            )
+        return True, (
+            f"newest candle {_fmt_age(age)} old, {missing} in-session bars missed"
+        )
+
     def load_candles_from_disk(self) -> dict:
         """
         Load candle data from disk (saved by previous session).
@@ -900,20 +1058,23 @@ class IGStreamService:
                     )
                     continue
 
-                saved_at = datetime.fromisoformat(item["saved_at"])
-                age = datetime.now() - saved_at
+                label = item.get("name", epic)
+                candles = item["candles"]
+                if not candles:
+                    continue
 
-                # Use if less than 6 hours old — avoids wasting API budget on restart
-                if age < timedelta(hours=6):
-                    candles = item["candles"]
-                    if candles:
-                        df = pd.DataFrame(candles)
-                        df["date"] = pd.to_datetime(df["timestamp"])
-                        df = df.drop(columns=["timestamp"])
-                        result[epic] = df
-                        logger.info(f"  {item.get('name', epic)}: Loaded {len(candles)} candles from disk (age: {age.seconds // 60}m)")
-                else:
-                    logger.debug(f"  {epic}: Disk cache too old ({age.seconds // 60}m)")
+                usable, reason = self._cache_is_usable(item, current_market)
+                if not usable:
+                    logger.info(f"  {label}: skipping disk cache — {reason}")
+                    continue
+
+                df = pd.DataFrame(candles)
+                df["date"] = pd.to_datetime(df["timestamp"])
+                df = df.drop(columns=["timestamp"])
+                result[epic] = df
+                logger.info(
+                    f"  {label}: Loaded {len(candles)} candles from disk ({reason})"
+                )
 
             if result:
                 logger.info(f"Loaded candle data for {len(result)} markets from disk (0 API calls)")

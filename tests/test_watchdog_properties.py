@@ -1,4 +1,11 @@
-"""Generated properties for the streaming watchdog's liveness decision.
+"""Generated properties for feed liveness — the watchdog, and the disk cache.
+
+Both halves of this file guard the same mistake in different places: deciding
+whether data is fresh by looking at something that stays fresh when the data
+dies. The watchdog read liveness from the feed it was judging; the disk cache
+read staleness from when the file was last written, while the writer kept
+rewriting frozen candles for 62 hours.
+
 
 The 2026-09-18 outage was not a missing check — the watchdog HAD a staleness
 check and it fired, correctly, at 19:35:41. The failure was that its inputs were
@@ -177,6 +184,61 @@ class TestRefusalIsAlwaysAFault(unittest.TestCase):
         self.assertTrue(
             _drive(svc, rest_status="TRADEABLE"),
             "every group refused must trip even while stale ticks linger in memory",
+        )
+
+
+
+
+class TestCacheNeverRefetchesAcrossAClosedMarket(unittest.TestCase):
+    """The API-budget property for the disk-cache staleness test.
+
+    Every unnecessary refetch is ~680 points against a 10,000/week allowance,
+    and across a weekend it re-downloads bars identical to the cached ones,
+    because the market never traded. So: a gap containing no in-session time
+    must NEVER be counted as missing bars — whatever the window, interval, or
+    how many days the gap spans.
+
+    The converse (an outage across a live session IS counted) is pinned by
+    example in tests/test_cache_staleness.py; this hunts for a window/interval
+    combination where the weekend guarantee quietly fails.
+    """
+
+    @given(
+        start=st.integers(min_value=0, max_value=23),
+        end=st.integers(min_value=0, max_value=24),
+        interval=st.sampled_from([5, 15, 60]),
+        sat_hour=st.integers(min_value=0, max_value=23),
+        hours=st.integers(min_value=1, max_value=24),
+    )
+    def test_a_gap_inside_saturday_never_counts_bars(
+        self, start, end, interval, sat_hour, hours
+    ):
+        """Saturday is shut for every market, so nothing can be missed in it."""
+        from src.streaming import expected_bars_between
+
+        t0 = datetime(2026, 9, 19, sat_hour)           # a Saturday
+        t1 = min(t0 + timedelta(hours=hours), datetime(2026, 9, 20, 0))
+        self.assertEqual(
+            expected_bars_between(start, end, interval, t0, t1), 0,
+            f"window {start}-{end} @{interval}m claimed missed bars inside Saturday",
+        )
+
+    @given(
+        interval=st.sampled_from([5, 15, 60]),
+        end=st.integers(min_value=1, max_value=21),
+    )
+    def test_equity_window_misses_nothing_over_a_whole_weekend(self, interval, end):
+        """Friday close -> Monday open, for a non-wrapping (equity) window."""
+        from src.streaming import expected_bars_between
+
+        start = 0 if end == 1 else max(0, end - 8)
+        fri_close = datetime(2026, 9, 18, end)          # the moment it shuts
+        mon_open = datetime(2026, 9, 21, start)         # the moment it reopens
+        if mon_open <= fri_close:
+            return
+        self.assertEqual(
+            expected_bars_between(start, end, interval, fri_close, mon_open), 0,
+            f"window {start}-{end} @{interval}m claimed missed bars over a weekend",
         )
 
 

@@ -605,8 +605,14 @@ def initialize_streaming(preserved_candles: dict = None) -> bool:
         epics = [m.epic for m in MARKETS]
         names = [m.name for m in MARKETS]
         candle_intervals = [m.candle_interval for m in MARKETS]
+        # Each market's own trading window, so the disk-cache staleness test can
+        # tell "the market was shut" (keep the cache, 0 API points) from "we were
+        # blind while it traded" (refetch) — see _cache_is_usable.
+        trading_windows = [(m.trading_start, m.trading_end) for m in MARKETS]
 
-        if not stream_service.subscribe_markets(epics, names, candle_intervals):
+        if not stream_service.subscribe_markets(
+            epics, names, candle_intervals, trading_windows
+        ):
             logger.error("Failed to subscribe to markets")
             return False
 
