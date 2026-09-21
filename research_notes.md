@@ -4104,3 +4104,107 @@ Scratch scripts, not committed: `dxy_replay.py`, `dxy_replay2.py`.
 DXY broke out on 09-10 (BUY above 9876.4) and was blocked by HTF BEARISH. Taken at the close, it would have been a
 −1R stop within about 90 minutes. The rally it anticipated came a day later, and the 09-11 re-break would have
 caught it (+6.8R open). The filter-on path caught part of it via #266 (+4.0R open). No action: n=1.
+
+---
+
+# HTF gate on breakouts — did the blocked breaks win? 2026-09-21
+
+## Question
+The user asked, after a run of `⛔ Breakout blocked … HTF NEUTRAL (need BULLISH)` lines,
+whether the HTF filter is refusing winning trades. Prior work answers adjacent questions but
+not this one: the 930-row gate replay ([[project-gate-replay-2026-09]]) covers MOMENTUM
+rejections and does not isolate an HTF gate at all; the DXY 09-10 replay is n=1 and was
+explicitly cherry-picked by a rally; the HTF={NONE,HOUR,DAY} ladder answers "is the gate net
+positive over all breaks", which is a different quantity from "what did the refused ones do".
+
+## Hypotheses
+- **H1** the gate refuses a negative-expectancy population (as every momentum gate does) → keep it.
+- **H2** the gate is expectancy-neutral (as the S&P-regime gate turned out to be) → it costs
+  nothing but buys nothing.
+- **H3** the gate refuses winners → it is costing money (the user's hypothesis).
+- **H4** whatever the pooled answer, it is carried by one or two markets and is not robust.
+
+## Design
+`scripts/replay_htf_blocked_breaks.py`. Run the breakout engine with NO HTF gate so every break
+is taken, then tag each resulting trade with what the live gate (htf_resolution=DAY on all 13
+markets) would have said at that bar. This partitions ONE trade set, so both halves share
+identical sequencing — unlike comparing two runs, where blocking a trade frees the engine to
+take a different one later and the sets stop being nested. Counting `rejected_signals` rows was
+rejected as a method: blocked-break logging is throttled to one row per epic per hour, so its
+269 rows measure the throttle, not the signal.
+
+Engine and HTF join imported from `backtest_index_breakout_ignative` (look-ahead safe: a daily
+bar is used only once `date + span <= refresh_instant`, mirroring the live 21:30 UTC scheduler
+and holding between refreshes). The readiness flag added here is asserted equal to that module's
+own trend output, so the copy cannot drift. Archive 06-12 → 09-21, copied off the VPS, 11
+markets with a BREAKOUT_CONFIG. **90 pre-warm-up breaks excluded** — DAY HTF needs 21 closed
+daily bars and sits at its NEUTRAL default before that, so counting them would score missing
+data as a decision.
+
+## Evidence — close fill (the live mechanism)
+
+|  | n | ΣR | R/trade | PF | z |
+|---|---|---|---|---|---|
+| **BLOCKED by the gate** | 152 | −31.42 | **−0.207** | 0.72 | −1.52 |
+| TAKEN (gate allowed) | 86 | −40.32 | **−0.469** | 0.39 | −3.66 |
+
+Split by why it was blocked — **this is the finding**:
+
+|  | n | ΣR | R/trade | PF | z |
+|---|---|---|---|---|---|
+| HTF **NEUTRAL** (no daily trend) | 44 | −30.72 | **−0.698** | 0.15 | **−6.20** |
+| HTF **OPPOSING** (counter-trend break) | 108 | −0.70 | **−0.006** | 0.99 | **−0.04** |
+
+Live breakout markets only (Gold + GBP/USD): blocked +2.99R over 27 (R/t +0.111, z +0.24);
+taken −1.68R over 16 (R/t −0.105, z −0.30). Both indistinguishable from zero.
+
+Robustness: leave-one-market-out keeps the blocked population negative in all 11 cases
+(worst −0.139R/t without Hong Kong). The `level` fill model makes it MORE negative
+(−0.267R/t, z −1.96), so the conclusion is not a fill artefact.
+
+## Confidence
+- **HIGH** — NEUTRAL-HTF breaks are strongly negative (−0.698R/t, z −6.20, n=44), robust to
+  fill model. This half of the gate is doing real work.
+- **HIGH** — OPPOSING-HTF breaks are expectancy-neutral (−0.006R/t, z −0.04, n=108). This half
+  of the gate neither helps nor hurts gross.
+- **MEDIUM** — the pooled blocked population is negative (−0.207R/t, z −1.52; −0.267/z −1.96 at
+  level fill). Directionally clear and robust to leave-one-out, but not significant at n=152.
+- **LOW** — anything about the LIVE book. Gold + GBP/USD give n=27 blocked / 16 taken with
+  |z| < 0.31. This study cannot say whether the gate helps or hurts the two markets that trade.
+
+## Self-critique
+- **The S&P "taken" cell (z −52.29) is an artefact, not evidence.** 12 of 13 exits are stops at
+  ≈−1.02R each: near-zero variance inflates z. Read it as "every DAY-gated S&P break failed
+  immediately", consistent with index breakout being closed ([[project-index-breakout-closed-2026-08]]).
+- **Both halves lose, so the gate is not the main problem.** Taken (−0.469R/t) is WORSE than
+  blocked (−0.207R/t). A filter cannot rescue a signal whose gross expectancy is negative; nine
+  of these eleven markets are observers precisely because index breakout was closed at PF 0.35.
+- What would disprove H1: a positive blocked population. It is negative pooled and under every
+  leave-one-out, so H1 survives — but only MEDIUM, and mostly via the NEUTRAL half.
+- Sequencing caveat: this measures "what did the refused breaks return", NOT "what the book
+  would have earned with the gate off". The latter is the ladder, whose HTF=NONE sequencing
+  differs. The two numbers are not interchangeable.
+- Window is ~3 months of IG-native archive. Per the ladder note, a 3-month window cannot
+  overturn the 730d validation that put the gate there.
+- Financing not charged. Blocked trades that would have run for days (trail exits: 53 of 152)
+  would carry index DFB financing at 7.20%/yr ([[project-index-dfb-financing-measured-2026-09]]),
+  making the blocked population slightly worse than shown, not better.
+
+## Next steps
+- **No config change.** Specifically, do NOT relax the gate on the strength of today's blocked
+  run: the population it refuses loses, and the half that is neutral (OPPOSING) would add 108
+  trades at ≈0R gross — i.e. a loss after cost and financing, plus exposure, for nothing.
+- The NEUTRAL/OPPOSING asymmetry is worth a pre-registered test at the ≈2026-12-09 Gold review:
+  does an "HTF must not be NEUTRAL" gate (allowing counter-trend breaks) beat the current
+  directional gate? Current data says the two halves differ by 0.69R/trade, but the live-market
+  n is far too small to act on.
+- Re-run monthly alongside `replay_rejected.py` and the ladder.
+
+## Summary
+The blocked breaks did NOT win. Pooled they returned −0.207R per trade (n=152, PF 0.72) and the
+result survives every leave-one-market-out and a second fill model. H3 is not supported; H1 is,
+at MEDIUM confidence. The structure underneath is the useful part: **the gate's entire value
+comes from refusing breaks taken while the daily trend is NEUTRAL** (−0.698R/t, z −6.20), while
+refusing counter-trend breaks is worth exactly nothing (−0.006R/t, z −0.04). On the two markets
+that actually trade live, n is too small to draw any conclusion. H4 is rejected — the finding is
+not tail-driven.
