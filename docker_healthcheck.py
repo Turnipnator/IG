@@ -39,6 +39,14 @@ LOG_SILENCE_LIMIT = timedelta(minutes=45)
 # The in-process watchdog trips at ~4 minutes. 30 means this only ever fires
 # for an outage that watchdog has already failed to fix.
 CANDLE_STALE_LIMIT = timedelta(minutes=30)
+# Candle persistence is scheduled `every(15).minutes` and is UPTIME-relative, so
+# for up to ~15 min after a restart streamed_candles.json still holds the
+# PREVIOUS run's candles — which look exactly like a frozen feed. Observed live
+# 2026-09-21: three consecutive failing checks after a healthy restart, purely
+# because the first save had not landed yet. A check that cries wolf on every
+# restart gets muted, and then it protects nothing. compose's start_period can't
+# express this (it was 2m against a 15m cadence), so the grace lives here.
+BOOT_GRACE = timedelta(minutes=20)
 
 
 def markets_should_be_open(now_utc: datetime) -> bool:
@@ -57,6 +65,19 @@ def markets_should_be_open(now_utc: datetime) -> bool:
     if weekday == 6 and now_utc.hour < 23:            # most of Sunday
         return False
     return True
+
+
+def process_uptime() -> timedelta | None:
+    """How long the bot process (PID 1 in the container) has been running.
+
+    Returns None if it can't be determined, and callers treat that as "old
+    enough to judge" — the candle check is the point of this script, so an
+    unreadable uptime must not disable it silently.
+    """
+    try:
+        return timedelta(seconds=time.time() - os.stat("/proc/1").st_ctime)
+    except Exception:
+        return None
 
 
 def newest_candle_time() -> datetime | None:
@@ -83,6 +104,13 @@ def check() -> tuple[bool, str]:
 
     if not markets_should_be_open(now_utc):
         return True, "markets closed — feed silence expected"
+
+    uptime = process_uptime()
+    if uptime is not None and uptime < BOOT_GRACE:
+        # The cache legitimately predates this boot; the log check above already
+        # proves the process is alive, and the in-process watchdog covers the
+        # feed itself far faster than this script does.
+        return True, f"within boot grace ({uptime} up) — candle age not yet meaningful"
 
     if not CANDLE_CACHE.exists():
         # Normal for the first minutes after a cold start.
