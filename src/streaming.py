@@ -118,6 +118,15 @@ GROUP_CHART_TICK = GroupSpec(
 )
 
 
+# Groups IG has already withdrawn from this key, and when the feed died for it.
+# A [21] on one of these is the ladder doing its job: it is re-logged on every
+# 6-hourly reconnect and is not a fault. It used to be ERROR, which put four
+# lines of known-good noise at the top of every healthcheck and made a genuinely
+# new revocation look identical to the expected ones. A [21] on a group that is
+# NOT listed here is exactly that new revocation — and stays ERROR.
+WITHDRAWN_GROUPS = {"L1": "~2026-05-15", "MARKET": "2026-09-18"}
+
+
 # Disk-cache staleness. The old test asked how long ago the FILE was written,
 # which stayed permanently fresh because save_candles_to_disk kept rewriting the
 # same frozen candles every 15 minutes throughout the 2026-09-18 outage — so the
@@ -462,20 +471,34 @@ class IGStreamListener(SubscriptionListener if LIGHTSTREAMER_AVAILABLE else obje
             self.outcome.set()
 
     def onSubscriptionError(self, code: int, message: str) -> None:
-        logger.error(f"Subscription error on group {self.group}: [{code}] {message}")
         self.active = False
         self.error = (code, message)
+        # A refusal on the CURRENTLY BOUND group is never routine, even for a
+        # group we already know is withdrawn — that is the 19:31 shape below.
+        svc = self.stream_service
+        is_bound = (
+            svc is not None and getattr(svc, "subscription_group", None) == self.group
+        )
+        withdrawn_since = WITHDRAWN_GROUPS.get(self.group)
+        if code == 21 and withdrawn_since and not is_bound:
+            logger.warning(
+                f"Group '{self.group}' refused [21] as expected — IG withdrew it from "
+                f"this key {withdrawn_since}; falling through to the next group"
+            )
+        else:
+            logger.error(f"Subscription error on group {self.group}: [{code}] {message}")
+            if code == 21:
+                logger.error(
+                    f"'[21] Invalid group' means this account/key is not entitled to "
+                    f"the '{self.group}' item group, and '{self.group}' is NOT already "
+                    f"known to be withdrawn — treat this as a NEW revocation and check "
+                    f"the API key at labs.ig.com."
+                )
         if "Invalid account type" in message:
             logger.error(
                 "This error typically means your demo account default is set to CFD "
                 "instead of Spreadbet. Contact IG helpdesk to change your default "
                 "demo account to Spreadbet Demo."
-            )
-        if code == 21:
-            logger.error(
-                f"'[21] Invalid group' means this account/key is not entitled to the "
-                f"'{self.group}' item group. L1 was revoked ~2026-05-15 and MARKET on "
-                f"2026-09-18; the subscriber will try the next group in the ladder."
             )
         # A refusal on the subscription that is CURRENTLY BOUND is the 19:31
         # case: the socket dropped, the library silently re-subscribed, and IG
@@ -483,8 +506,7 @@ class IGStreamListener(SubscriptionListener if LIGHTSTREAMER_AVAILABLE else obje
         # from four minutes of silence. Guarded on subscription_group so a
         # refusal while the ladder is still trying groups — when the service has
         # no bound group yet — cannot false-latch.
-        svc = self.stream_service
-        if svc is not None and getattr(svc, "subscription_group", None) == self.group:
+        if is_bound:
             logger.error(
                 "The live subscription was refused mid-session — treating the feed "
                 "as dead immediately rather than waiting for the staleness timer."
@@ -709,7 +731,12 @@ class IGStreamService:
                             f"state will be sourced from REST (see refresh_market_states)"
                         )
                     return True
-                logger.warning(f"Group '{spec.name}' refused — falling back to the next one")
+                if spec.name in WITHDRAWN_GROUPS:
+                    logger.info(f"Group '{spec.name}' unavailable as expected — next")
+                else:
+                    logger.warning(
+                        f"Group '{spec.name}' refused — falling back to the next one"
+                    )
 
             self.subscription_failed = True
             logger.critical(

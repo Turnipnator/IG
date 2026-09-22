@@ -287,6 +287,63 @@ class TestSubscriptionGroupLadder(unittest.TestCase):
             "a refusal on the bound subscription must be a fault immediately",
         )
 
+    def test_expected_ladder_refusal_is_a_warning_not_an_error(self):
+        """A [21] on a group IG already withdrew is the ladder working.
+
+        It fires on every 6-hourly reconnect, so logging it at ERROR put four
+        lines of known-good noise at the top of every healthcheck and made a
+        genuinely NEW revocation indistinguishable from the expected ones.
+        """
+        from src.streaming import IGStreamListener
+
+        svc = _service()
+        svc.subscription_group = None  # mid-ladder, nothing bound yet
+        listener = IGStreamListener(svc, group="MARKET")
+
+        with self.assertLogs("src.streaming", level="DEBUG") as logs:
+            listener.onSubscriptionError(21, "Invalid group")
+
+        self.assertFalse(
+            [r for r in logs.records if r.levelname == "ERROR"],
+            "an expected ladder refusal must not log at ERROR",
+        )
+        self.assertTrue(
+            any(r.levelname == "WARNING" for r in logs.records),
+            "it must still be visible at WARNING",
+        )
+
+    def test_refusal_on_an_unknown_group_stays_an_error(self):
+        """A group not already known-withdrawn is a new revocation: stay loud."""
+        from src.streaming import IGStreamListener
+
+        svc = _service()
+        svc.subscription_group = None
+        listener = IGStreamListener(svc, group="CHART:TICK")
+
+        with self.assertLogs("src.streaming", level="DEBUG") as logs:
+            listener.onSubscriptionError(21, "Invalid group")
+
+        errors = [r for r in logs.records if r.levelname == "ERROR"]
+        self.assertTrue(errors, "a NEW revocation must not be demoted")
+        self.assertIn("NEW revocation", "\n".join(r.getMessage() for r in errors))
+
+    def test_refusal_on_the_bound_group_stays_an_error_even_if_withdrawn(self):
+        """MARKET was bound right up until IG pulled it mid-session on 09-18."""
+        from src.streaming import IGStreamListener
+
+        svc = _service()
+        svc.subscription_group = "MARKET"  # bound and live
+        listener = IGStreamListener(svc, group="MARKET")
+
+        with self.assertLogs("src.streaming", level="DEBUG") as logs:
+            listener.onSubscriptionError(21, "Invalid group")
+
+        self.assertTrue(
+            [r for r in logs.records if r.levelname == "ERROR"],
+            "losing the bound feed is a fault, withdrawn-list or not",
+        )
+        self.assertTrue(svc.subscription_failed)
+
     def test_ladder_refusal_does_not_false_latch(self):
         """While the ladder is still trying groups, nothing is bound yet."""
         from src.streaming import IGStreamListener
