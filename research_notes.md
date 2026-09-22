@@ -4440,3 +4440,27 @@ This matches the "observational first, then enforce" rule and the go-live window
 - `scripts/replay_breakout_news.py`: Step 1 count, then the replay.
 - A property test: the BLOCKED tag of an entry must not depend on any price after its decision time, and the rotation must never tag a real event slot as a control.
 - Effort: about 1 day, most of it the event table. It needs no IG allowance.
+
+## Amendments B1–B5 + event table built (2026-09-22, before any price or trade data was loaded)
+
+`scripts/build_event_calendar.py` → `data/news_events/events.csv`: **1,647 scheduled events, 2004-01 → 2026-09.**
+
+| Event | n | Source | Time |
+|---|--:|---|---|
+| NFP | 277 | FRED release 50 | 08:30 ET |
+| US CPI | 272 | FRED release 10 | 08:30 ET |
+| FOMC statement | 181 | federalreserve.gov | see B2 |
+| FOMC press conference | 93 | federalreserve.gov | see B2 |
+| BoE rate decision | 232 | BoE `mpcvoting.xlsx` | 12:00 UK |
+| ECB decision / press conference | 227 / 227 | ecb.europa.eu | see below |
+| UK CPI | 138 (from 2015-04-14) | ONS bulletin archive | see B3 |
+
+ECB times: decision 13:45 CET and press conference 14:30 CET up to 2022-06; 14:15 / 14:45 CET from 2022-07-21.
+
+Spot-checked in UTC, all correct: NFP 2024-01-05 13:30Z and 2024-07-05 12:30Z; CPI 2020-03-11 12:30Z (three days after the US clock change); ECB 2020-03-12 12:45Z and 2023-09-14 12:15Z; BoE 2024-08-01 11:00Z; FOMC 2025-03-19 18:00Z. FOMC per year is 8 everywhere, except 2020 (7: the scheduled March meeting was replaced by the unscheduled 03-15) and 2026 (6 to date).
+
+- **B1 — BoE is 12:00 UK throughout.** §4's "07:00 on Super Thursday 2015–2019" was wrong and is dropped (MEDIUM-HIGH). The only non-noon BoE announcements were unscheduled, and those are excluded: 2008-10-08 (the coordinated cut), 2020-03-11 and 2020-03-19.
+- **B2 — FOMC times, corrected from §4's "14:15 before 2013".** The statement came at 14:15 ET until 2012, **except** the 2011-04 → 2012-12 press-conference meetings (8 of them), which released at **12:30 ET**. From 2013 the statement is at 14:00 ET. The press conference was 14:15 ET in 2011–12 and 14:30 ET from 2013. Each meeting's press-conference flag is parsed from the Fed's own page. Conference calls and unscheduled meetings are excluded.
+- **B3 — UK CPI release time is not on the ONS pages.** ONS moved CPI from 09:30 to 07:00 at some point. The switch date is resolved from **GBP/USD 1-minute price reaction at 07:00 vs 09:30 UK on the 138 release dates**. This uses no breakout trade and no outcome, only when the market moved, and it is done before any breakout run.
+- **B4 — US CPI:** February has an extra seasonal-factor release a few days earlier, so the last date in each month is kept (272 releases = 272 months).
+- **B5:** UK CPI is primary only from 2015-04 (ONS's archive boundary, as §4 allowed). Before that, core-GBP = BoE only.
