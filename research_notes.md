@@ -4351,3 +4351,92 @@ T = 272 months (2004-01 → 2026-08). Data notes: GB/EZ spliced to SONIA/ECB DFR
 **Variant C (USD/JPY)** is the only positive line: net SR 0.14, +0.33 since 2015. It is under-powered by construction (t ≈ 0.67), so it is **not evidence** and not a reason to hold USD/JPY. It does mean the incidental USD/JPY financing credits the account has been receiving are real, not a quirk.
 
 **Closed.** Do not re-run carry with a different top-N, lookback, gate or start date (pre-committed). It would be worth revisiting only if the account moves to a product without a per-leg admin fee.
+
+---
+
+# PRE-REGISTRATION — Breakout news-proximity replay (written 2026-09-22, no outcomes looked at)
+
+## 0. What was found while writing this — the calendar block has NEVER blocked anything (HIGH)
+`src/calendar.py` expects ForexFactory's feed to have separate `date` + `time` fields; `_parse_event_time` returns `None` when `time` is empty. **The feed has no `time` field.** It now sends a single ISO `date` with the offset (`2026-09-23T21:30:00-04:00`), so every event is dropped.
+- **Log evidence:** all 121 weekly refreshes retained since 2026-07-27 read `Economic calendar: 0 high-impact events this week`; there are **0** `Calendar block` lines.
+- **Journal evidence:** **0 of 3,564** `rejected_signals` since 2026-03-05 carry a calendar reason.
+- The parser is unchanged since `be7c5a7` (2026-01-23), so it has probably been a no-op from day one (MEDIUM: pre-March logs are gone).
+- Separately, even if it parsed: `CURRENCY_EPIC_MAP` maps **GBP → []** (GBP/USD is live), still lists the retired `CC.D.CL.USS.IP` / `CC.D.DX.USS.IP`, and the old ET→UTC step is a fixed +5h (wrong in summer; moot with ISO offsets).
+
+**Consequences:**
+1. **No path — momentum, breakout, pullback or daily-trend — has ever been protected from news.** Every live and backtest number already includes news-time entries. There is no "protected" baseline to lose.
+2. The question is therefore not "does breakout need the block the momentum path has". It is **"is a news block worth having at all, on breakout?"**
+3. The fix is live-path code (it gates entries), so it gets its own full-treatment pre-flight. It is NOT bundled into this research.
+
+## 1. Question and sub-questions
+Do 1h breakout entries taken close to scheduled high-impact releases do materially worse (or better) than breakout entries taken at the **same weekday and hour in weeks with no release**? Is the difference big enough to be worth a block?
+- Q1. How many breakout entries fall in a live-rule block window (±30 min of the decision time)? This is outcome-blind; it decides whether the test is powered.
+- Q2. Mean R of the would-be-blocked entries vs the same slot in non-event weeks (the null).
+- Q3. Do the would-be-blocked entries include the right-tail winners the edge depends on (Gold: 84% of two years' profit from 3 trades)?
+- Q4. Is the answer the same for USD events and for GBP/EUR events?
+
+## 2. Competing hypotheses
+- **H0:** news-window entries are like any other entry at that hour, so a block changes nothing but n.
+- **H1 (harm):** spike-and-reverse plus gap-through-stop make news-window breakouts net losers. The block helps.
+- **H2 (help):** the release *is* the catalyst for the genuine trend moves, so the block clips the tail. This is the repo's recurring pattern: ADX ceiling, leg filter, profit-protect and swing-proximity all failed by removing winners.
+- **H3 (time-of-day):** any difference is really the 13:30–15:00 UK hours (US open / data hour), not the release. **The null is built to kill this one:** it compares with the same weekday and hour in other weeks.
+
+## 3. Power (computed BEFORE any outcome)
+- **Decision-relevant effect:** a block moves book expectancy by ≥ **0.02R/trade**, the size of the measured entry-fill gap, the smallest cost this repo has acted on. With fraction *f* of entries blocked, the per-blocked-trade difference must be Δ ≥ 0.02/*f*. For example, *f* = 3% needs Δ ≥ 0.67R.
+- **MDE (one-sided α 0.05, 80% power):** ≈ 2.49 × σ_R / √n_blocked, with σ_R ≈ 2.0 for these tail-heavy trades. n=20 → 1.11R; n=40 → 0.79R; n=80 → 0.56R.
+- **Prior count:** Yahoo's 730-day 1h window gives about 400 breakout entries on FX/Gold/Crude. With about 1–3% inside a ±30-minute window, that is **n_blocked ≈ 4–12, which cannot resolve anything.** So the primary data is **Dukascopy 1h, 2005–2026 (≈21 years)**: about 4,000 entries and n_blocked ≈ 40–120.
+- **Gate (pre-committed, outcome-blind):** Step 1 counts n_blocked and *f* using timestamps only. **If MDE > 0.02/f, the outcome replay is NOT run.** In that case the answer is "unresolvable offline", and the fallback is §8's log-only mode.
+
+## 4. Data
+- **Prices:** Dukascopy free 1h BID candles (`npx dukascopy-node -t h1`) for XAUUSD, GBPUSD, EURUSD and WTI (`lightcmdusd`, from about 2011). Gold/FX are fine as proxies for IG DFB (F11). **Indices and DXY are excluded:** F8 shows Yahoo session coverage of 43–75%, and Dukascopy index CFDs are not IG's contracts.
+  - Cross-check: over the overlapping window, hourly returns vs Yahoo and the IG archive must correlate ≥ 0.95, or that market drops out.
+- **Events, primary "core" set** (scheduled, top-tier, exact times; DST handled with `zoneinfo`):
+  - **US:** NFP and CPI 08:30 ET; FOMC statement 14:00 ET (14:15 before 2013-01); also the press-conference start where one was held.
+  - **UK:** CPI 07:00 UK; BoE rate decision 12:00 UK (07:00 on "Super Thursday" 2015–2019; each listed time is used).
+  - **EZ:** ECB decision 13:45 CET (14:15 CET from 2022-07) plus the press-conference start.
+- **Event sources:**
+  - US release dates: FRED API `release/dates` (NFP id 50, CPI id 10). **This needs a free FRED API key (the one blocking item).**
+  - FOMC: federalreserve.gov calendars and historical pages.
+  - BoE: MPC dates pages.
+  - ECB: monetary-policy meeting calendar.
+  - UK CPI: ONS release calendar. If it can't be scraped back to 2005, UK CPI is primary only from where verifiable dates start, and that boundary is logged.
+- **Excluded, and why:** FF "High" *speeches* (e.g. "Fed Chair Speaks") have no reproducible history. The live block would include them, so this replay understates what a working block would remove (stated gap). The extended set (Retail Sales, GDP advance, Core PCE, ISM Mfg, UK labour/GDP) is **descriptive only**.
+- **Mapping (the corrected one, not the live map):** USD events → Gold, EUR/USD, GBP/USD, WTI. GBP events → GBP/USD. EUR events → EUR/USD.
+
+## 5. Trade population and the counterfactual
+- **Engine:** `scripts/backtest_forex_breakout.breakout_sim` at the live config (n=55, 2×ATR stop, naked Donchian trail, DAY HTF gate, close fill = the live mechanism, `BREAKOUT_TICK_ENTRY` off).
+  - Before use, assert it reproduces the Yahoo 730-day Gold numbers already in these notes.
+  - Both directions are pooled; the long-only live set (Gold, GBP/USD BUY) is reported alongside, descriptive.
+- **One trade set, partitioned** (the `replay_htf_blocked_breaks.py` design): run the engine as is, then tag each entry `BLOCKED` if its decision time (bar close) is within ±30 minutes of a mapped event. This is the live buffer and the rule the fixed parser would apply.
+  - That is the "does blocking these help" number. It is not "P&L with the block on", since a block would free the engine to take a later break. That run is reported as secondary, with the same caveat as the HTF study.
+- **Costs:** the measured spreads per market plus the Step-0 financing (Gold 5.8%/yr all-in, FX 1.5% admin ± interest) per realised night.
+  - **News slippage sensitivity:** stop-outs of BLOCKED trades get an extra 0.25R and 0.50R. 1h OHLC cannot see slippage through a stop at a release, and that bias favours H2.
+
+## 6. Test and null
+- **Statistic:** Δ = mean net R(BLOCKED) − mean net R(all other entries).
+- **Null: whole-week rotation of the event calendar.** Shift every event by k × 7 days for k ∈ ±1…±26. Drop any shifted window that lands on a real event of the same currency. Re-tag and recompute Δ_k. This keeps weekday, hour and the US-data-hour vol regime, so it answers H3 directly.
+- **Two-sided** p = share of |Δ_k| ≥ |Δ_obs|, because H1 and H2 point in opposite directions.
+- **Family:** the primary tests are core-USD and core-GBP/EUR (2 tests), Holm-corrected.
+
+## 7. Pre-committed verdicts
+- **BLOCK HELPS** requires all of:
+  1. Δ < 0 with Holm p ≤ 0.05
+  2. book effect *f* × |Δ| ≥ 0.02R/trade
+  3. same sign in both halves (2005–2015, 2016–2026)
+  4. the verdict survives excluding the single most negative blocked trade
+- **BLOCK HURTS** is the same with Δ > 0. It **also** fires if the BLOCKED set holds ≥ 2 of the book's top-10 trades by R (tail rule, Q3).
+- **NO EFFECT** is everything else, or the §3 gate failing.
+- **What each verdict leads to:**
+  - HELPS → fix the parser and enforce on breakout (full-treatment pre-flight).
+  - HURTS → fix the parser for logging only; never enforce on breakout.
+  - NO EFFECT → log-only, and judge prospectively at the next review.
+
+## 8. Whatever the verdict: log-only first
+Enforcement on the live Gold/GBP/USD path would come only after the replay **and** a prospective log-only period. The fixed calendar tags every live/shadow breakout entry `would_block=1`, so real IG fills at releases (the slippage the backtest can't see) accumulate in the journal.
+This matches the "observational first, then enforce" rule and the go-live window: enforcing a new gate mid-window is a rule change and must be logged as such.
+
+## 9. Deliverables and effort
+- `scripts/build_event_calendar.py`: official sources → `data/news_events/events.csv` (UTC, currency, tier, source).
+- `scripts/replay_breakout_news.py`: Step 1 count, then the replay.
+- A property test: the BLOCKED tag of an entry must not depend on any price after its decision time, and the rotation must never tag a real event slot as a control.
+- Effort: about 1 day, most of it the event table. It needs no IG allowance.
