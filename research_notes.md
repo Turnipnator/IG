@@ -4208,3 +4208,146 @@ comes from refusing breaks taken while the daily trend is NEUTRAL** (−0.698R/t
 refusing counter-trend breaks is worth exactly nothing (−0.006R/t, z −0.04). On the two markets
 that actually trade live, n is too small to draw any conclusion. H4 is rejected — the finding is
 not tail-driven.
+
+
+# Anthropic `financial-services` repo: anything usable? (2026-09-22)
+
+**Question:** Does https://github.com/anthropics/financial-services (commit `574ed36`, 2026-09-21) give the IG bot, or the other bots, anything that could produce an edge or fix a weakness?
+
+**What the repo is (HIGH):** markdown skills, slash commands and Managed-Agent YAML for sell-side, private-equity and fund-admin analyst work: DCF, LBO, comps, CIMs, pitch decks, KYC, GL reconciliation, earnings notes. There is **no trading code, no backtest and no measured signal**. The data comes from paid enterprise MCP servers (LSEG, FactSet, S&P, Moody's...). Every output is "staged for human sign-off", so an LLM does the analyst's work.
+
+**Hypotheses**
+- H1: it holds a tradeable signal. **Ruled out (HIGH).** It has no signals. Its "LLM as analyst/forecaster" approach is the one the ling-3.0-flash-fin test already failed (rho −0.06).
+- H2: it holds *ideas* worth testing on our own free data. **Partly supported:** the two below.
+- H3: it holds *engineering patterns* worth borrowing. **Partly supported:** the reconciliation pattern.
+
+**Evidence / candidates**
+1. **FX carry (LSEG `fx-carry-trade` skill) — MEDIUM-LOW, untested.** This is the only return source in the repo that differs structurally from everything we have tried: it comes from interest-rate differentials, not price patterns. The account already shows IG passes carry through (USD/JPY **+£0.70/night credit**, GBP/USD about −£0.43 admin-only, EUR/USD about 0; see "Overnight funding: MEASURED"). The skill's idea is carry divided by vol, cutting exposure when vol rises; that is the textbook crash-risk control. Caveats: with 3 pairs we have essentially one bet (long USD/JPY); the IG admin fee comes off the differential; the carry factor has fat left tails (2008, Aug-2024 yen unwind). Test cost: zero (policy rates from FRED + Yahoo FX, 20+ years).
+2. **The breakout path has no economic-calendar block — HIGH (code fact).** `analyze_market_from_stream` sends breakout/breakout-shadow markets to `analyze_forex_breakout` and returns (`main.py:2358-2366`) *before* the calendar check at `main.py:2731`. So live Gold + GBP/USD breakouts can fire into NFP/CPI/FOMC. This was already an open follow-up (06-xx notes above); the `catalyst-calendar` skill is just a reminder of it. **Do not add the block without testing it first:** tail-clipping "improvements" have failed every time, and a news spike can be exactly the tail that carries Gold's edge. The test: tag archive/Yahoo breakout entries within ±30/60 min of scheduled high-impact US/UK releases (dates can be rebuilt deterministically) and compare R per trade with a rate-matched null.
+3. **GL-recon / break-trace pattern → journal ↔ IG `/history/transactions` tie-out — MEDIUM, operational.** Full outer join on dealId, then break buckets (amount / timing / journal-only / broker-only / fee-accrual = financing rows). It would run as a recurring check from an *independent* source, which follows the "freshness by the wrong proxy" lesson. It is not a backfill. The same pattern suits horse-racing/Betfair `settle()` (unpriced-winner bug class).
+4. Vol-surface / implied-vs-realised (`option-vol-analysis`): **parked (LOW).** It would be another regime gate, and the existing regime gate is neutral. The S&P pullback is DO-NOT-TUNE.
+
+**Ruled out:** DCF/comps/LBO/IB/PE/fund-admin skills (they don't apply to 1h CFD trading); LLM morning notes/idea generation (the ling test failed); paid connectors (cost vs a DEMO £45-risk book); `orchestrate.py` (only relevant if LLM agents act on untrusted text, which we don't do).
+
+**Next steps (each needs pre-registration before running):** (a) zero-cost FX carry backtest, net of the measured IG admin fee, with a vol-scaled variant; (b) news-proximity replay of breakout entries; (c) optional journal↔transactions tie-out script.
+
+---
+
+# PRE-REGISTRATION — FX carry backtest (written 2026-09-22, BEFORE any carry return has been computed)
+
+*Nothing below has been run. No carry P&L, Sharpe or equity curve has been looked at. Data availability was checked (row counts and date ranges only). Any change to this section after the first run must be logged as an amendment, with the reason.*
+
+## 1. Question
+Is there a G10 FX carry return that survives IG's real financing (admin fee + tom-next pass-through) and spreads, is distinguishable from noise, and could be traded at this account's size? And does vol-scaling (the "carry-to-vol" idea from the LSEG `fx-carry-trade` skill) improve it?
+
+**Sub-questions**
+- Q1. Does IG's interest leg track the interbank differential closely enough for a 3-month-rate model to price it? (Step 0 calibration)
+- Q2. Net of costs, is the 3-long/3-short G10 carry basket's Sharpe distinguishable from a rate-matched null?
+- Q3. Does it hold in both halves, 2004–2014 and 2015–2026 (after the post-GFC decay of the carry factor)?
+- Q4. Does inverse-vol weighting plus a crash gate improve it (variant B vs A)?
+- Q5. Is it tradeable here, i.e. can IG's minimum stakes deliver it within the £500 hard stop?
+
+## 2. Competing hypotheses
+- **H0 (null):** after IG costs the carry premium is ≈0. The differential is offset by spot depreciation (uncovered interest parity holds on average) and the admin fee takes the rest.
+- **H1 (classic carry):** net SR ≈ 0.4–0.7, as in the academic G10 literature, with occasional crashes.
+- **H2 (dead factor):** it was positive before 2014, has been ≈0 since, and zero-rate convergence killed it. Q3 separates H1 from H2.
+- **H3 (cost-killed):** gross is positive but IG's admin fee (both legs, every night, whatever the direction) makes it net ≈0.
+
+## 3. Power first (per the 2026-08 methodological rule)
+Monthly returns, 2004-01 → 2026-08, about 272 months (22.7 years). At one-sided α=0.05 and 80% power, the **minimum detectable annualised SR = (1.645+0.842)/√22.7 ≈ 0.53** (**0.72** on either 11-year half alone).
+- A **single pair** (USD/JPY, the only carry the book already earns) plausibly has SR ≈0.2–0.35, which is **below detection**. So the single-pair test is **reported descriptively only and cannot pass**.
+- Only the G10 basket is powered, and only if the literature-scale effect is real. Halves are judged on sign, not significance.
+
+## 4. Data (all free; zero IG historical allowance)
+- Rates: FRED OECD 3-month interbank `IR3TIB01{US,GB,EZ,JP,AU,NZ,CA,CH,NO,SE}M156N`, monthly. JP starts 2002-04, so that sets the start. **GB and EZ end 2026-01**: extend them with SONIA (`IUDSOIA`) and the ECB deposit rate (`ECBDFR`) as month-averages, with the splice flagged in the output.
+- FX: Yahoo daily closes, `USDJPY/GBPUSD/EURUSD/AUDUSD/NZDUSD/USDCAD/USDCHF/USDNOK/USDSEK=X`. The latest-starting series is AUDUSD (2006-05). Before that date AUD's return comes from `AUDJPY=X`×`USDJPY=X`, or AUD drops out (N=9 until then). This is a pre-committed rule, not a choice made after seeing results.
+- Yahoo is an acceptable proxy for IG DFB FX (F11: hourly correlations 0.96–0.99).
+
+## 5. Strategy (fixed; nothing is tuned)
+- **Signal (month m):** rank the 10 currencies by the 3-month rate **for month m−1**. OECD values are month-averages published after month-end, so using month m would be look-ahead. This is a hard rule because look-ahead is this repo's recurring bug; see the four HTF/backtest leaks.
+- **Variant A (primary):** long the top 3, short the bottom 3, equal notional, rebalanced at month-end close. Each leg is expressed against USD. USD itself can rank in or out.
+- **Variant B (the skill's idea):** the same ranks, but each leg is weighted by 1/σ(60-day realised). There is also a crash gate: halve gross exposure when the basket's 20-day realised vol is above 2× its trailing 252-day median (checked at month-end only).
+- **Variant C (descriptive only):** long USD/JPY, short JPY, whenever the differential exceeds the admin fee. This is the "what we could do with today's pairs" line. It is not part of the test family.
+- **Monthly return per leg** = spot return + (i_long − i_short)/12 − admin/12 − rebalance spread cost.
+
+## 6. Costs
+- **Admin fee:** charged on **both** legs, every night, whatever the direction. The central figure comes from Step 0 (measured from the account). Sensitivities: 1.0%, 2.0% and 3.0%/yr. For reference, Gold's admin measured at 1.5% (2026-09-09).
+- **Spread:** half-spread per side on legs that change at rebalance. The table is captured from IG dealing rules **inside each market's trading hours** (spread-measurement rule). Until then the fallback is majors 1 pip; NOK/SEK and crosses 0.05% of price.
+
+## 7. Step 0 — before the backtest counts (read-only, run in the container)
+1. **Admin-fee rate:** from `/history/transactions` FX financing rows (instrument + size + price → %/yr) for GBP/USD, EUR/USD and USD/JPY. Remember that IG posts two rows per night and that a Friday row covers 3 nights.
+2. **Calibration (answers Q1):** compare the model's nightly USD/JPY interest for the actual 2026-03→09 holds with the account's **+£13.78**. **It must agree within ±30%, or the rate source is wrong and the test stops.**
+3. **Tradeability:** check that SPREADBET EPICs exist and stream for the 6 pairs the book lacks (AUD/USD, NZD/USD, USD/CAD, USD/CHF, USD/NOK, USD/SEK), and record their minimum stake. Remember the CC.D.* "Invalid account type" lesson.
+
+## 8. Test and null
+- **Statistic:** annualised net SR of monthly returns.
+- **Null:** a **circular rotation** of the rank-signal series against the return series, using every shift k ∈ [12, T−12]. This keeps the autocorrelation of both series, per the rate-matched-null rule. p = share of shifts with SR ≥ observed. The rotation p for A and B is Holm-corrected (family of 2).
+- **Look-ahead property test (Hypothesis, `tests/pbt.py` style):** changing any rate or price dated at or after month m must not change the month-m signal. The run is invalid without it.
+
+## 9. Pre-committed verdict
+**PASS** (A or B) requires **all** of:
+1. net SR ≥ 0.40 at the central admin fee
+2. Holm-adjusted rotation p ≤ 0.05
+3. both halves net SR > 0
+4. the Step 0 calibration passes
+5. tradeable: sized so that the backtest's worst drawdown equals £250 (half the £500 hard stop), every leg's stake is ≥ IG's minimum. If the edge passes but this doesn't, the verdict is **"PASS-untradeable at this account size"**.
+
+**FAIL** is anything else. A fail goes into "Tested & REFUTED" and carry is closed. Variants must not be re-run with a different top-N, lookback, gate threshold or start date. B beating A counts only if B passes on its own.
+
+## 10. Known limits (stated now, not after)
+- Carry is a known published factor, so there are no out-of-sample parameters to protect. The halves test is the only regime check.
+- Tom-next vs 3-month interbank basis: this is what the Step 0 calibration tests.
+- There are no stops. Carry positions are always in, which does not fit the bot's R-per-trade stop framework. Risk is framed as a drawdown budget instead.
+- **If it passes, it still needs its own go-live gate.** At monthly rebalance, "≥30 IG-native trades" takes years to reach, and 6 legs break "max 3 live". That decision comes after a PASS and does not block the test.
+
+## 11. Deliverable
+`scripts/backtest_fx_carry.py` (read-only, `.venv-bt`), `scripts/measure_fx_financing.py` (Step 0, container), and a results section appended below this one. Expected effort: about half a day. It costs no IG historical allowance.
+
+## Amendments + Step 0 results — logged 2026-09-22 BEFORE the first backtest run
+
+**Step 0 (read-only, container, `/history/transactions` 210d + `/markets/{epic}`):**
+- **Admin fee = 1.5%/yr of notional (size × price in points) per leg per night — HIGH.** Measured per matched hold: GBP/USD #194 0.43/night on £10,550 = 1.49%; EUR/USD #192 0.52 on £12,553 = 1.51%; USD/JPY #179 0.53 on £12,915 = 1.50%. That is the same as Gold's admin.
+- **Calibration PASSES: model £8.73 vs account £9.80 (−11%, inside ±30%).** The match is on the 4 interest rows that tie to journal holds: USD/JPY #103 (6-day Golden-Week roll) +6.38, #179 +1.02; EUR/USD #192 +0.53, #198 (Wednesday 3-day roll) +1.87. On JPY the model is about 20% LOW, so it is conservative for long USD/JPY. The pre-reg's "+£13.78" target was the 09-09 table's figure, which this 210-day read does not reproduce: it shows USD/JPY interest +£7.40 in total. So the target was changed to the matched holds, since a per-hold match is stricter than a total.
+- **All 6 new pairs exist and are TRADEABLE** (`CS.D.{AUDUSD,NZDUSD,USDCAD,USDCHF,USDNOK,USDSEK}.TODAY.IP`). Spreads were captured in-session and are hard-coded in the script. Demo `minDealSize`: majors 0.04, NZD and CHF 1.0, NOK and SEK 0.1. The minimum leg notional is about **£5.7–9.8k for NZD/CHF/NOK/SEK**, so the tradeability check is the likely binding one. GBP/USD reports its minimum as PERCENTAGE 0.03, so 0.04 was assumed for it. Streaming was not checked; a monthly rebalance needs only a REST snapshot.
+
+**Amendments (decided before any return was seen):**
+- **A1:** variant B's σ is each currency's vol **against the equal-weighted average of the other nine** (60 days, min 20). This is needed because USD has no vol against itself, and USD can be ranked in or out.
+- **A2:** B's crash gate is inactive until 272 days of daily history exist (early 2005). Before that the weights are inverse-vol only.
+- **A3:** the carry accrual for month m uses month-m rates, i.e. the income actually earned. The *signal* still uses m−1. The property test enforces the signal side.
+- **A4:** the tradeability drawdown is measured on the **daily** path (stricter than month-end). The month-end figure is reported too.
+- **A5:** descriptive-only sensitivities, not part of the verdict: admin fee at 0/1/1.5/2/3%; implementation via crosses (half the admin); signal lag 2.
+- **Look-ahead properties:** `tests/test_fx_carry_properties.py`, 4 tests. **3/3 planted leaks caught** (rank lag 0; vol window +3 days; gate window +5 days).
+
+## RESULTS — FX carry backtest (run 2026-09-22, `scripts/backtest_fx_carry.py`) → **FAIL, carry CLOSED**
+
+T = 272 months (2004-01 → 2026-08). Data notes: GB/EZ spliced to SONIA/ECB DFR for 8 months; JPY 2026-08 forward-filled; AUD before 2006-05 synthesised from AUDJPY/USDJPY. The 6 monthly moves above 12% are genuine (Oct-2008 AUD −15.6%, NZD −13.0%, NOK −12.7%; Dec-2008 CHF +14.9%; NZD Jan/May-2009). Nothing was removed.
+
+| | SR gross | **SR net** | ann gross | admin | spread | ann net | vol | worst month | net SR 2004–14 / 2015–26 |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| **A** equal 3v3 | 0.285 | **−0.084** | +2.08% | −2.68% | −0.01% | −0.61% | 7.3% | −11.1% (2008-10) | −0.04 / −0.16 |
+| **B** inv-vol + gate | 0.274 | **−0.131** | +1.81% | −2.64% | −0.04% | −0.86% | 6.6% | −6.6% | −0.02 / −0.29 |
+| C USD/JPY (descriptive) | 0.257 | 0.140 | +1.53% | −0.70% | 0.00% | +0.83% | 6.0% | −7.6% | −0.10 / +0.33 |
+
+- **Rotation null (249 shifts):** A p = 0.38, B p = 0.39; **Holm 0.76 / 0.76**. The null median is −0.16 and its 95th percentile about +0.09: a random-timed version of the same basket also loses money after costs.
+- **Tradeability:** the daily-path max drawdown is 0.46 per unit notional, so hitting the £250 budget needs a unit notional of about £550 (legs about £180). **Some leg is below IG's minimum in 272/272 months**; CHF is below it every month it is held, NZD 242/272. At this account size the basket cannot be put on at all.
+- **Verdict (pre-committed rules): A FAIL, B FAIL.** They fail 4 of 5 checks (SR, p, halves, tradeable); only the Step 0 calibration passes.
+
+**Decomposition (A):** carry income **+3.10%/yr** (2004–14 +3.76, 2015–26 +2.48); spot **−1.02%/yr** (−1.39 / −0.68); admin **−2.68%/yr**.
+
+**Sensitivities (descriptive, A5):** zero admin → SR 0.28 (still under the 0.40 bar and the 0.53 detection floor; t ≈ 1.36); admin at 1.0% → 0.04; via crosses (half admin) → 0.10; signal lag 2 → −0.17. None of them rescues it.
+
+**Hypotheses:**
+- **H3 (cost-killed) is the most supported — HIGH.** IG's 1.5% admin on *both* legs every night is about 2.7%/yr on this basket, **larger than the entire gross premium** (2.1%). The mechanism is arithmetic, not noise.
+- **H1 is weak before costs too — MEDIUM.** Gross SR 0.28 over 22.7 years is not significant; the carry income is real, but a third of it goes back to spot moves.
+- **H2 (decay) is partly supported — MEDIUM.** Gross carry income fell from 3.8% to 2.5%/yr after 2014, but both halves are already negative net.
+- **The "carry-to-vol" idea (B) does not help — HIGH.** Its gate fired 11 times (including 2008-10/11) and cut the worst month from −11.1% to −6.6%, but it also cut gross return by more than it cut risk.
+
+**Self-critique:**
+- *What would overturn this?* An account where the admin fee does not apply, i.e. a real forward or swap book rather than a spread bet. That is out of reach here.
+- *Simpler explanation?* Yes, and it is the answer: the broker's fee is larger than the premium.
+- *Snooping:* nothing was tuned. The rules, null and bars were all fixed beforehand, and 5 amendments were logged pre-run.
+- *Survivorship:* the currency set is fixed G10, with no selection.
+
+**Variant C (USD/JPY)** is the only positive line: net SR 0.14, +0.33 since 2015. It is under-powered by construction (t ≈ 0.67), so it is **not evidence** and not a reason to hold USD/JPY. It does mean the incidental USD/JPY financing credits the account has been receiving are real, not a quirk.
+
+**Closed.** Do not re-run carry with a different top-N, lookback, gate or start date (pre-committed). It would be worth revisiting only if the account moves to a product without a per-leg admin fee.
