@@ -4361,7 +4361,7 @@ T = 272 months (2004-01 → 2026-08). Data notes: GB/EZ spliced to SONIA/ECB DFR
 - **Log evidence:** all 121 weekly refreshes retained since 2026-07-27 read `Economic calendar: 0 high-impact events this week`; there are **0** `Calendar block` lines.
 - **Journal evidence:** **0 of 3,564** `rejected_signals` since 2026-03-05 carry a calendar reason.
 - The parser is unchanged since `be7c5a7` (2026-01-23), so it has probably been a no-op from day one (MEDIUM: pre-March logs are gone).
-- Separately, even if it parsed: `CURRENCY_EPIC_MAP` maps **GBP → []** (GBP/USD is live), still lists the retired `CC.D.CL.USS.IP` / `CC.D.DX.USS.IP`, and the old ET→UTC step is a fixed +5h (wrong in summer; moot with ISO offsets).
+- Separately, even if it parsed: `CURRENCY_EPIC_MAP` maps **GBP → []** and leaves GBP/USD out of USD too (GBP/USD is live), and the old ET→UTC step is a fixed +5h (wrong in summer; moot with ISO offsets).
 
 **Consequences:**
 1. **No path — momentum, breakout, pullback or daily-trend — has ever been protected from news.** Every live and backtest number already includes news-time entries. There is no "protected" baseline to lose.
@@ -4520,3 +4520,5 @@ Entries from 2005-01-01: 3,949 trades on four markets. Book mean **+0.074R**, σ
 1. **Do not enforce a news block on the breakout path.**
 2. Fix `src/calendar.py` anyway (the ISO-date parse, the GBP mapping, the current Crude/DXY epics), because it currently reports "0 events" as if that were true. Run it in **log-only** mode for breakout (`would_block` tagged in the journal) so real IG fills at releases accumulate, then judge prospectively at the next review. This is a live-path change and needs its own pre-flight.
 3. Momentum is shadow-only, so whether it gets enforcement is moot for now.
+
+**Correction (2026-09-22):** §0 of the news pre-registration said `CURRENCY_EPIC_MAP` "still lists the retired `CC.D.CL.USS.IP` / `CC.D.DX.USS.IP`". That was wrong. Those ARE the current undated-DFB Crude and DXY epics (`a5f0604`). The only mapping gap is GBP/USD.

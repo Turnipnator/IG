@@ -413,6 +413,45 @@ _cluster_lock = threading.Lock()
 #          as the fallback it always was.
 BREAKOUT_TICK_ENTRY = os.getenv("BREAKOUT_TICK_ENTRY", "log").strip().lower()
 
+# ECONOMIC CALENDAR — LOG-ONLY by default (2026-09-22). The block had never fired: the
+# parser dropped every event after ForexFactory changed its feed format. Once fixed,
+# the 21-year pre-registered replay found NO EFFECT from blocking breakouts near
+# scheduled releases (USD releases: blocked entries +0.34R vs +0.06R, p 0.35; block-on
+# cost 19.5R). So near an event the bot now LOGS "Calendar (log-only): would block ..."
+# and trades as normal; evidence is judged offline by re-tagging the journal against
+# scripts/build_event_calendar.py. CALENDAR_ENFORCE=1 restores blocking on the
+# momentum path only — the breakout path never blocks on the calendar.
+CALENDAR_ENFORCE = os.getenv("CALENDAR_ENFORCE", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _calendar_blocks_momentum(epic: str, market_config, df, trade_signal) -> bool:
+    """True only when CALENDAR_ENFORCE is on and an event is near. Otherwise logs a
+    would-block line (if any) and returns False. Never raises."""
+    try:
+        reason = calendar.would_block(epic) if calendar else None
+    except Exception as e:
+        logger.debug(f"Calendar check failed for {epic}: {e}")
+        return False
+    if not reason:
+        return False
+    if CALENDAR_ENFORCE:
+        logger.info(f"Calendar block for {market_config.name}: {reason}")
+        _log_suppressed_signal(market_config, df, trade_signal, f"Calendar: {reason}")
+        return True
+    logger.info(f"Calendar (log-only): would block {market_config.name}: {reason}")
+    return False
+
+
+def _calendar_note_breakout(epic: str, market_config) -> None:
+    """Log-only note on a breakout entry that lands near an event. Cached events only
+    (no network in front of an order) and never raises — it cannot block or delay."""
+    try:
+        reason = calendar.would_block(epic, allow_refresh=False) if calendar else None
+        if reason:
+            logger.info(f"Calendar (log-only): would block breakout {market_config.name}: {reason}")
+    except Exception as e:
+        logger.debug(f"Calendar note failed for {epic}: {e}")
+
 # epic -> dict(channel: breakout.ArmedChannel, live: bool, consumed: bool, armed_at)
 # `consumed` is the LATCH. on_price_update fires on EVERY tick, so without it a crossing
 # would re-fire hundreds of times a second — the "can it fire in a loop?" money risk.
@@ -1311,6 +1350,7 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
         except Exception as e:   # instrumentation must never break the order path
             logger.debug(f"Breakout rejection journalling failed for {epic}: {e}")
         return
+    _calendar_note_breakout(epic, market_config)
     logger.info(
         f"🟢 Breakout OPEN {signal.signal.value} {market_config.name}: size={ps.size} "
         f"stop={signal.stop_distance} limit={signal.limit_distance} — {signal.reason}"
@@ -2728,16 +2768,9 @@ def analyze_market_from_stream(epic: str, market: MarketStream) -> None:
                 )
                 return
 
-        # Check economic calendar - avoid trading around high-impact events
-        if calendar:
-            is_safe, cal_reason = calendar.is_safe_to_trade(epic)
-            if not is_safe:
-                logger.info(f"Calendar block for {market_config.name}: {cal_reason}")
-                _log_suppressed_signal(
-                    market_config, df, trade_signal,
-                    f"Calendar: {cal_reason}",
-                )
-                return
+        # Economic calendar — log-only unless CALENDAR_ENFORCE (see its definition).
+        if _calendar_blocks_momentum(epic, market_config, df, trade_signal):
+            return
 
         # Shadow-mode markets (2026-07-24 review; mode source = _market_mode, i.e.
         # /mode override > default_mode > shadow_only flag): the signal has now
