@@ -4464,3 +4464,59 @@ Spot-checked in UTC, all correct: NFP 2024-01-05 13:30Z and 2024-07-05 12:30Z; C
 - **B3 — UK CPI release time is not on the ONS pages.** ONS moved CPI from 09:30 to 07:00 at some point. The switch date is resolved from **GBP/USD 1-minute price reaction at 07:00 vs 09:30 UK on the 138 release dates**. This uses no breakout trade and no outcome, only when the market moved, and it is done before any breakout run.
 - **B4 — US CPI:** February has an extra seasonal-factor release a few days earlier, so the last date in each month is kept (272 releases = 272 months).
 - **B5:** UK CPI is primary only from 2015-04 (ONS's archive boundary, as §4 allowed). Before that, core-GBP = BoE only.
+
+## Step 1 (outcome-blind) PASSED + amendments C1–C5 — logged 2026-09-22 BEFORE any R was looked at
+
+`scripts/replay_breakout_news.py --count`: 4,026 live-gated breakout entries, 2004-06 → 2026-09 (Gold 1,052 · EUR/USD 1,191 · GBP/USD 1,038 · Crude 745).
+
+| family | n_total | n_blocked (±30 min) | f | MDE (σ=2.0 prior) | Δ needed for 0.02R/trade | gate |
+|---|--:|--:|--:|--:|--:|:--:|
+| core-USD | 4,026 | 166 (EUR 61 · Gold 54 · GBP 44 · Crude 7) | 4.1% | 0.39R | 0.49R | **PASS** |
+| core-GBP/EUR | 2,229 | 36 (EUR 28 · GBP 8) | 1.6% | 0.83R | 1.24R | **PASS** |
+
+Dukascopy vs Yahoo hourly-return correlation (≈720 days): Gold 0.970 · GBP/USD 0.972 · EUR/USD 0.966 · WTI 0.967, all ≥ 0.95. The IG archive holds only index markets locally, so the IG cross-check is not run. The fast HTF path equals `backtest_index_breakout_ignative.htf_trend_series` exactly on the last 500 days of every market (asserted).
+
+- **C1 — engine.** §5 named `backtest_forex_breakout.breakout_sim`, but that engine fills **intrabar at the channel level** and records no timestamps. The live mechanism is the **hour-close fill**, so the engine is `replay_htf_blocked_breaks.run_ungated`'s loop **with the live gate applied** (in-hours + DAY HTF agrees; NEUTRAL/warm-up blocks). The "reproduce the Yahoo-730d Gold numbers" check is dropped: those came from the level-fill engine and are not comparable. It is replaced by the HTF equivalence assertion plus the Yahoo correlation.
+- **C2 — prices.** Dukascopy BID, scaled to IG points (FX ×10⁴, Gold ×1, WTI ×100). Zero-volume flats are dropped, and so is the duplicate 01:00 hour at the autumn clock change. **WTI has no data for 2013-02 → 2013-04** (Dukascopy returns empty files).
+- **C3 — financing per calendar night (London dates).** Gold 5.8%/yr all-in; FX 1.5% admin ∓ the OECD 3-month differential by direction; WTI admin only (its basis credit is unmeasured).
+- **C4 — period.** The analysis uses entries **from 2005-01-01** (§3's window). Step 1 counted from the data start (2004-06). The outcome run recomputes the gate on 2005+, and it must still pass.
+- **C5 — reading §7 where it was ambiguous.** The tail rule (≥ 2 of the book's top-10 trades by R inside the family's BLOCKED set) is a **veto**: if it fires, the verdict is HURTS even when the HELPS criteria are met. "The book" = all four markets, 2005+. "Survives excluding the single most extreme trade" = with that trade removed, Δ keeps its sign, the rotation p (recomputed) is still ≤ 0.05, and f×|Δ| is still ≥ 0.02.
+- **Look-ahead properties** (`tests/test_news_replay_properties.py`, 4 tests; full suite OK). **4/4 genuine leaks caught:** HTF from tomorrow's daily bar; channel including bar i+1; fill at bar i+1's close; control windows allowed within 2×window of a real event. A first draft with random cut points caught only 1/4, because a leak at the cut is rarely hit. The tests now cut **at entry bars** and in the **22:00–23:00 HTF window**, and compare entry price and stop too. A "same-day daily bar" variant is not a leak at hour-close decisions: the bar is complete when the 23:00 bar closes. It would fail the reference-equality assertion instead.
+
+## RESULTS — Breakout news-proximity replay (run 2026-09-22) → **NO EFFECT on both families; do not enforce a news block on breakout**
+
+Entries from 2005-01-01: 3,949 trades on four markets. Book mean **+0.074R**, σ_R **2.10**, so the σ=2.0 prior was right. The gate still passes on 2005+ (USD MDE 0.39 vs 0.48 needed; GBP/EUR 0.83 vs 1.21).
+
+| family | n blocked / total | mean R blocked | mean R rest | **Δ** | rotation p (52 shifts) | Holm | f×\|Δ\| | halves Δ | w/o extreme trade | verdict |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|:--|
+| core-USD | 165 / 3,949 | **+0.336** | +0.062 | **+0.274** | 0.35 | 0.69 | 0.012 | +0.14 / +0.36 | +0.21 (dropped +11.6R), p 0.46 | **NO EFFECT** |
+| core-GBP/EUR | 36 / 2,175 | −0.110 | +0.018 | −0.128 | 0.85 | 0.85 | 0.002 | +0.19 / −0.33 | −0.10, p 0.87 | **NO EFFECT** |
+
+- **Rotation null, core-USD:** the same weekday and hour in non-release weeks gives a median Δ of **−0.16R** (95%: −0.57 … +0.40). The US-data hour is a below-average slot for breakouts in ordinary weeks, and **release weeks are above average**. So the point estimate runs *against* a block, but it sits inside the null band.
+- **Tail veto:** 0 of the book's top-10 trades fall inside either BLOCKED set. The biggest blocked trade is +11.6R (Gold/USD family).
+- **Blocked-trade detail, USD:** win rate 42%, 37% ended at the stop, **+55.5R in total**. By market: Crude +0.94 (n=7), GBP/USD +0.40, EUR/USD +0.32, Gold +0.22. GBP/EUR: win rate 28%, 58% stopped, −4.0R in total. GBP/USD on GBP events is **−0.70R, but n=8**.
+
+**Descriptive (not part of the verdict):**
+- *News slippage* (an extra 0.25R / 0.50R on every BLOCKED stop-out): USD Δ **+0.18 / +0.09**, still positive. GBP/EUR −0.27 / −0.42.
+- *Wider windows* (±60 / ±90 min): USD +0.27 / +0.23; GBP/EUR −0.08 / −0.01.
+- *The live set* (Gold + GBP/USD, BUY only): USD Δ **+0.40 (n=61)**; GBP/EUR −1.04 (n=4, meaningless).
+- *UK CPI at both candidate times, 2020-04 → 2021-06:* GBP/EUR Δ −0.14. The unresolved switch date does not matter.
+- ***Block ON (the engine re-run, different sequencing):*** **290.3R → 270.8R** (−19.5R over 21 years, −6.7%), mean +0.0735 → +0.0695R.
+
+**Hypotheses:**
+- **H0 (no effect) — supported; HIGH for "a block does not help".** The effect test is powered at the decision-relevant size and nothing clears it.
+- **H1 (news breakouts are losers) — refuted for USD, HIGH.** The point estimate has the opposite sign in both halves, and survives dropping the best trade and 0.5R of extra slippage.
+- **H2 (the release is the catalyst) — weak support, LOW.** The sign is consistent, but p 0.35 is noise-level, and it gets no credit beyond "don't block".
+- **H3 (time of day) — controlled.** Ordinary weeks at that hour are *worse* than average, so the time-of-day effect runs the other way from the news effect.
+- **GBP/EUR — unresolvable in practice.** n=36; the halves disagree.
+
+**Self-critique:**
+- Hourly bars cannot see slippage *through* a stop at the release. The 0.5R sensitivity covers a large amount of it and the USD sign still holds.
+- Fed/BoE speeches are excluded, as disclosed.
+- Dukascopy BID is not IG mid, but spreads are charged separately and the correlation with Yahoo is ≥ 0.97.
+- The breakout book here is the full 4-market, both-direction population. The live set is only Gold + GBP/USD long, and it points the same way (+0.40).
+
+**Decision (per §7, NO EFFECT):**
+1. **Do not enforce a news block on the breakout path.**
+2. Fix `src/calendar.py` anyway (the ISO-date parse, the GBP mapping, the current Crude/DXY epics), because it currently reports "0 events" as if that were true. Run it in **log-only** mode for breakout (`would_block` tagged in the journal) so real IG fills at releases accumulate, then judge prospectively at the next review. This is a live-path change and needs its own pre-flight.
+3. Momentum is shadow-only, so whether it gets enforcement is moot for now.

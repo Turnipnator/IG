@@ -227,10 +227,19 @@ def ecb() -> tuple[list[dict], dict]:
 
 # ----------------------------------------------------------------------------- UK CPI
 
+UK_CPI_0700_FROM = date(2020, 4, 1)
+
+
+def uk_cpi_time(d: date) -> tuple[int, int]:
+    """ONS pages carry no release time. The 09:30 -> 07:00 move was dated from
+    GBP/USD 1-minute reaction on the release days (amendment B3, MEDIUM): the last
+    clear 09:30 prints are 2020-01/02, 07:00 leads from 2020-04 and is unambiguous
+    from 2021-07. The replay runs a both-times sensitivity over 2020-04..2021-06."""
+    return (7, 0) if d >= UK_CPI_0700_FROM else (9, 30)
+
+
 def uk_cpi() -> tuple[list[dict], dict]:
-    """Release DATES from the ONS bulletin archive. The page carries no time, and ONS
-    moved CPI from 09:30 to 07:00 at some point; the time is written as 'TBD' here
-    and resolved in the replay from price reaction (amendment B3)."""
+    """Release dates from the ONS bulletin archive (from 2015 - ONS's own boundary)."""
     base = "https://www.ons.gov.uk/economy/inflationandpriceindices/bulletins/consumerpriceinflation/previousreleases"
     dates, page = set(), 1
     while True:
@@ -243,9 +252,8 @@ def uk_cpi() -> tuple[list[dict], dict]:
         time.sleep(4)
         if page > 40:
             break
-    rows = [{"utc": datetime(d.year, d.month, d.day, tzinfo=UTC), "currency": "GBP",
-             "event": "UK CPI (time TBD)", "tier": "core", "source": "ONS bulletin archive"}
-            for d in sorted(dates)]
+    rows = [{"utc": utc(d, *uk_cpi_time(d), LDN), "currency": "GBP", "event": "UK CPI",
+             "tier": "core", "source": "ONS bulletin archive"} for d in sorted(dates)]
     return rows, {"uk_cpi_releases": len(dates), "uk_cpi_first": str(min(dates)) if dates else None}
 
 
