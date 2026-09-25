@@ -4209,6 +4209,113 @@ refusing counter-trend breaks is worth exactly nothing (−0.006R/t, z −0.04).
 that actually trade live, n is too small to draw any conclusion. H4 is rejected — the finding is
 not tail-driven.
 
+---
+
+# Should long-only be extended to ALL instruments? (2026-09-22)
+
+## Question
+The user asked to see the last week's shadow signals and to judge whether the long-only
+restriction currently on Gold + GBP/USD (`allowed_direction="BUY"`, live since 09-15,
+verified `20271a9` 09-17) should be extended to every instrument.
+
+## Hypotheses
+- **H1** Short-side edge is genuinely negative across instruments → extend long-only.
+- **H2** Shorts lost to REGIME/ERA, not to direction → long-only everywhere is curve-fitting.
+- **H3** Asymmetry is real for Gold/GBP-USD only and does not generalise.
+
+## Evidence
+
+### Last week's shadow book (09-15 → 09-22, benched_outcomes n=36 resolved, 5 open)
+- 33 SELL, 3 BUY — an overwhelmingly bearish signal week.
+- SELL mean **−0.111R** (SE 0.179, t −0.62) → NOISE. Shorts were NOT significantly bad.
+- BUY mean −1.000R on n=3 (all three stopped out) → meaningless n, but the SIGN is against H1.
+- 390 rejected signals in the window; 69 of them `Breakout-blocked ... HTF BEARISH/NEUTRAL`
+  and 29 `Direction-restricted (BUY-only)`.
+- Note the window has a hole: the feed was dead 09-18 19:31 → 09-21 11:04
+  ([[project-streaming-silent-outage-2026-09]]), so 09-19/09-20 produced nothing.
+
+### Direction split, all resolved shadow outcomes (n=235)
+| | n | mean R | SE | t |
+|---|---|---|---|---|
+| SELL | 135 | −0.064 | 0.108 | −0.59 |
+| BUY | 100 | −0.095 | 0.140 | −0.67 |
+
+Longs are *slightly worse* than shorts. Both indistinguishable from zero. **Sign is opposite
+to H1.** By bench_type the only significantly negative direction cell is
+`breakout-shadow BUY` −0.412R (t −2.58, n=43) — i.e. within the breakout strategy that is
+actually live, the shadow evidence says LONGS are the weak side, while
+`breakout-shadow SELL` is +0.012R (t +0.06).
+
+### Live fills (n=353, all eras)
+- BUY mean −£0.73 (n=207, SE 1.41); SELL mean −£1.74 (n=146, SE 1.55).
+- Difference +£1.01, SE 2.10, **t = +0.48 → cannot reject equal edge.**
+
+### Counterfactual
+| policy | P&L | trades |
+|---|---|---|
+| Both sides everywhere | −£405.64 | 353 |
+| **Current** (long-only Gold + GBP/USD) | −£168.54 | 299 |
+| Long-only EVERYWHERE | −£151.79 | 207 |
+
+Extending long-only to all instruments is worth **+£16.75 across 353 trades** — because the
+entire short book outside Gold/GBP-USD is −£16.75 over 92 trades (−£0.18/trade, i.e. zero).
+It would delete **+£269.69** of profitable short books (Hong Kong +£120.52 n=6, Wall Street
++£91.66 n=16, EUR/USD +£25.16 n=8, DXY +£18.96 n=4) to remove −£286.44 of losing ones —
+of which Gold+GBP/USD (−£237.10) is **already removed** by the existing rule.
+
+### Era bucketing (the decisive cut — per [[feedback_check_config_era]])
+| era | BUY | SELL |
+|---|---|---|
+| pre-v2 (<07-24) | n=152 −£314.73 (−2.07/t) | n=110 −£111.46 (−1.01/t) |
+| **v2 (07-24→09-09)** | n=53 −£2.46 (−0.05/t) | **n=27 +£44.06 (+1.63/t)** |
+| v3 (09-09→09-15) | n=2 +£165.40 | n=8 −£164.25 (−20.53/t) |
+
+- In the most recent era with meaningful n (**v2**), shorts were the **only profitable side**,
+  and the short book excluding Gold/GBP-USD returned **+£63.33 over n=25 (+2.53/t)**.
+- In pre-v2, longs were *twice as bad* as shorts (−2.07 vs −1.01 per trade).
+- The entire "shorts are bad" impression comes from **v3: 8 trades over 6 days**, 3 of them
+  Gold (−£112.10). That is the post-hoc streak already flagged in
+  [[project-breakout-direction-split-2026-09]].
+
+## Confidence
+- **HIGH** — extending long-only to all instruments is NOT supported. Multiple independent
+  cuts (shadow R, live P&L, counterfactual, era split) agree, and two disagree in sign with H1.
+- **MEDIUM** — shorts are *better* than longs in the current era. Directionally consistent
+  across v2 live and the all-history shadow book, but SEs are wide; do not act on this either.
+- **LOW** — any per-market direction verdict (HK short, Wall St short). n=4..16. This is exactly
+  the cell-chasing refuted twice already ([[project_indices_direction_sweep_2026_07]],
+  [[project_wallst_direction_archive_2026_08]]).
+
+## Self-critique
+- What would disprove the conclusion: a large, era-stable, per-trade short deficit. There isn't
+  one — the deficit inverts between eras, which is the signature of noise, not edge.
+- Simpler explanation checked: shorts lost in v3 because v3 was six days of a bullish snap-back,
+  not because shorts are structurally bad. The v2 sign flip supports this.
+- Data snooping: I deliberately did NOT recommend "short-only Hong Kong" (+£120.52 on n=6) —
+  that is the identical error in the opposite direction.
+- Redundancy: the HTF direction gate ALREADY blocks counter-trend entries. A blanket
+  `allowed_direction` on top is partly double-counting, and
+  [[project-htf-blocked-breaks-replay-2026-09]] showed the counter-trend half of that gate is
+  worth ≈0 (z −0.04) — so the direction lever specifically is where the evidence is weakest.
+- Not charged: financing/costs. Would move both sides, not the comparison.
+
+## Next steps
+- **No config change.** Do not extend `allowed_direction="BUY"` beyond Gold and GBP/USD.
+- Leave the existing Gold + GBP/USD long-only alone until the pre-committed review
+  (Gold breakout n≥30, or ~2026-12-09). It rests on n=8 and is not currently justified by the
+  data either — but flipping it now on the same thin n would repeat the original error.
+- At that review, test direction as a PRE-REGISTERED hypothesis with the blocked population
+  replayed (`scripts/replay_htf_blocked_breaks.py` pattern), not as a post-hoc cell sweep.
+
+## Summary
+**H2 is the most supported hypothesis.** The apparent short-side weakness is an era artifact:
+it reverses sign between config eras, and in the most recent era with usable n (v2) shorts were
+the only profitable side (+£1.63/trade vs −£0.05 for longs). Blanket long-only would buy
++£16.75 across the entire 353-trade book while destroying £269.69 of profitable short books.
+H1 is rejected (HIGH). H3 is unresolved and stays unresolved by design — the Gold/GBP-USD rule
+rests on 8 trades and is due for judgement at the scheduled review, not now.
+
+---
 
 # Anthropic `financial-services` repo: anything usable? (2026-09-22)
 
@@ -4522,3 +4629,32 @@ Entries from 2005-01-01: 3,949 trades on four markets. Book mean **+0.074R**, σ
 3. Momentum is shadow-only, so whether it gets enforcement is moot for now.
 
 **Correction (2026-09-22):** §0 of the news pre-registration said `CURRENCY_EPIC_MAP` "still lists the retired `CC.D.CL.USS.IP` / `CC.D.DX.USS.IP`". That was wrong. Those ARE the current undated-DFB Crude and DXY epics (`a5f0604`). The only mapping gap is GBP/USD.
+
+---
+
+# Gold + GBP/USD breakout back to BOTH directions (2026-09-25)
+
+**Decision (user, 2026-09-25):** revert the 2026-09-15 long-only stance (`20271a9`) on the two
+live 1h-breakout arms. `allowed_direction` cleared on Gold and GBP/USD; the gate in
+`_execute_breakout_entry` stays (tests now exercise it on a restricted config copy).
+Momentum long-only markets (S&P, FTSE, AI Index) and Gold daily-trend (long-only by
+construction) are unchanged.
+
+**Why:**
+- Long-only rested on n=8 losing shorts clustered into two moves, split chosen post-hoc.
+- The 09-22 study above found no direction edge: live BUY-vs-SELL t=+0.48, the short-side
+  deficit inverts sign by config era, shadow SELL ≥ shadow BUY.
+- 09-15 → 09-25 the bot took **zero** live entries. Gold/GBP/USD HTF turned BEARISH, so
+  every qualifying break was a SELL: 131 Gold + 35 GBP/USD direction-restricted refusals.
+  The shadowed blocked shorts: GBP #265 +3.31R, Gold #272 −1R, #284 −1R (closed +1.31R);
+  open at decision time GBP #287 ≈ +4.8R, Gold #294 ≈ +0.8R. (n tiny — this is not evidence
+  FOR shorts, only that the restriction had none behind it and a real cost in trade count.)
+
+**Not done:** the open shadow shorts are NOT converted to live positions (late entry on a
+stale break). `correlation_group` still does not cover a Gold-short + GBP/USD-short stack
+(one USD bet) — the same exposure as pre-09-15.
+
+**Measurement:** new era from the deploy of this commit. At the next review (Gold breakout
+n≥30 or ~2026-12-09) judge the short leg on LIVE shorts entered after 2026-09-25; the
+09-15→09-25 shadow shorts are a separate, clearly-labelled bucket. Do not re-restrict on a
+streak — pre-register a threshold first.
