@@ -104,6 +104,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # This job has no checkout, so `gh` cannot infer the repo from a git remote
+      # and every call exits 1 ("not a git repository"). That failed the label
+      # step on every run from 2026-08-31 to 09-28 — so the issue alert this job
+      # exists for never opened even once. GH_REPO names the repo explicitly.
+      GH_REPO: ${{ github.repository }}
       FAILED: ${{ needs.rot.result != 'success' || needs.gate.result != 'success' || needs.explore.result != 'success' }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
