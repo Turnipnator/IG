@@ -4658,3 +4658,54 @@ stale break). `correlation_group` still does not cover a Gold-short + GBP/USD-sh
 n≥30 or ~2026-12-09) judge the short leg on LIVE shorts entered after 2026-09-25; the
 09-15→09-25 shadow shorts are a separate, clearly-labelled bucket. Do not re-restrict on a
 streak — pre-register a threshold first.
+
+---
+
+# Does a daily volatility squeeze predict better 1h breakouts? (PRE-REGISTRATION, 2026-09-30)
+
+Written BEFORE any outcome was looked at. User question 2026-09-30: is there a consistent pattern in
+the prior daily candles before a successful breakout? Mining our 37 live trades for "what winners had
+in common" is ruled out (n≈12 winners, guaranteed false positives, cf. per-EPIC search 21/21 → 12/20).
+Instead ONE a-priori hypothesis from the literature (Bollinger "squeeze"; also on the CLAUDE.local TODO).
+
+## Question
+Do 1h Donchian-55 breakouts that start from a quiet daily market (compressed volatility) earn more net R
+per trade than breakouts that start from an already-volatile market?
+
+## Hypotheses
+- **H1 (squeeze):** breaks after daily compression run further → higher mean net R.
+- **H2 (expansion):** breaks inside an already-expanding regime are the real trends → squeeze trades WORSE.
+- **H0:** no difference; the break itself carries whatever edge there is.
+
+## Data (fixed)
+`data/news_events/replay_trades.pkl` — the 4,026 live-gated breakout entries already built for the news
+replay (Gold, GBP/USD, EUR/USD from 2004; WTI from 2012; Dukascopy 1h BID; HTF gate on; IG spreads,
+admin and Gold financing charged; `r` = net R). Entries from 2005-01-01 (as the news study). No
+re-simulation, no parameter touched.
+
+## Squeeze measure (fixed; no alternatives will be tried for the verdict)
+Daily bars = UTC-day resample of the same Dukascopy hourly file (days with <12 hourly bars dropped).
+BB width_d = 4·std20(close)/sma20(close) (ddof 0). Squeeze rank_d = fraction of the 250 daily widths
+ending at day d that are ≤ width_d. For a trade, use rank of the LAST COMPLETED UTC day strictly before
+the decision's UTC date (no look-ahead: nothing from the entry day). **SQUEEZE = rank ≤ 1/3.**
+Trades with <250 prior daily widths are dropped (count reported before outcomes).
+
+## Test (fixed)
+Primary: Δ = mean r(SQUEEZE) − mean r(rest), pooled over the 4 markets.
+Null: rotate each market's daily rank series by whole months k = ±3..±36 (66 shifts), re-tag, recompute
+Δ; two-sided p = share of |Δ_k| ≥ |Δ_obs|. (Keeps volatility-regime autocorrelation; destroys alignment.)
+
+## PASS (signal real) requires ALL of:
+1. Δ ≥ +0.15R (economic floor; the book's mean is ~+0.07R).
+2. rotation p < 0.05.
+3. Same sign in both halves (2005–2015, 2016–2026).
+4. Same sign in Gold AND GBP/USD (the live arms).
+5. Still ≥ +0.10R after dropping the top-10 trades by r.
+A negative Δ passing 2–5 with |Δ| ≥ 0.15 = H2 supported (same bar).
+**Deploy-worthy as a FILTER** additionally needs 6: the non-squeeze trades sum to ≤ 0R (filtering must not
+cost total R — the book is tail-driven). Otherwise the most a PASS earns is a log-only tag.
+FAIL on any of 1–5 ⇒ NO EFFECT; no variant (other windows, ATR ratio, other cutoffs) is run to rescue it.
+
+## Power (outcome-blind; pre-registered σ_R = 2.0 as the news study)
+To be filled from tercile COUNTS only before the outcome step: MDE(80%, α .05) = 2.8·2.0·√(1/n_s+1/n_rest).
+If MDE > 0.25R the test is declared underpowered before looking.
