@@ -4709,3 +4709,44 @@ FAIL on any of 1–5 ⇒ NO EFFECT; no variant (other windows, ATR ratio, other 
 ## Power (outcome-blind; pre-registered σ_R = 2.0 as the news study)
 To be filled from tercile COUNTS only before the outcome step: MDE(80%, α .05) = 2.8·2.0·√(1/n_s+1/n_rest).
 If MDE > 0.25R the test is declared underpowered before looking.
+
+## Outcome (2026-09-30) — FAIL → NO EFFECT. Confidence HIGH that there is no usable squeeze filter.
+
+`scripts/replay_breakout_squeeze.py --outcomes` (step 1 outcome-blind first: 3,818 tagged, 131 dropped
+for <250d history, SQUEEZE n=1,429 / rest 2,389, MDE 0.187R ⇒ powered; entry-day-leak mutant caught
+by the look-ahead assert).
+
+| | n | mean net R | total R |
+|---|---|---|---|
+| SQUEEZE (rank ≤ 1/3) | 1,429 | +0.130 | +185.3 |
+| rest | 2,389 | +0.049 | +116.5 |
+| **Δ** | | **+0.081** | |
+
+Criteria: (1) Δ ≥ 0.15 ✗ (+0.081) · (2) p < 0.05 ✗ (rotation p 0.18; null 95% band −0.089…+0.129,
+which contains Δ) · (3) halves ✗ (2005–15 **−0.003**, 2016–26 +0.143) · (4) Gold & GBP same sign ✗
+(Gold **−0.018**, GBP/USD +0.227) · (5) drop-top-10 ≥ 0.10 ✗ (+0.0997). **0 of 5.**
+
+Deviation from the pre-registration text: the rotation used 68 shifts, not "66" — ±3..±36 months is
+34 per side; the pre-reg miscounted. Same rule, verdict unaffected (p 0.18 either way).
+
+Descriptive only (post-verdict, not evidence): terciles low/mid/high = +0.130 / +0.078 / +0.019R — a
+tidy gradient, but it exists only in the second half and not at all in Gold (the market with the
+edge). Per market Δ: Crude +0.165, GBP/USD +0.227, EUR/USD +0.010, Gold −0.018.
+
+## Self-critique
+- The GBP/USD cell (+0.227R, squeeze +80R vs rest −11R) is the tempting one. It is one of four
+  markets chosen AFTER seeing the pooled result fail — a forking path. Not actionable. The 21-year
+  history is now spent on this question; a fair GBP-only test needs data nobody has looked at, i.e.
+  future breakouts. Not pre-registering that now: at ~50 breakouts/yr on GBP it would take years.
+- Gold — where the book's money actually is (+0.20R/trade in both groups) — shows no effect at all.
+  Filtering to squeeze-only would have kept 74R of Gold's 214R.
+- Simpler explanation for the gradient: the 2016–26 half has more low-vol FX regimes where every
+  breakout rule did better; the rotation null (which keeps regime autocorrelation) says the
+  alignment is not special.
+
+## Conclusion
+- Most supported: **H0** — the daily volatility state before the break does not reliably change what a
+  1h breakout earns. H1 (squeeze) and H2 (expansion) both unsupported.
+- Joins the tail-clipping/filter family that keeps failing ([[project-tail-clipping-refuted]]): the
+  only filter with proven value remains the HTF trend gate.
+- Next: nothing to deploy. Do not run BB/ATR-ratio/other-cutoff variants on this history to rescue it.
