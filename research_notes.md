@@ -4821,3 +4821,38 @@ model rescues it. (3) Platinum's 5 years is a strongly trending-then-ranging per
 the point estimate is negative in both halves.
 
 Conclusion: the breakout edge is Gold-specific. No silver/platinum trading; no variants run.
+
+---
+
+# Silver: a thorough variant search, with a holdout (PRE-REGISTRATION, 2026-10-02)
+
+User asked explicitly (2026-10-02) to "run some variants and be thorough over silver" after the
+unchanged Gold recipe failed (02ce154). This overrides that test's "no rescue variants" rule — by the
+user's decision — so the protection against fooling ourselves moves into the design instead:
+**choose on 2005–2015, judge on 2016–2026 only.**
+
+## Variants (fixed list, 114)
+**A. Donchian breakout** (engine = `run_gated` logic generalised; must reproduce the 02ce154 silver
+baseline exactly for 1h/N55/k2/HTF-on/both): timeframe {1h, 4h, 1D} × entry N {20, 55, 100}
+(exit M = N/2) × stop k×ATR14 {2, 3} × DAY-HTF gate {on, off} × direction {both, long, short} = 108.
+1h keeps the live trading-window gate; 4h/1D enter on any bar close.
+**B. Daily pullback-in-trend** (the S&P-validated rule): long = close > SMA200 and close < prior
+L-day low; exit close > prior L-day high or after 10 sessions; stop 3×ATR20; R unit 2×ATR20.
+Short = mirror below SMA200. L {5, 10} × direction {long, short, both} = 6.
+
+## Costs
+Spread 3.0pt (sensitivity 2.0 / 4.0); financing 5.8%/yr on nights held (sensitivity 3% / 8% — it
+matters for the daily variants).
+
+## Selection (discovery 2005-01-01 → 2015-12-31)
+The single variant with the highest discovery mean net R among those with ≥ 30 discovery trades.
+
+## PASS (silver earns a SHADOW arm) requires ALL of, on the 2016-01-01 → 2026-09-22 HOLDOUT:
+1. Selected variant: holdout mean net R > 0 with t ≥ 2.0.
+2. Selected variant: holdout total R still > 0 after removing its 5 best holdout trades.
+3. Selected variant: holdout mean net R > 0 at the high spread AND 8% financing.
+4. Persistence: Spearman rank correlation of discovery vs holdout mean R across all 114 variants
+   > 0 with p < 0.05 (if the ranking does not persist, the "best" variant is luck).
+Tradeability is reported separately: median £ risk at IG's £1/pt minimum at today's price vs the
+£45 intraday cap (1h/4h) or the £250 daily cap (1D / pullback).
+Everything else (holdout of the top-10, per-family summaries, the full grid) is descriptive.
