@@ -4795,3 +4795,29 @@ FAIL ⇒ NO EDGE; no parameter variants run on this history to rescue it.
 2021-11-01, not 2004. Platinum's criterion 2 therefore splits ITS OWN sample at the median entry date
 instead of 2005–15 / 2016–26; criterion 1 runs on 2021-11 → 2026-09 only. Expect n ≈ 200–300 —
 LOW power; a FAIL on platinum means "not shown", not "shown absent".
+
+## Outcome (2026-10-02) — FAIL on both → NO EDGE. Confidence HIGH (silver), MEDIUM (platinum, n=240).
+
+`scripts/replay_breakout_metals.py`; harness reproduces the stored Gold replay exactly (n=1,029,
++0.2134R). Results in `data/news_events/metals_outcomes.json`.
+
+| | n | gross R/trade | cost R/trade | **net R/trade** | t | halves | total ex-top-10 | at high cost |
+|---|---|---|---|---|---|---|---|---|
+| Gold (reference) | 1,029 | +0.333 | 0.120 | **+0.213** | +2.86 | +0.34 / +0.10 | +69.7R | +0.213 |
+| **Silver** | 1,088 | +0.055 | 0.153 | **−0.098** | −1.54 | −0.06 / −0.14 | −248.7R | −0.140 |
+| **Platinum** (2021-12→) | 240 | −0.014 | 0.234 | **−0.248** | −1.86 | −0.33 / −0.16 | −138.0R | −0.404 |
+
+Silver 0/5, platinum 0/5. Neither has a meaningful GROSS edge (silver +0.05R before costs, platinum
+slightly negative), so this is not a cost problem a cheaper broker would fix. Silver still loses at
+the low-cost case (−0.056R).
+Tradeability: silver's 2×ATR stop at today's ~$66 would exceed the £45 cap on **90%** of breaks
+(median £80 at the £1/pt minimum) — untradeable even if it had worked. Platinum is dated futures only.
+
+Self-critique: (1) Gold itself misses criterion 4 here (cost 0.12R vs the 0.10R go-live gate — long
+holds × 5.8%/yr financing); irrelevant to the verdict since silver/platinum fail all five, but it
+means that gate, applied to Gold's own replay, is marginal. (2) Silver cost/financing are assumed
+equal to Gold's — even at the low-spread case the gross edge is only +0.05R, so no plausible cost
+model rescues it. (3) Platinum's 5 years is a strongly trending-then-ranging period; LOW power, but
+the point estimate is negative in both halves.
+
+Conclusion: the breakout edge is Gold-specific. No silver/platinum trading; no variants run.
