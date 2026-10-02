@@ -4750,3 +4750,43 @@ edge). Per market Δ: Crude +0.165, GBP/USD +0.227, EUR/USD +0.010, Gold −0.01
 - Joins the tail-clipping/filter family that keeps failing ([[project-tail-clipping-refuted]]): the
   only filter with proven value remains the HTF trend gate.
 - Next: nothing to deploy. Do not run BB/ATR-ratio/other-cutoff variants on this history to rescue it.
+
+---
+
+# Does Gold's 1h breakout carry over to silver and platinum? (PRE-REGISTRATION, 2026-10-02)
+
+Written before any silver/platinum outcome was computed. User: "can we look at similar tests on
+platinum or silver as maybe they have a pattern". Interpreted as: does the SAME live rule that has
+an edge on Gold (+0.20R/trade over 21y) work on its sister metals? No parameter search, no new
+patterns — the Gold recipe unchanged.
+
+## Hypotheses
+- **H1:** precious metals trend alike → the Gold recipe is net-positive on silver and/or platinum.
+- **H0:** no edge after IG costs (Gold's edge is Gold-specific: safe-haven flows, central banks).
+- **H2:** an edge exists but the market is not tradeable on IG at our size (cap / rollover).
+
+## Recipe (fixed = live Gold)
+Dukascopy 1h BID 2004-06 → 2026-09-22 (`xagusd`, `xptusd`), `scripts/replay_breakout_news.run_gated`
+unchanged: Donchian-55 entry on the hour close, 2×ATR14 stop, Donchian-27 trail, no target, DAY HTF
+gate (NEUTRAL blocks), Gold's trading window (23→21 UTC), one position at a time.
+**Harness check first:** the same script must reproduce the stored Gold replay (n=1,052, +0.198R).
+
+## IG costs (fixed before outcomes)
+- Silver `CS.D.USCSI.TODAY.IP` (spot DFB, 1pt = 1¢, min £1/pt, min stop 4): spread **3.0 pt**
+  (closed-market snapshot read 4.0; sensitivity 2.0 / 4.0), financing as Gold (5.8%/yr, assumed).
+- Platinum: IG offers only dated futures `MT.D.PL.MonthN.IP` (min £0.04/pt, min stop 8): spread
+  **3.0 pt** (= $3; sensitivity 2.0 / 5.0), no overnight financing (futures).
+
+## PASS (per market) requires ALL of:
+1. Mean net R > 0 with t ≥ 2.0, entries 2005-01-01 → 2026-09-22.
+2. Mean net R > 0 in both halves (2005–15, 2016–26).
+3. Total net R still > 0 after removing the 10 best trades.
+4. Mean cost ≤ 0.10R per trade (the go-live cost gate).
+5. Mean net R > 0 at the HIGH cost.
+
+## Tradeability (reported separately; does not change the signal verdict)
+- Silver: share of breaks whose 2×ATR stop × £1/pt exceeds the £45 cap at today's ~$60 price.
+- Platinum: dated contract only — the bot forbids `.MonthN.IP` epics (Crude, 16 days dead on a
+  rollover); live use would need a rollover handler first.
+
+FAIL ⇒ NO EDGE; no parameter variants run on this history to rescue it.
