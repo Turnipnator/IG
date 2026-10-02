@@ -4790,3 +4790,8 @@ gate (NEUTRAL blocks), Gold's trading window (23→21 UTC), one position at a ti
   rollover); live use would need a rollover handler first.
 
 FAIL ⇒ NO EDGE; no parameter variants run on this history to rescue it.
+
+**Deviation recorded before any outcome (2026-10-02 22:23):** Dukascopy platinum (`xptcmdusd`) starts
+2021-11-01, not 2004. Platinum's criterion 2 therefore splits ITS OWN sample at the median entry date
+instead of 2005–15 / 2016–26; criterion 1 runs on 2021-11 → 2026-09 only. Expect n ≈ 200–300 —
+LOW power; a FAIL on platinum means "not shown", not "shown absent".
