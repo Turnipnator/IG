@@ -270,5 +270,60 @@ class EntryRefusalsAreVisible(_Globals):
         self.assertNotIn(EPIC, main._breakout_entry_refusal_last)
 
 
+class SizingRefusalWarningThrottled(EntryRefusalsAreVisible):
+    """A cap-skip re-fires every 5 minutes on the same bar (9 identical warnings on
+    2026-10-02). The WARNING is throttled to once an hour per market; the
+    `Breakout-sizing:` journal row is NOT — it is how cap-skips are counted."""
+
+    def setUp(self):
+        super().setUp()
+        self._saved_warn = dict(main._breakout_sizing_warn_last)
+        main._breakout_sizing_warn_last.clear()
+        main.client.get_market_info.return_value = None
+        main.client.get_balance.return_value = 9200.0
+        main.risk_manager = MagicMock()
+        main.risk_manager.calculate_position_size.return_value = MagicMock(
+            approved=False, reason="Min size 1.0 x stop 54.6 risks £54.58 > £45.00 absolute cap")
+
+    def tearDown(self):
+        main._breakout_sizing_warn_last.clear()
+        main._breakout_sizing_warn_last.update(self._saved_warn)
+        super().tearDown()
+
+    def _attempt(self):
+        with patch.object(main, "utc_hour", return_value=13), \
+             patch.object(main.logger, "warning") as warn:
+            main._execute_breakout_entry(EPIC, _Market(), self.cfg, self.sig, None)
+        return [c.args[0] for c in warn.call_args_list if "size not approved" in c.args[0]]
+
+    def _sizing_rows(self):
+        return [r for r in self._journal_reasons() if r.startswith("Breakout-sizing:")]
+
+    def test_warns_once_per_hour_but_journals_every_attempt(self):
+        warned = [w for _ in range(9) for w in self._attempt()]
+        self.assertEqual(len(warned), 1)
+        self.assertEqual(len(self._sizing_rows()), 9)
+        main.client.open_position.assert_not_called()
+
+    def test_warns_again_after_an_hour(self):
+        self.assertEqual(len(self._attempt()), 1)
+        main._breakout_sizing_warn_last[EPIC] -= timedelta(minutes=61)
+        self.assertEqual(len(self._attempt()), 1)
+
+    def test_throttle_is_per_market(self):
+        self._attempt()
+        main._breakout_sizing_warn_last["CS.D.GBPUSD.TODAY.IP"] = datetime.now()
+        self.assertEqual(len(self._attempt()), 0)            # Gold still throttled
+        self.assertIn(EPIC, main._breakout_sizing_warn_last)
+
+    # The parent's refusal tests don't touch sizing; don't re-run them here.
+    test_open_position_refusal_logs_once_and_never_journals = None
+    test_daily_trend_position_does_not_block = None
+    test_loss_cooldown_refusal_logs_and_journals_once = None
+    test_startup_cooldown_refusal_logs_and_journals_once = None
+    test_throttle_is_per_reason = None
+    test_expired_loss_cooldown_does_not_refuse = None
+
+
 if __name__ == "__main__":
     unittest.main()

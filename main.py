@@ -477,6 +477,12 @@ _breakout_tick_consumed: dict[str, str] = {}
 # message carries minutes-left counters that change on every 5-minute pass.
 _breakout_entry_refusal_last: dict[str, tuple] = {}
 
+# Breakout sizing-refusal WARNING throttle: epic -> last_logged_at. The hour-close
+# path re-calls _execute_breakout_entry every 5 minutes for the same bar, so a Gold
+# cap-skip printed 9 identical warnings 17:05-17:45 on 2026-10-02. Log-only: the
+# `Breakout-sizing:` journal row is still written every time (it is the count).
+_breakout_sizing_warn_last: dict[str, datetime] = {}
+
 
 def _save_tick_latch() -> None:
     """Flush the consumed-bar map. Called from the stream thread right after a latch is
@@ -1329,7 +1335,12 @@ def _execute_breakout_entry(epic: str, market: MarketStream, market_config, sign
         ig_min_size=info.min_deal_size if info else None,
     )
     if not ps.approved:
-        logger.warning(f"[BREAKOUT] {market_config.name}: size not approved ({ps.reason}) — skip")
+        now = datetime.now()
+        last = _breakout_sizing_warn_last.get(epic)
+        if last is None or now - last >= timedelta(minutes=60):
+            _breakout_sizing_warn_last[epic] = now
+            logger.warning(f"[BREAKOUT] {market_config.name}: size not approved ({ps.reason}) — skip "
+                           f"(repeats for this market suppressed for 60 min)")
         # Journal it too. This path logged and returned, so breakout cap-skips
         # existed ONLY in the container log: `rejected_signals` held 12 rows ever,
         # all momentum, all 2026-06, none Gold — while 9 real Gold breakout
