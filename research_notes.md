@@ -4856,3 +4856,29 @@ The single variant with the highest discovery mean net R among those with ≥ 30
 Tradeability is reported separately: median £ risk at IG's £1/pt minimum at today's price vs the
 £45 intraday cap (1h/4h) or the £250 daily cap (1D / pullback).
 Everything else (holdout of the top-10, per-family summaries, the full grid) is descriptive.
+
+## Outcome (2026-10-02) — FAIL → no silver strategy. Confidence HIGH.
+
+`scripts/silver_variants.py` (engine reproduces the 02ce154 baseline exactly; full grid in
+`data/news_events/silver_variants_grid.csv`, summary `silver_variants.json`).
+
+**Selected on 2005–15:** 4h bars, Donchian 55, 2×ATR stop, DAY-HTF gate, LONG only —
+discovery +0.337R (n=101, t 1.54). **Holdout 2016–26: +0.272R (n=113, t 0.85).**
+Criteria: (1) holdout t ≥ 2 ✗ (0.85) · (2) holdout ex-top-5 > 0 ✗ (**−29.2R**: the whole holdout
+profit is 5 trades) · (3) positive at high cost ✓ (+0.219) · (4) rank persistence ✓ (ρ 0.58,
+permutation p < 0.0001). **2 of 4 → FAIL.**
+
+What persists is not a breakout edge but **silver's drift**: across all 114 variants, LONG holdout
++0.197R vs SHORT −0.286R; 1h worst (−0.087R), 4h/1D near zero. Post-verdict drift null (300 sets of
+RANDOM long entries in HTF-bullish bars, identical stop/trail/costs, `scripts/silver_drift_null.py`):
+discovery breakout +0.337 vs random +0.063 (random ≥ real 6%); **holdout breakout +0.272 vs random
++0.451 (random ≥ real 65%)**. Silver rose +110% (2005–15) and +378% (2016–26); in the holdout any
+long entry did as well or better — the breakout timing adds nothing.
+Pullback family (B): all 6 negative in holdout (mean −0.207R).
+No variant reaches holdout t ≥ 2 (0 of 114); 33% are positive in holdout.
+
+Tradeability even if it had passed: the selected variant's median £ risk at IG's £1/pt minimum at
+today's ~$66 is **£150** — 3× the £45 intraday cap (it would need the £250 daily-style cap).
+
+Conclusion: silver offers a directional bet on its own drift, not a timing edge. A "be long silver"
+position is a view on the metal, which no backtest can validate going forward. No silver arm.
