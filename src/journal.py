@@ -553,6 +553,68 @@ class TradeJournal:
         except Exception:
             return []
 
+    # bench_types owned by the ORB shadow (src/orb.py VARIANTS). Exact-match only, so
+    # the momentum allowlist, breakout and sidecar resolvers can never touch these rows.
+    ORB_BENCH_TYPES = ("orb-shadow", "orb-shadow-plain")
+
+    @_synchronized
+    def log_orb_shadow(self, epic: str, market_name: str, direction: str, entry_price: float,
+                       stop_distance: float, limit_distance: float, benched_at: str,
+                       spread: float, bench_type: str) -> Optional[int]:
+        """Snapshot an ORB shadow trade (2026-10-02). Resolved ONLY by main._orb_step /
+        _orb_restore via resolve_breakout_shadow. Returns the row id (None on failure)."""
+        if bench_type not in self.ORB_BENCH_TYPES:
+            logger.warning(f"Journal: refusing ORB row with bench_type {bench_type!r}")
+            return None
+        try:
+            cur = self.db.execute(
+                """INSERT INTO benched_outcomes
+                   (epic, market_name, direction, benched_at, entry_price,
+                    stop_distance, limit_distance, score, bench_type, status, spread)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'OPEN', ?)""",
+                (epic, market_name, direction, benched_at, entry_price, stop_distance,
+                 limit_distance, bench_type, spread),
+            )
+            self.db.commit()
+            return cur.lastrowid
+        except Exception as e:
+            logger.warning(f"Journal: failed to log ORB shadow: {e}")
+            return None
+
+    @_synchronized
+    def get_open_orb_shadow(self, epic: str) -> list[dict]:
+        try:
+            rows = self.db.execute(
+                """SELECT * FROM benched_outcomes
+                   WHERE epic=? AND bench_type IN ('orb-shadow', 'orb-shadow-plain') AND status='OPEN'""",
+                (epic,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+
+    @_synchronized
+    def get_orb_tally(self, epic: str) -> dict:
+        """{bench_type: {n, wins, sum_r, open, expired}} over resolved WIN/LOSS rows."""
+        out = {b: {"n": 0, "wins": 0, "sum_r": 0.0, "open": 0, "expired": 0} for b in self.ORB_BENCH_TYPES}
+        try:
+            rows = self.db.execute(
+                """SELECT bench_type, status, r_multiple FROM benched_outcomes
+                   WHERE epic=? AND bench_type IN ('orb-shadow', 'orb-shadow-plain')""",
+                (epic,),
+            ).fetchall()
+            for r in rows:
+                t = out[r["bench_type"]]
+                if r["status"] == "OPEN":
+                    t["open"] += 1
+                elif r["status"] == "EXPIRED":
+                    t["expired"] += 1
+                elif r["r_multiple"] is not None:
+                    t["n"] += 1; t["sum_r"] += float(r["r_multiple"]); t["wins"] += r["status"] == "WIN"
+        except Exception as e:
+            logger.warning(f"Journal: ORB tally failed: {e}")
+        return out
+
     def resolve_pullback_shadow(self, row_id: int, status: str, outcome: str,
                                 candles_to_resolve: int, r_multiple: float, exit_price: float) -> None:
         self.resolve_breakout_shadow(row_id, status, outcome, candles_to_resolve, r_multiple, exit_price)

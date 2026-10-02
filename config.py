@@ -262,6 +262,11 @@ class MarketConfig:
     # NASDAQ 100 (72/72 parameter cells, both 11-year halves, z 2.4-2.8). Same
     # off|shadow|live semantics and /pullback override as daily_trend.
     pullback: str | None = None
+    # NY-OPEN 5-MIN OPENING-RANGE BREAKOUT for this market (2026-10-02, src/orb.py).
+    # SHADOW ONLY: off|shadow, there is no live mode. Tick-driven, journals what it
+    # would do as bench_type orb-shadow / orb-shadow-plain. Needs an ORB_CONFIGS entry.
+    # A runtime /orb override (data/orb_modes.json) beats this default.
+    orb: str | None = None
 
 
 # Load configurations from environment
@@ -863,6 +868,10 @@ MARKETS = [
         # #207 typifies (16:00 long, 55min past the #206 win, stopped). NOT global
         # (NASDAQ/FTSE/S&P inert-or-hurt). Small sample → confirm at 06-26 review.
         reentry_cooldown_candles=12,
+        # 2026-10-02: ORB shadow (src/orb.py). Independent of the momentum shadow above:
+        # its own 1-min bars, NY clock, gates and journal rows. Oanda backtest
+        # (Oanda_Gold research Part 13): +0.31R/trade n=50 ex-holidays, found post hoc.
+        orb="shadow",
     ),
     MarketConfig(
         epic="IX.D.FTSE.DAILY.IP",

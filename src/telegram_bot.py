@@ -24,6 +24,7 @@ from telegram.ext import (
 from config import TelegramConfig, MARKETS
 from src.daily_trend import VALID_DAILY_TREND_MODES, has_daily_trend_config
 from src.pullback import VALID_PULLBACK_MODES, has_pullback_config
+from src.orb import VALID_ORB_MODES, VARIANTS as ORB_VARIANTS, has_orb_config
 
 if TYPE_CHECKING:
     from src.client import IGClient
@@ -48,6 +49,8 @@ MARKET_MODES = ("off", "momentum", "shadow", "breakout", "breakout-shadow")
 DAILY_TREND_MODES_FILE = STATS_DIR / "daily_trend_modes.json"
 # Same shape for the PULLBACK strategy (2026-09-09, second sweep), toggled via /pullback.
 PULLBACK_MODES_FILE = STATS_DIR / "pullback_modes.json"
+# Same shape for the ORB shadow (2026-10-02), toggled via /orb. off|shadow only.
+ORB_MODES_FILE = STATS_DIR / "orb_modes.json"
 
 # RETIRED 2026-09-09. Until then the forex pairs were governed by ONE global toggle
 # (/forex, persisted here) with its own four-mode vocabulary, in which "shadow"
@@ -154,6 +157,8 @@ class TelegramBot:
         self.load_daily_trend_modes()
         self.pullback_modes: dict = {}
         self.load_pullback_modes()
+        self.orb_modes: dict = {}
+        self.load_orb_modes()
         # Human-readable record of the one-shot /forex → /mode translation when the
         # legacy file was found at this boot (surfaced on the startup banner and the
         # /mode board). None = nothing to migrate.
@@ -294,6 +299,34 @@ class TelegramBot:
             logger.warning(f"Failed to load pullback modes (using config defaults): {e}")
             self.pullback_modes = {}
 
+    def save_orb_modes(self) -> None:
+        try:
+            STATS_DIR.mkdir(parents=True, exist_ok=True)
+            ORB_MODES_FILE.write_text(json.dumps({
+                "orb_modes": self.orb_modes, "saved_at": datetime.now().isoformat()}))
+        except Exception as e:
+            logger.warning(f"Failed to save ORB modes: {e}")
+
+    def load_orb_modes(self) -> None:
+        try:
+            if not ORB_MODES_FILE.exists():
+                return
+            raw = json.loads(ORB_MODES_FILE.read_text()).get("orb_modes", {})
+            self.orb_modes = {e: m for e, m in raw.items() if isinstance(m, str) and m in VALID_ORB_MODES}
+            if self.orb_modes:
+                logger.info(f"Restored ORB modes: {self.orb_modes}")
+        except Exception as e:
+            logger.warning(f"Failed to load ORB modes (using config defaults): {e}")
+            self.orb_modes = {}
+
+    def _effective_orb_mode(self, m) -> str:
+        """Effective ORB mode. MUST mirror main._orb_mode: /orb override > MarketConfig.orb > off."""
+        override = self.orb_modes.get(m.epic)
+        if override in VALID_ORB_MODES:
+            return override
+        cfg = getattr(m, "orb", None)
+        return cfg if cfg in VALID_ORB_MODES else "off"
+
     def _effective_pullback_mode(self, m) -> str:
         """Effective PULLBACK mode. MUST mirror main._pullback_mode: /pullback override >
         MarketConfig.pullback > off."""
@@ -421,6 +454,7 @@ class TelegramBot:
             "/mode - Per-market strategy, forex included (off|momentum|shadow|breakout|breakout-shadow)\n"
             "/daily - Daily trend-following per market (off|shadow|live)\n"
             "/pullback - Pullback-in-uptrend per market (off|shadow|live)\n"
+            "/orb - NY-open range breakout shadow (off|shadow) + tally\n"
             "/rebuild - Pull latest code & restart\n"
             "/emergency - ⚠️ Close ALL positions\n\n"
             "*🔔 Notifications:*\n"
@@ -884,6 +918,11 @@ class TelegramBot:
                     ptag = " _(override)_" if m.epic in self.pullback_modes else ""
                     pemoji = {"live": "📉🟢", "shadow": "📉🟡", "off": "📉⚪"}[pmode]
                     lines.append(f"   {pemoji} pullback: `{pmode}`{ptag}")
+                omode = self._effective_orb_mode(m)
+                if omode != "off" or has_orb_config(m.epic):
+                    otag = " _(override)_" if m.epic in self.orb_modes else ""
+                    oemoji = {"shadow": "🔔🟡", "off": "🔔⚪"}[omode]
+                    lines.append(f"   {oemoji} orb: `{omode}`{otag}")
             lines.append("\nUsage: `/mode <market> off|momentum|shadow|breakout|breakout-shadow`"
                          "\n`/mode <market> default` clears the override."
                          "\n👻 shadow = momentum observed; 🟡 breakout-shadow = breakout observed.")
@@ -1059,6 +1098,64 @@ class TelegramBot:
         logger.info(f"Pullback mode changed via Telegram: {m.name} {prev} -> {mode_arg}")
         warn = "\n⚠️ LIVE — a real order at the next US cash close that closes below the 5-session low above SMA200; risk unit `PULLBACK_RISK_GBP`." if mode_arg == "live" else ""
         await update.effective_message.reply_text(f"📉 *{m.name} pullback → `{mode_arg}`* (was `{prev}`){warn}", parse_mode='Markdown')
+
+    async def orb_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /orb — the NY-open opening-range breakout SHADOW (2026-10-02).
+        Board: mode + shadow tally per variant. `/orb <market> off|shadow|default`.
+        There is no live mode: promotion is a reviewed code change, not a toggle."""
+        if not self.is_authorized(update.effective_user.id):
+            return
+        self.commands_executed += 1
+        args = [a.lower() for a in (context.args or [])]
+        if not args:
+            lines = ["🔔 *NY-open range breakout (shadow)* — 09:30-09:35 NY range, 5m swing trend, "
+                     "1m close beyond, SL 50 / TP 95 / BE +50, flat 15:30 NY\n"]
+            for m in MARKETS:
+                if not has_orb_config(m.epic):
+                    continue
+                omode = self._effective_orb_mode(m)
+                tag = " _(override)_" if m.epic in self.orb_modes else ""
+                lines.append(f"{ {'shadow': '🟡', 'off': '⚪'}[omode] } {m.name}: `{omode}`{tag}")
+                tally = self.journal.get_orb_tally(m.epic) if self.journal else {}
+                for v, bt in ORB_VARIANTS.items():
+                    t = tally.get(bt)
+                    if not t:
+                        continue
+                    avg = f"{t['sum_r'] / t['n']:+.2f}R/trade" if t["n"] else "—"
+                    wr = f"{100 * t['wins'] / t['n']:.0f}%" if t["n"] else "—"
+                    extra = (f" · {t['open']} open" if t["open"] else "") + (f" · {t['expired']} expired" if t["expired"] else "")
+                    lines.append(f"   {v}: n={t['n']} WR {wr} total {t['sum_r']:+.2f}R ({avg}){extra}")
+            lines.append("\nBacktest (Oanda, ex-holidays): pop +0.31R/trade n=50 · plain −0.04R n=248."
+                         "\nUsage: `/orb <market> off|shadow` · `/orb <market> default` clears the override.")
+            await update.effective_message.reply_text("\n".join(lines), parse_mode='Markdown')
+            return
+        if len(args) < 2:
+            await update.effective_message.reply_text("Usage: `/orb <market> <off|shadow|default>`", parse_mode='Markdown')
+            return
+        mode_arg = args[-1]; query = " ".join(args[:-1])
+        matches = [m for m in MARKETS if query in m.name.lower()]
+        if not matches:
+            await update.effective_message.reply_text(f"❌ No market matches `{query}`", parse_mode='Markdown'); return
+        if len(matches) > 1:
+            await update.effective_message.reply_text("❌ Ambiguous: " + ", ".join(m.name for m in matches), parse_mode='Markdown'); return
+        m = matches[0]
+        if mode_arg == "default":
+            prev = self.orb_modes.pop(m.epic, None); self.save_orb_modes()
+            await update.effective_message.reply_text(
+                f"↩️ {m.name} orb: override cleared (was `{prev}`) — config default "
+                f"`{self._effective_orb_mode(m)}` resumes.", parse_mode='Markdown'); return
+        if mode_arg not in VALID_ORB_MODES:
+            await update.effective_message.reply_text(
+                f"❌ Unknown mode `{mode_arg}`. Use: off | shadow | default (there is no live ORB mode)",
+                parse_mode='Markdown'); return
+        if mode_arg != "off" and not has_orb_config(m.epic):
+            await update.effective_message.reply_text(
+                f"❌ {m.name} has no ORB config (src/orb.py ORB_CONFIGS) — only Wall Street was studied.",
+                parse_mode='Markdown'); return
+        prev = self._effective_orb_mode(m)
+        self.orb_modes[m.epic] = mode_arg; self.save_orb_modes()
+        logger.info(f"ORB mode changed via Telegram: {m.name} {prev} -> {mode_arg}")
+        await update.effective_message.reply_text(f"🔔 *{m.name} orb → `{mode_arg}`* (was `{prev}`)", parse_mode='Markdown')
 
     async def emergency_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /emergency command - close all and stop."""
@@ -1485,6 +1582,7 @@ class TelegramBot:
             self.app.add_handler(CommandHandler("mode", self.mode_command))
             self.app.add_handler(CommandHandler("daily", self.daily_command))
             self.app.add_handler(CommandHandler("pullback", self.pullback_command))
+            self.app.add_handler(CommandHandler("orb", self.orb_command))
             self.app.add_handler(CommandHandler("emergency", self.emergency_command))
             self.app.add_handler(CommandHandler("rebuild", self.rebuild_command))
 

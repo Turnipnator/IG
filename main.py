@@ -27,6 +27,7 @@ DAILY_TREND_DEALS_FILE = _DATA_DIR / "daily_trend_deals.json"
 DAILY_TREND_STATE_FILE = _DATA_DIR / "daily_trend_state.json"
 PULLBACK_DEALS_FILE = _DATA_DIR / "pullback_deals.json"
 PULLBACK_STATE_FILE = _DATA_DIR / "pullback_state.json"
+ORB_STATE_FILE = _DATA_DIR / "orb_state.json"
 QUIET_RESTART_WINDOW = timedelta(hours=2)
 HTF_REFRESH_COOLDOWN = timedelta(hours=6)  # On startup, skip HTF fetch if one ran within this window
 # Daily HTF refresh on a fixed WALL CLOCK, not relative to process start (2026-08-10).
@@ -60,6 +61,7 @@ from src.client import IGClient, Position
 from src.strategy import TradingStrategy, Signal, TradeSignal, should_close_position
 from src import breakout
 from src import daily_trend, daily_bars, pullback, session_bars
+from src import orb
 from src.risk_manager import RiskManager
 from src.telegram_bot import TelegramBot, _session_date
 from src.streaming import IGStreamService, MarketStream, LIGHTSTREAMER_AVAILABLE
@@ -1031,6 +1033,8 @@ def on_price_update(epic: str, market: MarketStream) -> None:
     # precisely when there is no open position, so gating it on known_positions would
     # make it dead code.
     _check_breakout_tick_trigger(epic, market)
+    # ORB shadow (Wall St): builds its own 1-min bars from every tick. Observes only.
+    _orb_on_tick(epic, market)
 
     if not known_positions:
         return
@@ -2124,6 +2128,204 @@ def _daily_trend_shadow(market_config, cfg, sig, bars, open_rows) -> bool:
         _daily_trend_notify(f"📅 Daily-trend (shadow) {market_config.name}: would BUY @ {mid:.1f}, "
                             f"stop {sig.stop_distance:.1f} — {sig.reason}")
     return True
+
+
+# =============================================================================
+# NY-OPEN 5-MIN OPENING-RANGE BREAKOUT — SHADOW ONLY (2026-10-02) — src/orb.py
+# =============================================================================
+# Tick-driven from on_price_update. Records what the ORB WOULD do in benched_outcomes
+# (bench_type orb-shadow / orb-shadow-plain). There is deliberately no order path here
+# and no "live" mode (orb.VALID_ORB_MODES): see src/orb.py.
+
+_orb_lock = threading.Lock()
+_orb_days: dict = {}        # epic -> orb.OrbDay
+_orb_aggs: dict = {}        # epic -> orb.MinuteAggregator
+_orb_trades: dict = {}      # epic -> {variant: orb.ShadowTrade}
+_orb_restored: set = set()  # epics whose persisted state has been reconciled this process
+_orb_last_error: dict = {}  # epic -> monotonic time of the last logged failure (throttle)
+
+
+def _orb_mode(market_config) -> str:
+    """/orb override (telegram.orb_modes) > MarketConfig.orb > off.
+    Keep in sync with telegram_bot._effective_orb_mode (pinned by a test)."""
+    override = getattr(telegram, "orb_modes", {}).get(market_config.epic)
+    if override in orb.VALID_ORB_MODES:
+        return override
+    cfg = getattr(market_config, "orb", None)
+    return cfg if cfg in orb.VALID_ORB_MODES else "off"
+
+
+def _orb_load_state() -> dict:
+    try:
+        if ORB_STATE_FILE.exists():
+            return json.loads(ORB_STATE_FILE.read_text())
+    except Exception as e:
+        logger.warning(f"[ORB] state unreadable ({e}); starting clean")
+    return {}
+
+
+def _orb_save_state() -> None:
+    """Whole-file rewrite of every ORB epic. Called with _orb_lock held, on state
+    changes and once per closed minute — never per tick."""
+    try:
+        out = {}
+        for epic, day in _orb_days.items():
+            day.trades = {v: t.to_dict() for v, t in _orb_trades.get(epic, {}).items()}
+            agg = _orb_aggs.get(epic)
+            bars = [[b.start.isoformat(), b.open, b.high, b.low, b.close, b.ticks] for b in (agg.closed if agg else [])]
+            out[epic] = {"day": day.to_dict(), "bars": bars}
+        tmp = ORB_STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(out))
+        tmp.replace(ORB_STATE_FILE)
+    except Exception as e:
+        logger.warning(f"[ORB] could not persist state: {e}")
+
+
+def _orb_close(epic: str, market_config, variant: str, t, ex: Optional[dict], status: str = None) -> None:
+    """Resolve one shadow trade in the journal and drop it from memory."""
+    held = 0
+    try:
+        held = int((datetime.now(timezone.utc) - datetime.fromisoformat(t.entry_ts)).total_seconds() // 60)
+    except Exception:
+        pass
+    if ex is None:   # unknowable (state gap) — keep the row out of the R tally
+        st, outcome, r, px = status or "EXPIRED", "gap", None, None
+    else:
+        st, outcome, r, px = ("WIN" if ex["r"] > 0 else "LOSS"), ex["reason"], ex["r"], ex["exit"]
+    if journal and t.row_id is not None:
+        journal.resolve_breakout_shadow(t.row_id, st, outcome, held, r, px)
+    _orb_trades.get(epic, {}).pop(variant, None)
+    day = _orb_days.get(epic)
+    if day is not None:
+        day.status[variant] = "done"
+    tag = orb.VARIANTS[variant]
+    if ex is None:
+        logger.warning(f"[ORB] {market_config.name} {tag} #{t.row_id}: closed as {st} — outcome unknowable after a state gap")
+    else:
+        logger.info(f"[ORB] {market_config.name} {tag} #{t.row_id}: {ex['reason']} {ex['r']:+.2f}R @ {ex['exit']:.1f} ({held} min)")
+
+
+def _orb_restore(epic: str, market_config, market: MarketStream, now: datetime) -> None:
+    """Once per process: reload today's range/trend/bars and any open shadow trade,
+    replay the 5-min stream candles since the last persisted tick (pessimistic: stop
+    before target), and expire journal rows the state no longer knows about."""
+    _orb_restored.add(epic)
+    cfg = orb.ORB_CONFIGS[epic]
+    saved = _orb_load_state().get(epic) or {}
+    trades = {}
+    if saved.get("day"):
+        try:
+            day = orb.OrbDay.from_dict(saved["day"])
+            trades = {v: orb.ShadowTrade.from_dict(d) for v, d in (day.trades or {}).items()}
+            if day.date == orb.ny_minute(now)[0]:
+                _orb_days[epic] = day
+            agg = _orb_aggs.setdefault(epic, orb.MinuteAggregator())
+            agg.closed = [orb.Bar(datetime.fromisoformat(b[0]), b[1], b[2], b[3], b[4], int(b[5]))
+                          for b in saved.get("bars", [])]
+        except Exception as e:
+            logger.warning(f"[ORB] {market_config.name}: saved state unusable ({e}); starting clean")
+            trades = {}
+    half = max((market.offer or 0) - (market.bid or 0), 0) / 2
+    for v, t in trades.items():
+        last = datetime.fromisoformat(t.last_ts or t.entry_ts)
+        floor5 = last.replace(minute=last.minute - last.minute % 5, second=0, microsecond=0)
+        ex = None
+        for c in list(market.candles):
+            start = c.timestamp.replace(tzinfo=orb.LONDON) if c.timestamp.tzinfo is None else c.timestamp
+            if start < floor5 or start + timedelta(minutes=5) > now:
+                continue
+            _, m = orb.ny_minute(start)
+            cutoff = m >= cfg.cutoff_min or orb.ny_minute(start)[0] != orb.ny_minute(datetime.fromisoformat(t.entry_ts))[0]
+            ex = t.on_bar(c.open - half, c.high - half, c.low - half, c.open + half, c.high + half, c.low + half,
+                          start, cutoff)
+            if ex:
+                break
+        _orb_trades.setdefault(epic, {})[v] = t
+        if ex:
+            _orb_close(epic, market_config, v, t, ex)
+        elif orb.ny_minute(datetime.fromisoformat(t.entry_ts))[0] != orb.ny_minute(now)[0]:
+            _orb_close(epic, market_config, v, t, None)       # a past session we can no longer replay
+        else:
+            logger.info(f"[ORB] {market_config.name} {orb.VARIANTS[v]} #{t.row_id}: resumed after restart")
+    known = {t.row_id for t in _orb_trades.get(epic, {}).values()}
+    if journal:
+        for row in journal.get_open_orb_shadow(epic):
+            if row["id"] not in known:
+                journal.resolve_breakout_shadow(row["id"], "EXPIRED", "state-lost", 0, None, None)
+                logger.warning(f"[ORB] {market_config.name}: orphan shadow row #{row['id']} expired (no matching state)")
+    _orb_save_state()
+
+
+def _orb_on_tick(epic: str, market: MarketStream) -> None:
+    cfg = orb.ORB_CONFIGS.get(epic)
+    if cfg is None:
+        return
+    market_config = next((m for m in MARKETS if m.epic == epic), None)
+    if market_config is None or _orb_mode(market_config) != "shadow":
+        return
+    bid, offer = market.bid, market.offer
+    if not bid or not offer or offer < bid:
+        return
+    now = datetime.now(timezone.utc)
+    try:
+        with _orb_lock:
+            _orb_step(epic, market_config, cfg, market, float(bid), float(offer), now)
+    except Exception as e:
+        t = time.monotonic()
+        if t - _orb_last_error.get(epic, 0) > 300:
+            _orb_last_error[epic] = t
+            logger.warning(f"[ORB] {market_config.name}: tick handling failed: {e}", exc_info=True)
+
+
+def _orb_step(epic, market_config, cfg, market, bid: float, offer: float, now: datetime) -> None:
+    if epic not in _orb_restored:
+        _orb_restore(epic, market_config, market, now)
+    date, minute = orb.ny_minute(now)
+    day = _orb_days.get(epic)
+    if day is None or day.date != date:
+        day = _orb_days[epic] = orb.new_day(date)
+        _orb_save_state()
+    agg = _orb_aggs.setdefault(epic, orb.MinuteAggregator())
+    closed = agg.on_tick((bid + offer) / 2, now)
+    dirty = False
+    if closed is not None:
+        dirty = True
+        if orb.ny_minute(closed.start)[0] == date and not all(s == "skipped" for s in day.status.values()):
+            range_end = datetime.fromisoformat(date).replace(tzinfo=orb.NY) + timedelta(minutes=cfg.first_entry_min)
+            def trend_fn():
+                return orb.swing_trend(*orb.m5_before(list(market.candles), range_end.astimezone(timezone.utc)))
+            for variant, ev in day.on_bar(cfg, closed, agg.closed[:-1], trend_fn):
+                side = {1: "BUY", -1: "SELL"}.get(day.trend or 0, "-")
+                if ev == "signal":
+                    logger.info(f"[ORB] {market_config.name} {orb.VARIANTS[variant]}: {side} break of "
+                                f"{day.range_lo:.1f}-{day.range_hi:.1f} at {closed.close:.1f}")
+                else:
+                    reason = ev.split(":", 1)[1]
+                    logger.info(f"[ORB] {market_config.name} {orb.VARIANTS[variant]}: no trade today ({reason})")
+                    if journal:
+                        journal.log_rejected_signal(epic, market_config.name, side, 0.0, 0.0, 0.0,
+                                                    f"ORB-shadow[{variant}]: {reason}")
+    if day.pending:
+        for variant, t in day.open_pending(cfg, bid, offer, now):
+            if journal:
+                t.row_id = journal.log_orb_shadow(epic, market_config.name, "BUY" if t.side == 1 else "SELL",
+                                                  t.entry, cfg.stop_pts, cfg.target_pts, t.entry_ts,
+                                                  offer - bid, orb.VARIANTS[variant])
+            _orb_trades.setdefault(epic, {})[variant] = t
+            logger.info(f"[ORB] {market_config.name} {orb.VARIANTS[variant]} #{t.row_id}: would "
+                        f"{'BUY' if t.side == 1 else 'SELL'} @ {t.entry:.1f}, stop {t.stop:.1f}, target {t.target:.1f}")
+        dirty = True
+    for variant, t in list(_orb_trades.get(epic, {}).items()):
+        was_be = t.be_done
+        ex = t.on_tick(bid, offer, now, cutoff=(minute >= cfg.cutoff_min or orb.ny_minute(
+            datetime.fromisoformat(t.entry_ts))[0] != date))
+        if ex:
+            _orb_close(epic, market_config, variant, t, ex)
+            dirty = True
+        elif t.be_done and not was_be:
+            dirty = True
+    if dirty:
+        _orb_save_state()
 
 
 # =============================================================================
