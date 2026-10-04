@@ -4753,6 +4753,37 @@ edge). Per market Δ: Crude +0.165, GBP/USD +0.227, EUR/USD +0.010, Gold −0.01
 
 ---
 
+# Market Timing Report (June 2026 edition) vs IG prices (2026-10-02) — NO EDGE
+
+Pointer only; full write-up in `mtr/RESULTS.md` (branch `research/mtr`). IG DEMO daily bars
+Mar–Aug 2026, 6 markets. Pre-chosen primary (pooled, ±1 trading day, k=3): MTR turn dates hit
+swings 52.6% vs random 52.0%, p 0.54; no grid cell < 0.05; ±0-day hits 0/20 on Crude/Gold/DXY/EUR.
+Seasonal calls 12/20 (coin P≥12 = 0.25; stated odds imply ~15). Price levels reversed price no more
+than random levels (matched test). One edition only — LOW power for modest effects; pool 6–12
+editions with the same pre-registered test before revisiting. Not used in the bot.
+
+---
+
+# Gold 1h breakout vs the £45 cap: take, skip or tighten? (2026-10-02) — KEEP SKIPPING
+
+Trigger: 10-02 17:05–17:45 Gold SELL break refused 9× (`min size 1.0 × stop 54.6 = £54.58 > £45`).
+User: "I don't want to miss likely breakouts". Re-simulated Gold 2005–2026 (Dukascopy, live HTF gate,
+costs, true sequencing) with the cap expressed as a % of TODAY's price (45/4140 = 1.09%):
+
+| policy | n | mean R | total R | £ at today's price (min size 1.0) | worst £ trade |
+|---|---|---|---|---|---|
+| TAKE (raise cap) | 1,029 | +0.213 | +219.6 | +£5,342 | −£127 |
+| **SKIP (current)** | 999 | **+0.222** | +221.3 | **+£5,654** | −£69 |
+| TIGHT (stop cut to 1.09%) | 1,037 | +0.207 | +214.8 | +£5,325 | −£69 |
+
+The 61 trades the cap blocks (6%): win 36%, mean **+0.025R** (SE ≈ 0.26), total +1.5R but −£189 in £
+because they carry ~2× the £ risk (median £55, p90 £81); their small R total rests on 3 trades.
+Confidence MEDIUM: n=61 can't distinguish "zero" from "modest", but there is no sign they are the
+likely winners, and in £ they cost money. Context: 2xATR > 45pt in 37% of 2026 hours, 9% since July.
+Decision: keep the cap as is. Optional P3: throttle the repeated skip warning.
+
+---
+
 # Does Gold's 1h breakout carry over to silver and platinum? (PRE-REGISTRATION, 2026-10-02)
 
 Written before any silver/platinum outcome was computed. User: "can we look at similar tests on
@@ -4882,3 +4913,4 @@ today's ~$66 is **£150** — 3× the £45 intraday cap (it would need the £250
 
 Conclusion: silver offers a directional bet on its own drift, not a timing edge. A "be long silver"
 position is a view on the metal, which no backtest can validate going forward. No silver arm.
+
