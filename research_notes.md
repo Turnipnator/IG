@@ -4914,3 +4914,121 @@ today's ~$66 is **£150** — 3× the £45 intraday cap (it would need the £250
 Conclusion: silver offers a directional bet on its own drift, not a timing edge. A "be long silver"
 position is a view on the metal, which no backtest can validate going forward. No silver arm.
 
+---
+
+# Event-day mode switching: does a NON-LIVE breakout market earn a slot on scheduled-event days? (PRE-REGISTRATION, 2026-10-04)
+
+Written before any event-day outcome was computed. User: "something happening in the news, earnings
+calls … then moving from shadow to live or momentum or breakout for that particular EPIC, making the
+bot a little more dynamic based on market conditions". Interpreted as one testable decision: **for a
+market whose strategy is NOT live because it has no edge overall, would trading it ONLY on scheduled
+high-impact event days be net-positive after IG costs?** The edge would have to exist on event days
+alone. A switch decided in advance from a fixed calendar needs no news feed, MCP server or paid API.
+
+## 0. Contamination disclosure (what has already been seen)
+- The 09-22 ±30-min news replay (same engine, same trades) showed USD-release breaks Δ **+0.27R**
+  (p 0.35). By market: EUR/USD **+0.32** (n=61), Crude **+0.94** (n=7). The event-DAY split has
+  never been computed, but it overlaps those trades, so the prior leans toward H1.
+  **Counter:** PASS must survive removing every trade tagged `blocked_core-*` in
+  `replay_trades.pkl` (§6.5).
+- Silver's whole-run result (−0.098R, 10-02) and the 114-variant search are known. The silver event-day
+  split has not been computed. The silver recipe is the fixed Gold recipe; **no silver variant is
+  used**.
+
+## 1. Sub-questions
+- Q1 (outcome-blind): how many entries per market fall on an event day? Is the test powered?
+- Q2: mean net R of event-day entries, per market and pooled. Is it > 0 on its own?
+- Q3: is the event-day minus other-day difference (Δ) beyond the whole-week rotation null?
+- Q4 (descriptive, no decision): the same split for the LIVE Gold and GBP/USD breakout arms, and
+  for the index momentum shadow signals.
+
+## 2. Competing hypotheses
+- **H0:** event days are just noisier days. ATR-scaled stops normalise the bigger moves, so R per trade
+  is unchanged and the shadow markets stay edgeless.
+- **H1 (catalyst):** releases start the real trends. Event-day breaks follow through, and the
+  edge is concentrated there.
+- **H2 (whipsaw):** spike-and-reverse plus wider spreads make event-day breaks worse. A switch would
+  hurt.
+- **H3 (calendar artefact):** any effect is a weekday effect (NFP Fridays, FOMC Wednesdays). **Killed by
+  the null:** whole-week rotation keeps the weekday and hour.
+
+## 3. Definitions (fixed)
+- **Event day** for market *m* = the UTC calendar date of the entry's `decision_utc` contains ≥1
+  mapped **core** event from `data/news_events/events.csv`. The 1,647 events are: NFP, US CPI, FOMC
+  statement/press conference, BoE, ECB decision/press conference, and UK CPI from 2015-04. This
+  matches a live rule of "switch on at 00:00 UTC on a calendar day, off at 24:00".
+- **Mapping (as 09-22):** USD → Gold, EUR/USD, GBP/USD, Crude, Silver. GBP → GBP/USD. EUR → EUR/USD.
+- **Out of scope, and why:**
+  - **Earnings:** there is no verified free, timestamped history for 2005–2026, and index momentum
+    has no 21-year engine. If a verifiable source turns up, it is added only as an amendment logged
+    before outcomes.
+  - **Unscheduled headlines:** no timestamped archive. Live, IG's price reacts before any feed does.
+  - **Tier-2 events and speeches:** no reproducible history.
+
+## 4. Population
+- **Primary (the switch candidates): non-live 1h breakout markets with a 21-year engine.**
+  - **EUR/USD and Crude:** the cached trades in `data/news_events/replay_trades.pkl`, from
+    `replay_breakout_news.run_gated` with the live gate, C3 financing and measured spreads. First
+    assert that the cache reproduces Step-1 counts: EUR 1,191, Crude 745.
+  - **Silver:** `replay_breakout_metals.run(SILVER)` at the 3.0-pt base spread, with HIGH = 4.0.
+  - Entries from 2005-01-01 to the end of each market's data.
+- **Excluded:**
+  - **DXY:** no Dukascopy series, and the IG archive is too short.
+  - **Index breakout:** IG-native n=132 gives about 20 event-day trades, which is unpowered.
+  - **Index momentum:** no 21-year 5m engine, and the signal is empty at every horizon.
+  - **Platinum:** only dated contracts, which the bot forbids.
+- **Descriptive only:**
+  - Gold and GBP/USD event-day Δ. No rule change attaches; the 09-22 verdict stands.
+  - The live journal's momentum shadow signals: signed forward move in ATR at 6 and 12 candles, event
+    day vs not, US core events mapped to indices. That is about 6 months of data, so it is
+    unpowered.
+
+## 5. Power gate (outcome-blind, computed from timestamps only)
+- **Expected share of event days (prior):** about 13% for USD markets, about 17% for EUR/USD.
+  That gives roughly 100–200 event-day trades per market and about 400–500 pooled.
+- **One-sample MDE**, one-sided α 0.05, 80% power, σ_R = 2.1: 2.49 × 2.1 / √n. n=100 → 0.52R;
+  n=200 → 0.37R; n=450 → 0.25R.
+- **Decision-relevant effect:** an event-day mean of **≥ +0.20R net**, which is Gold's whole-book edge.
+  Anything smaller is not worth a live slot (max 3 live) at these costs.
+- **Gate:**
+  - If the pooled MDE is > 0.30R, the outcome run is NOT done. The verdict is "unresolvable
+    offline".
+  - Any market with fewer than 60 event-day entries is reported but cannot PASS.
+
+## 6. PASS: market *m* is "switch-worthy" only if ALL of these hold
+1. **Pooled family (EUR/USD, Crude, Silver):**
+   - event-day mean net R > 0 with t ≥ 2.0;
+   - pooled Δ beyond the rotation null, two-sided p ≤ 0.05.
+   - **Rotation:** shift every event by k × 7 days, for k ∈ ±1…±26. Drop shifted days that land on a
+     real event day of the same currency. Re-tag the trades and recompute both statistics.
+2. ***m*'s own** event-day mean net R > 0 with t ≥ 2.0, Holm-corrected across the 3 markets
+   (one-sided).
+3. *m*'s event-day mean is > 0 in both halves (2005–15 and 2016–26).
+4. *m*'s event-day total R is still > 0 after removing its 3 best event-day trades.
+5. Still > 0 after removing all trades tagged `blocked_core-*` in the 09-22 replay (the §0
+   contamination). For silver the ±30-min tag is recomputed with the same function.
+6. Still > 0 with an extra **0.25R** charged on every event-day stop-out. Hourly bars cannot see
+   slippage through a stop at a release.
+7. Mean cost ≤ 0.10R per event-day trade (the go-live cost gate) and > 0 at the HIGH spread.
+
+Anything else = **NO EDGE**. On FAIL, no window variants are run to rescue it: no ±1 day, no
+event+24h, no tier-2 events, no other markets.
+
+## 7. What each verdict leads to
+- **NO EDGE:** the bot stays as it is. Also record that an event-driven switch was tested and
+  failed, so the idea is not reopened without new data such as earnings history.
+- **PASS:** still not live. The next step is a **log-only** event-day shadow flag on *m*, judged
+  prospectively against the go-live criteria: ≥30 IG-native trades, cost ≤ 0.10R, and it counts toward
+  max 3 live. Any live-path change gets the full-treatment pre-flight. The live rule would read a
+  fixed weekly calendar, not a news API.
+
+## 8. Deliverables
+- `scripts/replay_event_day.py`, run in this order:
+  1. `--count`: the §5 gate, no R loaded.
+  2. The outcome run.
+  3. Results written to `data/news_events/event_day_outcomes.json`.
+- **Property tests:**
+  - an entry's event-day tag depends only on `decision_utc` and `events.csv`, never on a price;
+  - a rotated control day never coincides with a real event day of the same currency;
+  - a `decision_utc` of 23:59:59 vs 00:00:00 lands on the right UTC date.
+- Effort: about half a day. No IG API allowance and no paid data are needed.
