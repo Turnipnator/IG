@@ -1,0 +1,133 @@
+{
+ "pooled_primary": {
+  "n": 492,
+  "mean_r": 0.0062,
+  "t": 0.08,
+  "rest_mean_r": -0.0388,
+  "delta": 0.045,
+  "rotation_p_two_sided": 0.635,
+  "null_delta_median": -0.0062,
+  "null_delta_95": [
+   -0.2007,
+   0.1571
+  ],
+  "null_eventday_mean_median": -0.0441
+ },
+ "per_market": {
+  "EUR/USD": {
+   "n": 233,
+   "mean_r": 0.1022,
+   "t": 0.83,
+   "p_one": 0.2032,
+   "total_r": 23.8,
+   "win_rate": 0.339,
+   "rest_mean_r": -0.0503,
+   "delta": 0.1525,
+   "halves": {
+    "2005-2015": 0.1315,
+    "2016-2026": 0.0694
+   },
+   "total_ex_top3": -4.1,
+   "mean_ex_near_release": 0.0096,
+   "n_ex_near_release": 145,
+   "mean_with_slip": -0.0212,
+   "mean_cost_r": 0.0452,
+   "mean_r_high_cost": 0.0944,
+   "p_holm": 0.6097,
+   "criteria": {
+    "1_pooled_mean_t2_and_rotation": false,
+    "2_own_mean_pos_holm_le_0.05": false,
+    "3_both_halves_pos": true,
+    "4_total_ex_top3_pos": false,
+    "5_pos_ex_near_release": true,
+    "6_pos_with_0.25R_stop_slip": false,
+    "7_cost_le_0.10_and_pos_high_cost": true,
+    "n_ge_60": true
+   },
+   "verdict": "NO EDGE"
+  },
+  "Crude Oil": {
+   "n": 98,
+   "mean_r": -0.0014,
+   "t": -0.01,
+   "p_one": 0.5034,
+   "total_r": -0.1,
+   "win_rate": 0.357,
+   "rest_mean_r": 0.0555,
+   "delta": -0.0569,
+   "halves": {
+    "2005-2015": 0.2344,
+    "2016-2026": -0.0866
+   },
+   "total_ex_top3": -18.2,
+   "mean_ex_near_release": -0.0739,
+   "n_ex_near_release": 91,
+   "mean_with_slip": -0.129,
+   "mean_cost_r": 0.0526,
+   "mean_r_high_cost": -0.0232,
+   "p_holm": 1.0,
+   "criteria": {
+    "1_pooled_mean_t2_and_rotation": false,
+    "2_own_mean_pos_holm_le_0.05": false,
+    "3_both_halves_pos": false,
+    "4_total_ex_top3_pos": false,
+    "5_pos_ex_near_release": false,
+    "6_pos_with_0.25R_stop_slip": false,
+    "7_cost_le_0.10_and_pos_high_cost": false,
+    "n_ge_60": true
+   },
+   "verdict": "NO EDGE"
+  },
+  "Silver": {
+   "n": 161,
+   "mean_r": -0.128,
+   "t": -0.94,
+   "p_one": 0.8268,
+   "total_r": -20.6,
+   "win_rate": 0.292,
+   "rest_mean_r": -0.093,
+   "delta": -0.035,
+   "halves": {
+    "2005-2015": 0.0064,
+    "2016-2026": -0.2423
+   },
+   "total_ex_top3": -45.4,
+   "mean_ex_near_release": -0.0393,
+   "n_ex_near_release": 119,
+   "mean_with_slip": -0.246,
+   "mean_cost_r": 0.1531,
+   "mean_r_high_cost": -0.17,
+   "p_holm": 1.0,
+   "criteria": {
+    "1_pooled_mean_t2_and_rotation": false,
+    "2_own_mean_pos_holm_le_0.05": false,
+    "3_both_halves_pos": false,
+    "4_total_ex_top3_pos": false,
+    "5_pos_ex_near_release": false,
+    "6_pos_with_0.25R_stop_slip": false,
+    "7_cost_le_0.10_and_pos_high_cost": false,
+    "n_ge_60": true
+   },
+   "verdict": "NO EDGE"
+  }
+ },
+ "verdicts": {
+  "EUR/USD": "NO EDGE",
+  "Crude Oil": "NO EDGE",
+  "Silver": "NO EDGE"
+ },
+ "descriptive_live_arms": {
+  "Gold": {
+   "n": 155,
+   "mean_r": 0.1887,
+   "rest_mean_r": 0.2178,
+   "delta": -0.0292
+  },
+  "GBP/USD": {
+   "n": 205,
+   "mean_r": 0.021,
+   "rest_mean_r": 0.0663,
+   "delta": -0.0453
+  }
+ }
+}

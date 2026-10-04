@@ -1,0 +1,52 @@
+{
+ "by_market": {
+  "EUR/USD": {
+   "n": 1163,
+   "n_event_day": 233,
+   "share": 0.2,
+   "n_event_day_near_release": 88,
+   "from": "2005-01-14",
+   "to": "2026-09-16"
+  },
+  "Crude Oil": {
+   "n": 745,
+   "n_event_day": 98,
+   "share": 0.132,
+   "n_event_day_near_release": 7,
+   "from": "2012-01-30",
+   "to": "2026-09-09"
+  },
+  "Silver": {
+   "n": 1088,
+   "n_event_day": 161,
+   "share": 0.148,
+   "n_event_day_near_release": 42,
+   "from": "2005-01-07",
+   "to": "2026-09-16"
+  },
+  "Gold": {
+   "n": 1029,
+   "n_event_day": 155,
+   "share": 0.151,
+   "n_event_day_near_release": 54,
+   "from": "2005-01-03",
+   "to": "2026-08-19"
+  },
+  "GBP/USD": {
+   "n": 1012,
+   "n_event_day": 205,
+   "share": 0.203,
+   "n_event_day_near_release": 51,
+   "from": "2005-01-05",
+   "to": "2026-09-16"
+  }
+ },
+ "pooled_primary_event_n": 492,
+ "pooled_mde_R": 0.235,
+ "gate_passes": true,
+ "markets_eligible": [
+  "EUR/USD",
+  "Crude Oil",
+  "Silver"
+ ]
+}

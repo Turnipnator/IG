@@ -5053,3 +5053,37 @@ event+24h, no tier-2 events, no other markets.
 - **A6 — code.** `scripts/replay_event_day.py`; properties in `tests/test_event_day_properties.py`
   (4 tests, 2/2 planted mutants caught: rotation not dropping real days; London date in place of the
   UTC date).
+
+## RESULTS (run 2026-10-04) → **NO EDGE on all three; no event-day mode switching**
+
+The gate passed: 492 pooled event-day entries, MDE 0.235R ≤ 0.30, and all three markets have n ≥ 60.
+Output is in `data/news_events/event_day_outcomes.json`.
+
+| market | n event-day | mean R | t | rest mean | Δ | halves | ex top-3 total | ex ±30 min | +0.25R slip | HIGH cost | verdict |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|:--|
+| **Pooled** | 492 | +0.006 | 0.08 | −0.039 | +0.045 (rotation p 0.64; null 95% −0.20…+0.16) | | | | | | — |
+| EUR/USD | 233 | +0.102 | 0.83 (Holm p 0.61) | −0.050 | +0.153 | +0.13 / +0.07 | −4.1R | +0.010 | −0.021 | +0.094 | NO EDGE |
+| Crude | 98 | −0.001 | −0.01 | +0.056 | −0.057 | +0.23 / −0.09 | −18.2R | −0.074 | −0.129 | −0.023 | NO EDGE |
+| Silver | 161 | −0.128 | −0.94 | −0.093 | −0.035 | +0.01 / −0.24 | −45.4R | −0.039 | −0.246 | −0.170 | NO EDGE |
+
+**Descriptive (live arms, no decision attaches):**
+- Gold event-day +0.189 vs other days +0.218 (Δ −0.03, n=155).
+- GBP/USD +0.021 vs +0.066 (Δ −0.05, n=205).
+- Event days are slightly *worse* for both live arms.
+
+**Reading:**
+- **H0 supported, HIGH.** The pooled event-day mean is +0.006R. Δ sits in the middle of the rotation
+  null: ordinary days at the same weekday shifted by whole weeks give the same answer.
+- EUR/USD has the only positive point estimate, and it is **entirely the ±30-min trades already seen
+  on 09-22**. Without them the mean is +0.010R. It also dies when the 3 best trades are removed or
+  0.25R of stop slippage is added. That is the contamination §0 anticipated, and the §6.5 guard
+  caught it.
+- **H1 (catalyst) refuted at day scale.**
+- **H2 (whipsaw):** not supported as an effect. Silver and Crude are negative on every day.
+- **H3 (calendar artefact):** controlled by the rotation, and nothing was there to explain.
+- **Gap (LOW, by design):** earnings and unscheduled headlines remain untested. There is no
+  timestamped free history, and for headlines IG's price moves before any feed would.
+
+**Decision (per §7):** the bot stays as it is. A scheduled-event mode switch was tested and failed.
+Reopen only with genuinely new data, such as a verified earnings history with an index engine. Per §6,
+no window variants (±1 day, event+24h, tier-2) are run.
