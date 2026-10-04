@@ -5032,3 +5032,24 @@ event+24h, no tier-2 events, no other markets.
   - a rotated control day never coincides with a real event day of the same currency;
   - a `decision_utc` of 23:59:59 vs 00:00:00 lands on the right UTC date.
 - Effort: about half a day. No IG API allowance and no paid data are needed.
+
+## Amendments A1–A6 (2026-10-04, before the count and before any event-day outcome)
+- **A1 — HIGH spread.** §6.7 named a HIGH spread, but one was defined only for silver (4.0). EUR/USD
+  and Crude HIGH = **1.5× the measured base**: EUR 0.9 pt, Crude 4.5 pt. These markets are re-run
+  through `run_gated` at that spread.
+- **A2 — p-values.** scipy is not in the venv, so one-sided p uses the normal approximation to t.
+  That is valid at the n ≥ 60 floor.
+- **A3 — reading §6.**
+  - Criterion 4 uses the event-day **total** R (as written).
+  - Criteria 5 and 6 use the event-day **mean** R.
+  - "Near release" (criterion 5) = tagged in either 09-22 family. Silver's tag is recomputed with
+    `rbn.tag_blocked` (USD events, ±30 min).
+- **A4 — rotation.**
+  - Per market, shifted event days that are real event days for that market are dropped.
+  - Control trades exclude real event-day trades, and the "rest" for Δ_k excludes both sets.
+  - 52 shifts; p = share of |Δ_k| ≥ |Δ_obs|.
+- **A5 — cache check.** The cache must match the Step-1 counts exactly (EUR 1,191, Crude 745, Gold
+  1,052, GBP 1,038) before the 2005 filter is applied. Otherwise the run aborts.
+- **A6 — code.** `scripts/replay_event_day.py`; properties in `tests/test_event_day_properties.py`
+  (4 tests, 2/2 planted mutants caught: rotation not dropping real days; London date in place of the
+  UTC date).
