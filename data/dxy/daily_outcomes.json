@@ -1,0 +1,54 @@
+{
+ "frame": "daily",
+ "n": 89,
+ "mean_r": 0.0867,
+ "t": 0.23,
+ "p_one": 0.4072,
+ "total_r": 7.7,
+ "win_rate": 0.281,
+ "halves": {
+  "2005-2015": 0.7179,
+  "2016-2026": -0.3836
+ },
+ "total_ex_top10": -56.1,
+ "mean_cost_r": 0.2823,
+ "median_cost_r": 0.145,
+ "mean_spread_r": 0.0456,
+ "mean_r_high_cost": -0.1336,
+ "mean_r_low_cost": 0.1049,
+ "mean_gross_r": 0.369,
+ "mean_nights": 44.4,
+ "by_direction": {
+  "BUY": {
+   "n": 45,
+   "mean_r": 0.2888,
+   "t": 0.41,
+   "p_one": 0.3404,
+   "total_r": 13.0,
+   "win_rate": 0.244
+  },
+  "SELL": {
+   "n": 44,
+   "mean_r": -0.1201,
+   "t": -0.56,
+   "p_one": 0.7113,
+   "total_r": -5.3,
+   "win_rate": 0.318
+  }
+ },
+ "null_mean_median": -0.0612,
+ "null_q95": 0.2384,
+ "null_p": 0.2,
+ "share_over_250_cap_at_1gbp": 0.011,
+ "median_stop_pts": 116.7,
+ "criteria": {
+  "1_mean_pos_p_le_0.0167": false,
+  "2_both_halves_pos": false,
+  "3_total_ex_top10_pos": false,
+  "4_cost_le_0.10R": false,
+  "5_pos_at_high_cost": false,
+  "6_beats_random_timing_q95": false,
+  "n_ge_80": true
+ },
+ "verdict": "FAIL -> NO EDGE"
+}

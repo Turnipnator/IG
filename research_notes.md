@@ -5344,3 +5344,36 @@ FAIL on every frame ⇒ **DXY breakout is closed**. No other N, k, M or frame is
   year *y* enters with probability n_y / flat_bars_y. Direction is drawn with the observed BUY share,
   and the same stop, exit and costs apply. This matches the entry count per year and the direction
   mix in expectation. The PASS bar is the 95th percentile of the null mean R.
+
+## RESULTS — daily frame (run 2026-10-08) → **FAIL on every criterion. DXY breakout is CLOSED.**
+
+**Setup:**
+- Fidelity gate (D2) PASSED: Yahoo vs IG DFB daily returns correlate at 0.988 over 25 days, median
+  level gap 0.29%.
+- Harness: the long side equals `daily_trend.replay` exactly (46 trades).
+- Count: n=89 (45 BUY / 44 SELL), 4.1 a year, MDE 0.55R. That is low power, as disclosed.
+
+| | value | criterion |
+|---|---|---|
+| mean net R | +0.087 (t 0.23, p 0.41) | ✗ needs p ≤ 0.0167 |
+| halves | **+0.72 / −0.38** | ✗ sign flips |
+| total ex top-10 | **−56.1R** (total +7.7R) | ✗ the whole result is ten trades |
+| **mean all-in cost** | **0.282R** (median 0.145): spread only 0.046R, the rest is financing over a 44-night mean hold | ✗ gate is ≤ 0.10R |
+| HIGH cost | −0.134R | ✗ |
+| random timing | null median −0.06, q95 +0.24, null p 0.20 | ✗ |
+
+By direction: BUY +0.29R (t 0.41), SELL −0.12R (t −0.56). Only 1.1% of stops exceed the £250 daily
+cap (median stop 117 pt).
+
+**Mechanism (HIGH):** the slower frame did cut the spread from about 0.25R to 0.05R, as predicted.
+But financing replaced it, so H1 is supported.
+
+**1h / 4h are not run: they cannot pass criterion 4 arithmetically.** Measured on IG's own DXY bars
+(09-03 → 10-08):
+- 1h: ATR14 8.9 → the stop is floor-bound at 20 pt → spread alone **0.25R** (0.15R even at 3 pt).
+- 4h: ATR14 16.7 → stop 33 pt → spread alone **0.15R** at 5 pt. At an optimistic 3 pt it is 0.09R,
+  leaving 0.01R for financing, which is 1.77 pt a night for longs (≈ 0.05R a night).
+
+No edge result can rescue a cost-gate failure, so the HistData fetch is not worth doing. **H0/H1
+supported, HIGH. DXY breakout is closed as a live candidate.** It stays in breakout-shadow as an
+observer only. Per §7, no other N, k, M or frame is tried.
