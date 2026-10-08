@@ -5087,3 +5087,65 @@ Output is in `data/news_events/event_day_outcomes.json`.
 **Decision (per §7):** the bot stays as it is. A scheduled-event mode switch was tested and failed.
 Reopen only with genuinely new data, such as a verified earnings history with an index engine. Per §6,
 no window variants (±1 day, event+24h, tier-2) are run.
+
+---
+
+# Audit: live breakout book per EPIC, SELL vs BUY (2026-10-08)
+
+**Question:** the user says breakouts lose mainly when they SELL. Per EPIC: is the short leg broken, or is
+this a streak? What should change?
+
+**Hypotheses:**
+- **H1:** shorts are structurally worse on some markets.
+- **H2:** a bearish-HTF streak plus a stacked USD bet, with no structural effect.
+- **H3:** the problem is the market, not the direction (no edge either way).
+
+**Live journal (VPS export, 47 breakout trades 06-22 → 10-08):**
+- Lifetime: −£169.46, −8.1R.
+- **Since 09-25 (both directions restored): 13 trades, ALL SELL**, 2 wins, −£130.82, −5.0R.
+- **The daily trend filter (HTF) has been BEARISH on every live market, so no BUY could fire.**
+- 11 of the 13 were the same long-USD bet (Gold, GBP and EUR shorts). `correlation_group` does not
+  cover USD.
+
+| live, lifetime | BUY n / R / £ | SELL n / R / £ |
+|---|---|---|
+| Gold | 7 / +3.48 / +£158.83 | 9 / −5.75 / −£201.24 (1 win) |
+| GBP/USD | 5 / −0.87 / −£19.80 | 9 / −6.71 / −£150.95 (0 wins) |
+| EUR/USD | — | 6 / +2.95 / +£70.06 (one +4.46R) |
+| Crude | 2 / +2.96 / +£65.06 | 2 / −2.00 / −£39.18 |
+
+**21-year Dukascopy replay (live gate, net of costs; `replay_trades.pkl`, 2005 → 2026-09):**
+
+| | BUY mean R (t) | SELL mean R (t) | SELL 2005–15 / 2016–26 | BUY−SELL t |
+|---|---|---|---|---|
+| Gold | **+0.326 (3.24)** n=614 | +0.047 (0.43) n=415 | +0.47 / **−0.31** | 1.88 |
+| GBP/USD | +0.003 (0.04) | +0.115 (1.16) | +0.08 / +0.15 | −0.89 |
+| EUR/USD | +0.020 (0.25) | −0.058 (−0.82) | −0.08 / −0.04 | 0.73 |
+| Crude | +0.055 (0.48) | +0.039 (0.33) | +0.19 / −0.02 | 0.10 |
+
+**Findings:**
+- **Gold:** the whole 21-year edge is the BUY leg. SELL is ≈0 overall and −0.31R per trade over
+  2016–26 (2024+ −0.08, n=35).
+  - Long-only Gold now rests on 1,029 backtest trades, not on the n=8 streak that produced the
+    09-15 restriction. **MEDIUM-HIGH.**
+  - Caveat: Gold's long edge may be partly drift. The silver lesson was that random longs beat the
+    rule. Gold's BUY leg has not yet been checked against random matched longs (**gap**).
+- **GBP/USD:** the backtest says SELL is its *better* side. Live SELL is 0/9.
+  - 0.69⁹ = 3.5%, but that is one cell picked from about 8 after the fact.
+  - Neither direction has an edge (21-year whole market ≈ +0.06R). **H3, MEDIUM.**
+- **EUR/USD and Crude:** no edge in either direction over 21 years. Live results are one or two
+  trades' luck. **H3, MEDIUM-HIGH.**
+- **Direction is the lever only on Gold.** This matches the 09-22 "long-only everywhere"
+  refutation.
+- **Other strategies are healthy and correctly flat:**
+  - Gold daily-trend: close 4,110 vs 55-day high 4,697.
+  - S&P/NASDAQ pullback: above their 5-day lows.
+
+**Recommendations (user decides; each is a live config change):**
+1. **Gold breakout → BUY-only** (`allowed_direction="BUY"`), on the 21-year split. Accept idle spells
+   while the HTF is bearish: idle beats a ≈0 or −0.3R leg that adds USD exposure.
+2. **GBP/USD, EUR/USD and Crude breakout → `breakout-shadow`.** No 21-year edge in either direction.
+   They keep logging, and that is cheap to reverse.
+3. If any FX stays live, add a USD correlation cap (one long-USD breakout at a time).
+4. Keep DXY in shadow and leave both daily strategies alone.
+5. Next research: Gold BUY vs random matched longs (is it drift?), pre-registered.
