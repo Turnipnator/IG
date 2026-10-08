@@ -5158,3 +5158,40 @@ differs by market:
 
 Judge on live BUYs. Blocked SELLs are logged as `Breakout-shadow[direction-restricted]` and resolved
 in R, so the short leg stays measured.
+
+---
+
+# Shadow book check per EPIC (2026-10-08)
+
+**Source:** `benched_outcomes`, resolved rows only.
+- Breakout-shadow = forward-collected + `-bf` backfill, R net of spread.
+- Momentum = `shadow` + `quality`.
+
+| Book | n | mean R | t | sum R |
+|---|--:|--:|--:|--:|
+| Breakout-shadow | 186 | −0.04 | −0.33 | −7.4 |
+| Momentum shadow | 129 | −0.10 | −1.45 | −12.8 |
+
+**Breakout-shadow by EPIC:**
+- **Positive:** DXY +1.47 (n=5), NASDAQ +0.37 (n=17), Japan +0.31 (n=19), S&P +0.12 (n=17).
+- **About zero:** HK and Wall St +0.02.
+- **Negative:** Russell −0.21 (n=16), FTSE −0.47 (n=26, t −2.29), AI Index −0.65 (n=11, t −2.65).
+- **Live markets' rows:** EUR/USD −0.51 (n=19), Gold −0.65 (n=5, the direction-restricted SELLs of
+  09-15→09-25), GBP/USD +0.44 (n=8), Crude +0.51 (n=5). These are pre-promotion or blocked-side
+  rows.
+- **By direction:** BUY +0.06 (n=87) vs SELL −0.12 (n=99).
+
+**Momentum shadow by EPIC:**
+- NASDAQ −0.58 (n=10, t −2.56), S&P −0.29, HK −0.20, AI −0.26, Japan −0.09.
+- Russell −0.01 (n=35), Wall St +0.09 (n=22).
+
+**Reading:**
+- No EPIC is near promotion. None has ≥30 IG-native trades, and no positive cell has t > 1.1.
+- With about 25 cells, one or two |t| > 2 are expected by chance. The negative ones (FTSE and AI
+  breakout, NASDAQ momentum) agree with existing verdicts: index breakout CLOSED (IG-native PF 0.35);
+  momentum signal empty.
+- DXY's +7.4R is one or two trades. It also fails the cost gate (0.179R) and has a min stop of
+  3.6×ATR.
+
+**Next:** keep observing (it is free; API budget is about 2.3k/10k weekly). Re-check per EPIC at n ≥ 30
+against pre-registered go-live gates. No action now.
