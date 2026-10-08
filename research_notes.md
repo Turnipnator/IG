@@ -5195,3 +5195,123 @@ in R, so the short leg stays measured.
 
 **Next:** keep observing (it is free; API budget is about 2.3k/10k weekly). Re-check per EPIC at n ≥ 30
 against pre-registered go-live gates. No action now.
+
+---
+
+# Can DXY breakout pass the cost gate on some timeframe? 21y synthetic-DXY replay (PRE-REGISTRATION, 2026-10-08)
+
+Written before any synthetic DXY series or trade was computed. User: "Can't we fix the cost gate for
+DXY?" The gate itself cannot change (`GO_LIVE_CRITERIA.md` §7.4: a gate may not be weakened to admit
+a specific market). The only legitimate route is a version of DXY breakout whose **real** cost is
+≤ 0.10R **and** which has an edge. Cost in R = (spread + financing) / stop. A slower frame widens the
+stop and lengthens the hold, so the test must measure both effects together.
+
+## 0. Already known (disclosed)
+- **DXY shadow breakout:** +7.4R on n=5 (mostly one or two trades). That is what prompted this; it is
+  not used as evidence.
+- **2026-08-13 ≈730d backtest:** 1h DXY breakout PF went HOUR 1.01 → HOUR_4 HTF 1.15 → DAY HTF 1.35
+  (n 223 → 126) under the old engine, and pre-09-01 PFs are suspect
+  ([[project-backtest-engine-gaps-2026-09]]).
+- **Recorded IG spread:** 4.8–5.4 pt. The min stop is 20 pt and 2×ATR(1h) ≈ 21 pt, so the 1h recipe
+  pays about 0.25R in spread alone.
+- **DFB financing** is about 0.08R/night at a 20-pt stop (sign unverified).
+- No outcome of the frames below has been seen on any long history.
+
+## 1. Hypotheses
+- **H0:** DXY breakout has no edge at any frame after IG costs.
+- **H1:** an edge exists at 1h but costs eat it. The slower frames don't fix it, because financing
+  replaces spread.
+- **H2:** a slower frame (4h or daily) is net-positive AND passes ≤ 0.10R.
+- **H3 (data):** synthetic DXY ≠ IG DXY closely enough to matter. This is checked first (§3) and the
+  test aborts if it fails.
+
+## 2. Data
+- **Six Dukascopy pairs, m5 BID, 2005-01 → 2026-09:** EURUSD, USDJPY, GBPUSD, USDCAD, USDSEK, USDCHF.
+  Four are new downloads (`npx dukascopy-node -t m5`).
+- **ICE formula, at every m5 close where all six pairs print:**
+  `DXY = 50.14348112 × EURUSD^-0.576 × USDJPY^0.136 × GBPUSD^-0.119 × USDCAD^0.091 × USDSEK^0.042 × USDCHF^0.036`.
+  Scaled ×100 to IG points.
+- **1h / 4h / daily OHLC** are aggregated from the m5 synthetic, so highs and lows are path-true to 5
+  min.
+- Daily bars use London dates, matching `src/daily_bars.py`.
+
+## 3. Fidelity gate (outcome-blind: prices only, run BEFORE any trade is computed)
+1. Daily returns vs Yahoo `DX-Y.NYB`, 2005–2026: correlation ≥ 0.98 and median |level gap| ≤ 0.5%.
+2. 1h returns vs the IG archive `candle_archive/CC.D.DX.USS.IP.jsonl` (07-24 → now): correlation
+   ≥ 0.95.
+
+If either fails, the test STOPS and records "synthetic not faithful". No proxy is substituted.
+
+## 4. Frames (three tests, Holm-corrected; parameters fixed, no search)
+| frame | engine | entry / exit | stop | gate |
+|---|---|---|---|---|
+| **1h** (live recipe) | `rbn.run_gated` | Donchian 55 break at bar close, Donchian 27 trail | max(2×ATR14, 20 pt) | DAY HTF agrees |
+| **4h** | `rbn.run_gated` on 4h bars | same N / M / k | max(2×ATR14, 20 pt) | DAY HTF agrees |
+| **Daily** | `src/daily_trend.replay` recipe, made symmetric | Donchian 55 entry, 20 exit | 2×ATR20 | none (as Gold daily-trend) |
+
+- Both directions on every frame.
+- Trading window 23→21 UTC (the DXY config).
+- One position at a time per frame.
+- **Daily harness check:** the long side must reproduce `daily_trend.replay`'s trade list exactly on
+  the same bars before the short side is trusted.
+
+## 5. Costs (fixed before outcomes)
+- **Spread:** base **5.0 pt** (recorded 4.8–5.4). LOW 3.0, HIGH **7.1** (the old derived figure).
+  - A single amendment is allowed BEFORE outcomes if an in-hours spread measurement, taken in the
+    container, differs by more than 1 pt.
+- **Financing per calendar night** on notional = entry price:
+  - Long pays US 3m (FRED `IR3TIB01USM156N`, cached) + 2.5%.
+  - Short pays 2.5% − US 3m (a credit when the rate is above 2.5%). This is the IG index-DFB model,
+    confirmed for indices at 7.20%/yr ([[project-index-dfb-financing-measured-2026-09]]).
+  - **HIGH-cost case:** both directions pay US 3m + 2.5%, which covers the unverified sign.
+- **Cost per trade** = (spread + financing) / stop, in R. Reported per frame as mean and median.
+
+## 6. Power (outcome-blind)
+- Count entries per frame first.
+- MDE = 2.49 × σ / √n with σ = 2.1 (prior). For example n=150 → 0.43R, n=600 → 0.21R.
+- **Any frame with n < 80 is reported but cannot PASS.**
+
+## 7. PASS per frame requires ALL of:
+1. Mean net R > 0, Holm-corrected one-sided p ≤ 0.05 across the three frames.
+2. Mean net R > 0 in both halves (2005–15, 2016–26).
+3. Total net R > 0 after removing the 10 best trades.
+4. **Mean all-in cost ≤ 0.10R** (the go-live gate, unchanged).
+5. Mean net R > 0 at HIGH cost.
+6. **Beats random timing:** mean net R is above the 95th percentile of 500 runs with random entry
+   bars. Each run keeps the same direction mix, entry count per year, stop rule, exit rule and costs.
+   This is the silver lesson: drift is not timing.
+
+FAIL on every frame ⇒ **DXY breakout is closed**. No other N, k, M or frame is tried on this history.
+
+## 8. Reported regardless (do not change the verdict)
+- **Tradeability at IG minimum size (£1/pt, to be verified in the container):**
+  - share of 1h/4h trades whose stop × £1 exceeds the £45 intraday cap;
+  - share of daily trades over the £250 daily-trend cap.
+- **Trades per year per frame.** G3 needs ≥ 30 IG-native trades. A daily frame at about 10 a year
+  would need about 3 years of shadow, or a Tier-2 admission on backtest evidence (as Gold daily-trend
+  had, which §7 allows only as written).
+- **Overlap with EUR/USD exposure** (DXY is 57.6% EUR): correlation of daily P&L with the EUR/USD
+  breakout replay.
+
+## 9. What each verdict leads to
+- **FAIL:** DXY stays in breakout-shadow, closed as a candidate. Memory and notes are updated.
+- **PASS on a frame:** it is still not live. That frame gets a shadow implementation (a live-path
+  change, so a full pre-flight), and then the go-live gates as written. Options:
+  - 4h needs a 4h frame in the breakout path.
+  - Daily needs shorts in `src/daily_trend.py` and a DXY daily-trend config.
+  - The dated-future route (no financing) is NOT pursued unless the only failing criterion is
+    financing cost. If so, it is noted as an option needing a rollover handler first.
+
+## 10. Deliverables
+- `scripts/build_synthetic_dxy.py`: download + build + the §3 fidelity gate. Writes
+  `data/news_events/dukascopy/dxy_synth_{m5,h1,h4,d1}.csv`.
+- `scripts/replay_dxy_frames.py`: run in this order:
+  1. `--count` (§6);
+  2. `--outcomes`;
+  3. random-timing null.
+- Property tests:
+  - the synthetic bar at t uses no component price after t;
+  - the daily symmetric engine's long side equals `daily_trend.replay`;
+  - the random-timing null never places an entry inside an open trade.
+- No IG API allowance needed, except one `get_market_info` for the min size and spread (in the
+  container).
