@@ -5315,3 +5315,32 @@ FAIL on every frame ⇒ **DXY breakout is closed**. No other N, k, M or frame is
   - the random-timing null never places an entry inside an open trade.
 - No IG API allowance needed, except one `get_market_info` for the min size and spread (in the
   container).
+
+## Amendments D1–D6 (2026-10-08, before any DXY price or trade was loaded)
+- **D1 — data source.** Dukascopy's free feed is throttled. This Mac got HTTP 429, then the VPS got
+  202s, and their instructions now point to a Requester-Pays S3 bucket. The user chose to run the
+  **daily frame now on real DXY daily bars** and fetch free HistData m1 for the 1h/4h frames later,
+  under their own amendment.
+  - Daily data: Yahoo `DX-Y.NYB` daily OHLC 2004-01 → 2026-09-22, scaled ×100 to IG points. It is
+    the real ICE index, so it is better than a synthetic one.
+  - Bar dates are the ICE/NY session, not London. Accepted, because the strategy acts on daily
+    closes.
+- **D2 — fidelity gate (daily, replaces §3.1).** Daily returns vs the IG archive
+  (`candle_archive/CC.D.DX.USS.IP.jsonl` 15m → daily closes at the ICE close hour, 07-24 → now) must
+  correlate ≥ 0.95, with median |level gap| ≤ 1.0%. The DFB embeds basis, hence 1.0% rather than 0.5%.
+  If it fails, the test stops.
+- **D3 — Holm with frames not yet run.** The family stays at 3 frames. While 1h and 4h are unrun,
+  the daily frame is judged at the strictest Holm step: **one-sided p ≤ 0.0167**. Its verdict does
+  not get easier later.
+- **D4 — symmetric daily engine.**
+  - Flat: long when close > 55-bar high; short when close < 55-bar low.
+  - In position: only the exit rule applies (long exits on close < 20-bar low, short on close > 20-bar
+    high); no reversal.
+  - Stop at fill ∓ 2×ATR20 (Wilder), checked every bar including the fill bar, with gaps filled at
+    the open. Signal on close, fill at the next open (as `daily_trend.replay`).
+  - **Harness:** with shorts disabled, the trade list must equal `daily_trend.replay`'s exactly.
+- **D5 — R.** R = (gross − spread − financing) / (2×ATR at entry), where nights = calendar days held.
+- **D6 — random-timing null.** 500 runs. In each run, every bar on which the strategy is flat in
+  year *y* enters with probability n_y / flat_bars_y. Direction is drawn with the observed BUY share,
+  and the same stop, exit and costs apply. This matches the entry count per year and the direction
+  mix in expectation. The PASS bar is the 95th percentile of the null mean R.
