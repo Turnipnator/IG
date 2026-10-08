@@ -5149,3 +5149,12 @@ this a streak? What should change?
 3. If any FX stays live, add a USD correlation cap (one long-USD breakout at a time).
 4. Keep DXY in shadow and leave both daily strategies alone.
 5. Next research: Gold BUY vs random matched longs (is it drift?), pre-registered.
+
+**Decision (user, 2026-10-08):** all four live breakout arms are BUY-only (`45522ec`). The basis
+differs by market:
+- **Gold:** on the evidence above.
+- **GBP/USD, EUR/USD, Crude:** a user test on DEMO. These were recommended for shadow because the
+  21-year replay shows no edge either way.
+
+Judge on live BUYs. Blocked SELLs are logged as `Breakout-shadow[direction-restricted]` and resolved
+in R, so the short leg stays measured.
