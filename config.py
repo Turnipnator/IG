@@ -1039,6 +1039,9 @@ MARKETS = [
                                 # returns silently on non-TRADEABLE). A DFB never rolls.
         name="Crude Oil",
         sector="Commodities",
+        allowed_direction="BUY",   # 2026-10-08: breakout long-only, USER TEST on DEMO (live via
+                                   # /mode since 09-29). 21y replay: no edge either way (BUY
+                                   # +0.055R, SELL +0.039R). Blocked SELLs stay measured in R.
         min_stop_distance=12.0,  # = IG minNormalStopOrLimitDistance on the DFB (verified 09-04)
         default_size=0.1,
         expiry="DFB",
@@ -1114,13 +1117,14 @@ MARKETS = [
                                 # (daily_trend_max_risk_gbp). User decision after the 22y study
                                 # (research_notes "Optimum strategy per instrument"): live on the
                                 # DEMO account from the first signal, coexisting with the 1h breakout.
-        # allowed_direction REMOVED 2026-09-25 (user decision): BOTH directions again.
-        # Long-only (09-15, `20271a9`) rested on 8 losing shorts clustered in two moves;
-        # the 09-22 study found no direction edge (live BUY vs SELL t=+0.48, verdict flips
-        # sign by era) and in its first 10 days the gate refused every live-able break —
-        # Gold/GBP/USD HTF went BEARISH, so the arm sat flat while shadow shorts paid
-        # (GBP #265 +3.3R, #287 ~+4.8R open). Shorts from 09-25 are judged LIVE at the
-        # next review; do not re-restrict on a streak. research_notes.md 2026-09-25.
+        allowed_direction="BUY",   # 2026-10-08: BREAKOUT LONG-ONLY (user decision, 10-08 audit).
+                                   # 21y Dukascopy replay, live gate, net of costs: BUY +0.326R
+                                   # (t 3.24, n=614) vs SELL +0.047R (t 0.43, n=415), SELL
+                                   # -0.31R over 2016-26: the whole edge is the long leg.
+                                   # Live since the 09-25 revert: 5 SELLs 1W -2.46R. Blocked
+                                   # SELLs are still snapshotted in R (Breakout-shadow
+                                   # [direction-restricted]). research_notes.md "Audit: live
+                                   # breakout book per EPIC" (2026-10-08).
         min_stop_distance=2.0,  # Raised from 1.0 — cap was 20pts (20x), ATR*2.5 = 25-35, every trade capped
         default_size=1.0,      # IG minimum is 1.0 per point (was 0.1 - all trades rejected!)
         min_confidence=0.55,   # Lowered 0.60→0.55 (2026-06-30): the 0.60 gate threw away
@@ -1316,6 +1320,9 @@ MARKETS = [
         epic="CS.D.EURUSD.TODAY.IP",
         name="EUR/USD",
         sector="Forex",
+        allowed_direction="BUY",   # 2026-10-08: breakout long-only, USER TEST on DEMO (live via
+                                   # /mode since 09-29). 21y replay: no edge either way (BUY
+                                   # +0.020R, SELL -0.058R). Blocked SELLs stay measured in R.
         min_stop_distance=3.0,  # Raised from 2.0 — 5m ATR is only 2-3pts, IG rejects stops at minimum
         default_size=0.5,
         candle_interval=60,        # 1h candles (was 5m)
@@ -1339,7 +1346,10 @@ MARKETS = [
         epic="CS.D.GBPUSD.TODAY.IP",
         name="GBP/USD",
         sector="Forex",
-        # allowed_direction REMOVED 2026-09-25 (user decision): both directions — see Gold.
+        allowed_direction="BUY",   # 2026-10-08: breakout long-only, USER TEST on DEMO rather than
+                                   # an evidence call: the 21y replay shows no edge either way
+                                   # (BUY +0.003R, SELL +0.115R, so SELL is the better side);
+                                   # live SELLs 0W/9L. Blocked SELLs stay measured in R.
         min_stop_distance=4.0,  # Raised from 3.0 — IG rejects at 3.0 when pre-London spread widens
         default_size=0.5,
         candle_interval=60,    # Switched from 5m — 5m bled live on spread vs tiny stops; 1h has the durable edge

@@ -14,10 +14,11 @@ inherits it. analyze_forex_breakout additionally routes a blocked LIVE signal in
 shadow branch, so the blocked side is still snapshotted and resolved in R and the
 pre-registered 2026-09-14 short-leg test still settles.
 
-2026-09-25: Gold and GBP/USD went back to BOTH directions (user decision), so no live
-breakout market is restricted today. The gate is still the mechanism any future
-restriction relies on, so these tests exercise it on a Gold config COPY with
-allowed_direction="BUY" (`_restricted`) rather than on the live config.
+2026-09-25: Gold and GBP/USD went back to BOTH directions (user decision).
+2026-10-08: all four live breakout arms (Gold, GBP/USD, EUR/USD, Crude) went BUY-only
+(user decision after the per-EPIC audit). The gate-mechanics tests still use a Gold
+config COPY (`_restricted`) so they stay valid whatever the live flags are;
+ConfigCoherence and the live-config tests pin today's settings.
 
 Live only: shadow/observer arms must keep recording shorts, and must keep their exact
 `Breakout-shadow:` reject_reason prefix — scripts/backfill_breakout_shadow.py:111
@@ -37,8 +38,10 @@ import pandas as pd
 
 import main
 
-GOLD = "CS.D.USCGC.TODAY.IP"      # live breakout, both directions since 2026-09-25
-CRUDE = "CC.D.CL.USS.IP"          # breakout-shadow, no direction restriction
+GOLD = "CS.D.USCGC.TODAY.IP"      # live breakout, BUY-only since 2026-10-08
+CRUDE = "CC.D.CL.USS.IP"          # live breakout via /mode, BUY-only since 2026-10-08
+DXY = "CC.D.DX.USS.IP"            # breakout-shadow, no direction restriction
+LIVE_BREAKOUT = (GOLD, "CS.D.GBPUSD.TODAY.IP", "CS.D.EURUSD.TODAY.IP", CRUDE)
 SPX = "IX.D.SPTRD.DAILY.IP"       # allowed_direction="BUY" but momentum-shadow only
 
 
@@ -103,10 +106,10 @@ class Helper(_Base):
         self.assertFalse(main._breakout_direction_blocked(self._restricted(), self._sig(GOLD, "BUY")))
 
     def test_unrestricted_market_never_blocks(self):
-        cfg = self._cfg(CRUDE)
+        cfg = self._cfg(DXY)
         self.assertEqual(cfg.allowed_direction, "")
         for d in ("BUY", "SELL"):
-            self.assertFalse(main._breakout_direction_blocked(cfg, self._sig(CRUDE, d, "Crude Oil")))
+            self.assertFalse(main._breakout_direction_blocked(cfg, self._sig(DXY, d, "Dollar Index (DXY)")))
 
     def test_missing_signal_is_not_blocked(self):
         self.assertFalse(main._breakout_direction_blocked(self._restricted(), None))
@@ -141,14 +144,20 @@ class HourClosePath(_Base):
         execute.assert_called_once()
         snap.assert_not_called()
 
-    def test_live_gold_short_executes_again(self):
-        """2026-09-25 revert: a live Gold SELL break reaches the order funnel."""
-        snap, execute = self._run(GOLD, "SELL", "breakout")
-        execute.assert_called_once()
-        snap.assert_not_called()
+    def test_live_configs_refuse_shorts_and_keep_measuring_them(self):
+        """2026-10-08: on the LIVE configs (not a copy) a SELL break on any of the four
+        live breakout arms never reaches the order funnel, and is snapshotted instead."""
+        for epic in LIVE_BREAKOUT:
+            name = self._cfg(epic).name
+            snap, execute = self._run(epic, "SELL", "breakout", name=name)
+            execute.assert_not_called()
+            snap.assert_called_once()
+            snap, execute = self._run(epic, "BUY", "breakout", name=name)
+            execute.assert_called_once()
+            snap.assert_not_called()
 
     def test_unrestricted_market_short_still_executes(self):
-        _, execute = self._run(CRUDE, "SELL", "breakout", name="Crude Oil")
+        _, execute = self._run(DXY, "SELL", "breakout", name="Dollar Index (DXY)")
         execute.assert_called_once()
 
     def test_shadow_mode_short_keeps_the_original_reject_prefix(self):
@@ -188,12 +197,15 @@ class OrderFunnelBackstop(_Base):
 
 
 class ConfigCoherence(_Base):
-    def test_live_breakout_arms_trade_both_directions(self):
-        """2026-09-25 revert of the 09-15 long-only stance: the flag must be CLEARED."""
-        for epic in (GOLD, "CS.D.GBPUSD.TODAY.IP"):
+    def test_live_breakout_arms_are_buy_only(self):
+        """2026-10-08 user decision: every live breakout arm is long-only. EUR/USD and
+        Crude are live via /mode (market_modes.json), so default_mode is not asserted."""
+        for epic in LIVE_BREAKOUT:
             cfg = self._cfg(epic)
-            self.assertEqual(cfg.default_mode, "breakout", f"{cfg.name} is not live breakout")
-            self.assertEqual(cfg.allowed_direction, "", f"{cfg.name} is still restricted")
+            self.assertEqual(cfg.allowed_direction, "BUY", f"{cfg.name} is not BUY-only")
+
+    def test_dxy_shadow_stays_unrestricted(self):
+        self.assertEqual(self._cfg(DXY).allowed_direction, "")
 
     def test_momentum_long_only_markets_keep_their_restriction(self):
         """The revert is Gold/GBP-USD only; the momentum long-only markets are untouched."""
