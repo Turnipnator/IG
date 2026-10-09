@@ -1,8 +1,8 @@
 # Core
-python-dotenv>=1.0.0
+python-dotenv>=1.2.4
 requests>=2.31.0
-pandas>=2.1.0
-numpy>=1.24.0
+pandas>=3.0.6
+numpy>=2.5.3
 
 # Streaming (Lightstreamer)
 lightstreamer-client-lib>=1.0.0
@@ -14,10 +14,10 @@ python-telegram-bot>=20.7
 schedule>=1.2.0
 
 # Async support
-aiohttp>=3.9.0
+aiohttp>=3.14.4
 
 # Type hints
 typing-extensions>=4.8.0
 
 # Backtesting (optional - for local testing)
-yfinance>=0.2.0
+yfinance>=1.7.0
