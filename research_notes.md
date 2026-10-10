@@ -5377,3 +5377,142 @@ But financing replaced it, so H1 is supported.
 No edge result can rescue a cost-gate failure, so the HistData fetch is not worth doing. **H0/H1
 supported, HIGH. DXY breakout is closed as a live candidate.** It stays in breakout-shadow as an
 observer only. Per §7, no other N, k, M or frame is tried.
+
+---
+
+# Does ATR "rolling over" tell us when to tighten the breakout trail? (PRE-REGISTRATION, 2026-10-10)
+
+Written BEFORE any outcome of the new arms was computed. User question 2026-10-10: on breakout EPICs
+with the Donchian trail, "can we look at ATR when it changes or evens out? When a breakout runs well
+we give back profit almost every time."
+
+## 0. Already known (disclosed)
+- The give-back is structural: the only exit is the 27h Donchian low, which is below the peak by
+  construction. Not in dispute.
+- 2026-08-13: Gold, Yahoo 730d — lock / partial / tighten triggered by PROFIT alone all lost
+  (best −4.0R, worst −30R); 84% of the profit was three trades. 2026-06: forex lock=0.5 lost.
+- NOT tested before: any rule conditioned on the VOLATILITY state, any chandelier (ATR-distance)
+  trail, any exit rule on the 21y Dukascopy set, any exit rule under the BUY-only live config.
+- My prior: FAIL is more likely than PASS (tail-clipping family). Stated so it cannot steer the design.
+
+## 1. Sub-questions
+a. How much is given back, measured (MFE vs exit R)? Descriptive.
+b. Does an ATR roll-over during a profitable trade predict that holding on is worth ≤ 0?
+c. Does acting on it beat the naked trail net of costs AND re-entries?
+d. Does ATR add anything over tightening on profit alone (the already-refuted rule)?
+
+## 2. Hypotheses
+- **H1 (exhaustion):** ATR expands in the run and contracts when it is over; tightening then keeps
+  profit without cutting the trades that keep running.
+- **H2 (consolidation):** ATR also contracts in the pauses INSIDE the big trends; tightening there
+  exits the tail trades early → loses.
+- **H0:** ATR state carries no information about the remaining path; any gain/loss equals that of
+  tightening at the same profit level without looking at ATR.
+
+## 3. Data & engine (fixed)
+Dukascopy 1h BID 2004-06→2026-09 (WTI from 2012), `scripts/replay_breakout_news.py` engine and costs
+unchanged (N55, 2×ATR14 stop, M27 trail, DAY HTF gate, trading hours, measured spread + financing,
+one position at a time, every re-entry pays full cost). Entries from 2005-01-01.
+**Primary population: BUY-only on all four markets (the live config since `45522ec`).** Both
+directions reported as robustness only. Fidelity gate before anything else: the baseline arm with
+both directions must reproduce `replay_trades.pkl` trade-for-trade.
+
+## 4. Definitions (fixed; all evaluated on CLOSED bars, in force from the next bar)
+- "Runs well": MFE since entry ≥ **1R** (primary; 1R = the initial stop = 2×ATR). Secondary: 2R.
+- **A — roll-over (PRIMARY signal):** ATR14 ≤ 0.80 × the highest ATR14 seen since entry.
+- **B — flattening:** ATR14 lower than it was 5 bars earlier.
+- Trigger = first closed bar where "runs well" AND the signal are both true; latched for the trade.
+- **Tighten** = trail channel M 27 → 8 bars from the trigger on (the m8 of the 08-13 test).
+- **Chandelier (C):** once "runs well", stop = max(Donchian-27 level, highest high since entry −
+  3×ATR14), ratchet-only. Needs no trigger: it tightens by itself as ATR contracts.
+- **Exit:** leave at the next bar's open after the trigger.
+
+## 5. Arms
+0 baseline · P1/P2 profit-only tighten at 1R/2R (CONTROL — no ATR) · **A1 roll-over+tighten at 1R
+(PRIMARY)** · A2 same at 2R · B1/B2 flattening+tighten · C1/C2 chandelier · X1 roll-over+exit at 1R.
+Nine non-baseline arms; only A1 decides the verdict. No other threshold, multiplier or M is run.
+
+## 6. Statistic
+Net R per calendar quarter of entry, per arm. Δ = Σ(arm) − Σ(baseline), pooled over four markets.
+CI: bootstrap of the quarterly differences (10,000 resamples, seed 0), 95%.
+
+## 7. PASS (A1) requires ALL of:
+1. Δ vs baseline > 0 and the 95% CI excludes 0.
+2. Δ vs the profit-only control P1 > 0 and its CI excludes 0 (ATR must add information).
+3. Δ vs baseline > 0 in both halves (2005–15, 2016–26).
+4. Δ vs baseline > 0 on Gold alone (the only arm with a measured edge).
+5. Δ vs baseline still > 0 after deleting the 3 quarters with the largest Δ.
+FAIL on any ⇒ no ATR exit rule; no variant is run to rescue it.
+PASS ⇒ log-only shadow tag on live trades first; an order-path change needs its own pre-flight.
+
+## 8. Outcome-blind gate
+Before outcomes: count trades reaching 1R/2R and triggers fired per arm (counts only). A1 must fire
+on ≥ 100 BUY trades pooled, else declared underpowered.
+
+## 9. Reported regardless
+Sub-question (a) give-back table; (b) continuation value from the A1 trigger bar on BASELINE trades
+(baseline exit − trigger close, in R), split by triggered-vs-not at matched MFE; per-market and
+both-direction tables; win rate and largest winner per arm.
+
+## RESULTS (run 2026-10-10) → **FAIL, 0 of 5. No ATR-conditioned exit.** Confidence HIGH.
+
+`scripts/replay_breakout_atr_exit.py` (`--count` first, then `--outcomes`; output in
+`data/news_events/atr_exit_outcomes.json`). Fidelity gate: baseline reproduced all 4,026 trades of
+`replay_trades.pkl` exactly. Outcome-blind count: 2,120 BUY-only trades, 1,094 reach 1R, A1 fires on
+1,012 of them (gate ≥100: pass). Note what that count already says: the roll-over fires on 93% of
+runners, so it chooses WHEN to tighten, hardly WHETHER.
+
+### (a) The give-back is real (baseline, BUY-only, the 1,105 trades that reached +1R)
+Median peak +2.49R, median exit +0.59R gross: the median runner keeps 24% of its best level, and
+35% of them close at or below zero. Gold keeps most (32%), Crude least (16%). HIGH.
+
+### (b) Continuation value from the trigger bar (baseline trades held to the normal trail)
+| measured from | n | mean R | SE | median R | share > 0 |
+|---|---|---|---|---|---|
+| first bar at +1R (no ATR) | 1,094 | +0.219 | 0.078 | −0.429 | 40% |
+| A1 roll-over bar | 1,012 | +0.141 | 0.072 | −0.434 | 37% |
+| B1 flattening bar | 1,018 | +0.154 | 0.076 | −0.444 | 36% |
+
+From the moment ATR rolls over, holding on LOSES 63% of the time (median −0.43R) and is still worth
++0.14R on average. That is the whole story: the typical case is a give-back, the mean is the tail.
+
+### (c)/(d) Acting on it — BUY-only, net R over 21 years (baseline +235.6R, n 2,120, WR 33%, max +24.0R)
+| arm | n | net R | Δ vs baseline | 95% CI | WR | Gold Δ |
+|---|---|---|---|---|---|---|
+| P1 profit-only tighten (control) | 2,899 | +121.8 | −113.7 | −246…+15 | 42% | −79.9 |
+| **A1 roll-over + tighten (PRIMARY)** | 2,856 | +136.5 | **−99.1** | −217…+18 | 41% | −66.7 |
+| A2 (2R) | 2,547 | +150.5 | −85.1 | −189…+18 | 34% | −55.2 |
+| B1 / B2 flattening | 2,867 / 2,559 | +122.1 / +127.2 | −113.5 / −108.4 | B2 excl. 0 | 42 / 35% | −76.2 / −66.7 |
+| C1 / C2 chandelier 3×ATR | 2,726 / 2,487 | +165.9 / +196.9 | −69.7 / −38.7 | incl. 0 | 42 / 36% | −60.2 / −38.2 |
+| X1 roll-over + exit | 3,393 | +67.1 | −168.5 | −288…−53 | 43% | −91.3 |
+
+Criteria for A1: (1) Δ>0, CI excl. 0 ✗ (−99.1) · (2) beats control ✗ (+14.7R, CI −17…+49: ATR adds
+nothing measurable over tightening blind) · (3) both halves ✗ (−91.6 / −7.5) · (4) Gold ✗ (−66.7) ·
+(5) ex-top-3 quarters ✗ (−134.2). Every one of the nine arms is negative; both-directions run agrees
+(A1 −161.6R, CI −303…−20).
+
+### Self-critique
+- CIs for most arms include 0, so "tightening loses" is not individually significant per arm; what is
+  HIGH-confidence is that nothing is positive (9/9 negative, both populations, Gold negative in all).
+- EUR/USD is positive in every BUY-only arm (+4…+22R). Post-hoc cell, flips negative with both
+  directions, and EUR/USD has no baseline edge. Not actionable.
+- Chandelier C2 is the least bad (−38.7R, max win cut 24.0 → 13.9R). Still negative on Gold.
+- Costs are not the reason: arms trade 17–60% more often, but mean R per trade halves too.
+- Not tested: a rule that only REPORTS (e.g. a Telegram note) — no P&L effect by construction.
+
+### Conclusion
+- Most supported: **H2 (consolidation)** with H0 on the ATR information — ATR contracts in the pauses
+  inside the big trends as well as at the end of runs, so it cannot tell them apart.
+- Ruled out: H1 (exhaustion) in every form tried: tighten, chandelier, outright exit; 1R and 2R.
+- Open: nothing on this history. Per §7 no other threshold/multiplier/M is run.
+- Next action: none in the bot. Naked Donchian-27 trail stays.
+
+### Follow-up 2026-10-10: SELL-only population (descriptive, NOT pre-registered; user asked)
+Same arms, engine taking SELL breaks only. Baseline +54.7R over 1,829 trades (+0.03R/trade; GBP/USD
++56.2, Gold +19.4, Crude +13.3, EUR/USD −34.2). All nine arms negative: A1 −62.6R (CI −144…+17, both
+halves negative: −26.6 / −36.0), P1 −64.7, B1 −55.2, C1 −74.7, X1 −54.4; the 2R versions −13…−29R.
+Give-back is worse than on longs: 934 runners, median peak +2.38R, median exit +0.38R (keep 18%),
+39% close ≤ 0. Continuation from the A1 bar: mean +0.057R (SE 0.080), median −0.57R, 32% positive —
+i.e. on shorts, holding past the roll-over is worth ≈0, yet tightening still loses because the
+freed slot re-enters a ≈0-edge trade and pays cost again. Post-hoc cells not to chase: Crude 2R arms
++10…+17R, Gold X1 +18.3R. MEDIUM (not pre-registered; CIs include 0).
