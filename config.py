@@ -1049,7 +1049,9 @@ MARKETS = [
         htf_resolution="DAY",  # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
         strategy="crude",      # momentum profile kept for /mode momentum (NOT advised)
-        default_mode="breakout-shadow",  # observe-only until the user flips it live
+        default_mode="breakout",  # 2026-10-10: LIVE by config (was a /mode override since
+                                  # 09-29) so nothing depends on market_modes.json. USER TEST,
+                                  # long-only; my recommendation was breakout-shadow (10-08 audit).
         trading_start=23,      # Nearly 24h market — avoid IG reset window (21-23 UTC)
         trading_end=21,
     ),
@@ -1336,7 +1338,10 @@ MARKETS = [
         # "edge" was a single +£61 tail (#192) since fully given back — 3 straight
         # losers −£64.83 (#198/#215/#225), 0% WR. The look-ahead-free re-run of
         # 2026-08-13 leaves its most recent quarter at 0.57. GBP/USD trades live.
-        default_mode="breakout-shadow",
+        # 2026-10-10: LIVE by config (was a /mode override since 09-29) so nothing
+        # depends on market_modes.json. USER TEST, long-only; my recommendation was
+        # breakout-shadow (10-08 audit: 21y BUY +0.020R).
+        default_mode="breakout",
     ),
     MarketConfig(
         # 1h candles: 365d backtest +1.52%, PF 1.94, 56% WR vs 5m +0.50% PF 2.01.

@@ -198,10 +198,11 @@ class OrderFunnelBackstop(_Base):
 
 class ConfigCoherence(_Base):
     def test_live_breakout_arms_are_buy_only(self):
-        """2026-10-08 user decision: every live breakout arm is long-only. EUR/USD and
-        Crude are live via /mode (market_modes.json), so default_mode is not asserted."""
+        """2026-10-08 user decision: every live breakout arm is long-only. Since
+        2026-10-10 all four are live by config, not by a /mode override."""
         for epic in LIVE_BREAKOUT:
             cfg = self._cfg(epic)
+            self.assertEqual(cfg.default_mode, "breakout", f"{cfg.name} is not live by config")
             self.assertEqual(cfg.allowed_direction, "BUY", f"{cfg.name} is not BUY-only")
 
     def test_dxy_shadow_stays_unrestricted(self):
