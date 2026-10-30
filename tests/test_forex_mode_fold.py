@@ -6,8 +6,8 @@ Until then forex pairs were governed by ONE global mode with its own vocabulary
 and, on 2026-09-09, let a stray `/forex momentum` put both pairs on the retired
 momentum pipeline for an hour. This file pins:
 
-  * the config defaults that replace the veto (both pairs breakout since 2026-10-10;
-    EUR/USD was breakout-shadow before), and that both pairs have a breakout config
+  * the config defaults that replace the veto (both pairs breakout-shadow since
+    2026-10-30; live breakout 10-10 → 10-30), and that both pairs have a breakout config
     so those modes can fire;
   * the one-shot boot migration of data/forex_mode.json into per-pair overrides —
     written ONLY where the translation differs from the config default, so the
@@ -43,9 +43,9 @@ class TestConfigDefaultsReplaceTheVeto(unittest.TestCase):
     def test_forex_pairs_present(self):
         self.assertEqual({m.epic for m in FOREX}, {EUR, GBP})
 
-    def test_both_pairs_trade_breakout_by_config(self):
-        self.assertEqual(BY_EPIC[EUR].default_mode, "breakout")
-        self.assertEqual(BY_EPIC[GBP].default_mode, "breakout")
+    def test_both_pairs_observe_breakout_by_config(self):
+        self.assertEqual(BY_EPIC[EUR].default_mode, "breakout-shadow")
+        self.assertEqual(BY_EPIC[GBP].default_mode, "breakout-shadow")
 
     def test_both_pairs_have_a_breakout_config(self):
         for epic in (EUR, GBP):
@@ -99,13 +99,13 @@ class _BotHarness(unittest.TestCase):
 
 class TestLegacyForexMigration(_BotHarness):
     # legacy global mode -> overrides that must be written, given the defaults
-    # EUR/USD=breakout and GBP/USD=breakout. An entry is absent wherever the
+    # EUR/USD=breakout-shadow and GBP/USD=breakout-shadow. An entry is absent wherever the
     # translation already equals the config default.
     TABLE = [
         ("off", {EUR: "off", GBP: "off"}),
         ("momentum", {EUR: "momentum", GBP: "momentum"}),
-        ("shadow", {EUR: "breakout-shadow", GBP: "breakout-shadow"}),  # legacy shadow = breakout observed
-        ("breakout", {}),                               # = each pair's config default
+        ("shadow", {}),                                 # legacy shadow = breakout observed = config default
+        ("breakout", {}),                               # legacy breakout = each pair's config default
         ("bogus", {EUR: "off", GBP: "off"}),            # corrupt -> off, as the old loader did
     ]
 
@@ -125,13 +125,13 @@ class TestLegacyForexMigration(_BotHarness):
                     self.assertFalse(self.modes_file.exists(), "nothing to write -> no file")
                     self.assertIn("nothing written", bot.mode_migration_notice)
 
-    def test_live_breakout_deploy_is_a_noop_for_the_book(self):
-        """A legacy /forex breakout resolves to each pair's config default
-        (both live breakout since 2026-10-10) with no override written."""
-        self.write_legacy("breakout")
+    def test_legacy_shadow_deploy_is_a_noop_for_the_book(self):
+        """A legacy /forex shadow resolves to each pair's config default
+        (both breakout-shadow since 2026-10-30) with no override written."""
+        self.write_legacy("shadow")
         bot = self.make_bot()
-        self.assertEqual(bot._effective_mode(BY_EPIC[GBP]), "breakout")
-        self.assertEqual(bot._effective_mode(BY_EPIC[EUR]), "breakout")
+        self.assertEqual(bot._effective_mode(BY_EPIC[GBP]), "breakout-shadow")
+        self.assertEqual(bot._effective_mode(BY_EPIC[EUR]), "breakout-shadow")
         self.assertEqual(bot.market_modes, {})
 
     def test_existing_per_pair_override_is_left_alone(self):
@@ -193,8 +193,8 @@ class TestBoardAndToggles(_BotHarness):
         self.assertNotIn("/forex", board)
         for m in MARKETS:
             self.assertIn(f" {m.name}: `", board, m.name)
-        self.assertIn("EUR/USD: `breakout`", board)
-        self.assertIn("GBP/USD: `breakout`", board)
+        self.assertIn("EUR/USD: `breakout-shadow`", board)
+        self.assertIn("GBP/USD: `breakout-shadow`", board)
 
     def test_forex_pair_toggles_like_any_other_market(self):
         msg = self.run_mode("gbp/usd", "breakout-shadow")
@@ -218,7 +218,7 @@ class TestBoardAndToggles(_BotHarness):
         self.run_mode("eur/usd", "off")
         msg = self.run_mode("eur/usd", "default")
         self.assertNotIn(EUR, self.bot.market_modes)
-        self.assertIn("config default `breakout` resumes", msg.replies[0])
+        self.assertIn("config default `breakout-shadow` resumes", msg.replies[0])
 
     def test_forex_command_is_a_pointer_that_changes_nothing(self):
         update, msg = edited_update()

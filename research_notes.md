@@ -5516,3 +5516,26 @@ Give-back is worse than on longs: 934 runners, median peak +2.38R, median exit +
 i.e. on shorts, holding past the roll-over is worth ≈0, yet tightening still loses because the
 freed slot re-enters a ≈0-edge trade and pays cost again. Post-hoc cells not to chase: Crude 2R arms
 +10…+17R, Gold X1 +18.3R. MEDIUM (not pre-registered; CIs include 0).
+
+---
+
+# 2026-10-30 — "Strategy completely wrong?" Where the live losses come from
+
+**Question.** The user reports "big loser after big loser". Is the strategy broken, or is it something more specific?
+
+**Hypotheses.** H1: the whole approach has no edge. H2: losses come from specific arms already shown to have ≈0 edge. H3: an execution or sizing bug.
+
+**Evidence (VPS journal, read-only, 2026-10-30).**
+- Lifetime: 373 closed trades, −£636.33. Most of it comes from retired eras (the March "default" set, momentum, indices). Bucket by era before reading it.
+- Since 09-09: breakout SELL 19 trades −10.4R / −£296; breakout BUY 6 trades +0.84R; pullback 3 trades +0.27R; indices 3 trades −0.88R.
+- October was −£244.51 with 3 wins in 17. Most of it was SELLs between 10-01 and 10-08, before BUY-only (`45522ec`).
+- Since BUY-only (10-08), 7 closed trades for −£99.8: Crude BUY ×4 −£39.9, GBP BUY −£22.1, NASDAQ pullback −£43.0, S&P pullback +£5.1. One GBP BUY is open.
+- Live breakout by arm, all time: Gold BUY +3.48R (n 7) is the only clearly positive arm. Gold SELL −5.75R and GBP SELL −6.71R are both now off.
+- Gold has not fired since 08-19. HTF is BEARISH and BUY-only correctly stands aside. Daily-trend state is HOLD.
+- Losses are ~1R each (£17–£44), as designed. No oversized losers, so H3 is not supported.
+- Shadow since 09-09: no arm is both positive and promotable. DXY BUY +7.17R n=6 is closed on cost; GBP SELL +5.75R n=3 is noise.
+- Against GO_LIVE_CRITERIA.md: GBP/USD fails G1 (cost 0.146R). GBP, EUR and Crude all fail G3 (n<30). The live set is over the 3-market cap.
+
+**Confidence.** H2 is HIGH: the loss is concentrated in arms with ≈0 or negative measured edge. H1 is MEDIUM-HIGH for everything except Gold BUY and the S&P/NASDAQ pullback. H3 is LOW.
+
+**Next.** Proposed demoting GBP, EUR and Crude breakout to shadow (a tightening, so §7 is not triggered). Awaiting the user's decision. LEARNING_ENHANCEMENT.md was reviewed; see the chat reply for its conflicts.

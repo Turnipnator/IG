@@ -39,9 +39,13 @@ import pandas as pd
 import main
 
 GOLD = "CS.D.USCGC.TODAY.IP"      # live breakout, BUY-only since 2026-10-08
-CRUDE = "CC.D.CL.USS.IP"          # live breakout via /mode, BUY-only since 2026-10-08
+CRUDE = "CC.D.CL.USS.IP"          # BUY-only since 2026-10-08; breakout-shadow since 2026-10-30
 DXY = "CC.D.DX.USS.IP"            # breakout-shadow, no direction restriction
-LIVE_BREAKOUT = (GOLD, "CS.D.GBPUSD.TODAY.IP", "CS.D.EURUSD.TODAY.IP", CRUDE)
+# Every breakout arm that is BUY-only, live or not: a /mode flip back to live must
+# still refuse shorts. Only Gold is live by config since 2026-10-30.
+BUY_ONLY_BREAKOUT = (GOLD, "CS.D.GBPUSD.TODAY.IP", "CS.D.EURUSD.TODAY.IP", CRUDE)
+LIVE_BREAKOUT = (GOLD,)
+DEMOTED_BREAKOUT = ("CS.D.GBPUSD.TODAY.IP", "CS.D.EURUSD.TODAY.IP", CRUDE)
 SPX = "IX.D.SPTRD.DAILY.IP"       # allowed_direction="BUY" but momentum-shadow only
 
 
@@ -146,8 +150,8 @@ class HourClosePath(_Base):
 
     def test_live_configs_refuse_shorts_and_keep_measuring_them(self):
         """2026-10-08: on the LIVE configs (not a copy) a SELL break on any of the four
-        live breakout arms never reaches the order funnel, and is snapshotted instead."""
-        for epic in LIVE_BREAKOUT:
+        BUY-only breakout arms never reaches the order funnel, and is snapshotted instead."""
+        for epic in BUY_ONLY_BREAKOUT:
             name = self._cfg(epic).name
             snap, execute = self._run(epic, "SELL", "breakout", name=name)
             execute.assert_not_called()
@@ -198,11 +202,19 @@ class OrderFunnelBackstop(_Base):
 
 class ConfigCoherence(_Base):
     def test_live_breakout_arms_are_buy_only(self):
-        """2026-10-08 user decision: every live breakout arm is long-only. Since
-        2026-10-10 all four are live by config, not by a /mode override."""
+        """2026-10-08 user decision: every live breakout arm is long-only. Live by
+        config, not by a /mode override; since 2026-10-30 that is Gold alone."""
         for epic in LIVE_BREAKOUT:
             cfg = self._cfg(epic)
             self.assertEqual(cfg.default_mode, "breakout", f"{cfg.name} is not live by config")
+            self.assertEqual(cfg.allowed_direction, "BUY", f"{cfg.name} is not BUY-only")
+
+    def test_demoted_arms_are_shadow_and_stay_buy_only(self):
+        """2026-10-30 user decision: GBP/USD, EUR/USD and Crude back to breakout-shadow
+        (≈0 edge on 21y, fail GO_LIVE_CRITERIA G3; GBP also fails G1)."""
+        for epic in DEMOTED_BREAKOUT:
+            cfg = self._cfg(epic)
+            self.assertEqual(cfg.default_mode, "breakout-shadow", f"{cfg.name} is live again")
             self.assertEqual(cfg.allowed_direction, "BUY", f"{cfg.name} is not BUY-only")
 
     def test_dxy_shadow_stays_unrestricted(self):

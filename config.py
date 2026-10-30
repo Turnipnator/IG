@@ -1049,9 +1049,10 @@ MARKETS = [
         htf_resolution="DAY",  # Daily HTF since 1h is the entry timeframe
         min_confidence=0.55,
         strategy="crude",      # momentum profile kept for /mode momentum (NOT advised)
-        default_mode="breakout",  # 2026-10-10: LIVE by config (was a /mode override since
-                                  # 09-29) so nothing depends on market_modes.json. USER TEST,
-                                  # long-only; my recommendation was breakout-shadow (10-08 audit).
+        default_mode="breakout-shadow",  # 2026-10-30: DEMOTED (user decision). Live 10-10→10-30
+                                  # as a USER TEST; BUY-only live 6t +0.84R but 4 straight
+                                  # losers since 10-23, 21y BUY +0.055R ≈0, fails G3 (n<30).
+                                  # Re-promote only by passing GO_LIVE_CRITERIA §2.
         trading_start=23,      # Nearly 24h market — avoid IG reset window (21-23 UTC)
         trading_end=21,
     ),
@@ -1338,10 +1339,10 @@ MARKETS = [
         # "edge" was a single +£61 tail (#192) since fully given back — 3 straight
         # losers −£64.83 (#198/#215/#225), 0% WR. The look-ahead-free re-run of
         # 2026-08-13 leaves its most recent quarter at 0.57. GBP/USD trades live.
-        # 2026-10-10: LIVE by config (was a /mode override since 09-29) so nothing
-        # depends on market_modes.json. USER TEST, long-only; my recommendation was
-        # breakout-shadow (10-08 audit: 21y BUY +0.020R).
-        default_mode="breakout",
+        # 2026-10-10: LIVE by config as a USER TEST, long-only. 2026-10-30: DEMOTED to
+        # breakout-shadow (user decision): 21y BUY +0.020R ≈0, fails G3 (n<30).
+        # Re-promote only by passing GO_LIVE_CRITERIA §2.
+        default_mode="breakout-shadow",
     ),
     MarketConfig(
         # 1h candles: 365d backtest +1.52%, PF 1.94, 56% WR vs 5m +0.50% PF 2.01.
@@ -1363,7 +1364,10 @@ MARKETS = [
         strategy="forex",      # Tight 1.0x stops
         trading_start=7,       # London open — avoid illiquid pre-London spread widening
         trading_end=21,
-        default_mode="breakout",  # LIVE breakout. RE-PROMOTED 2026-08-13. Demoted 07-24 on
+        default_mode="breakout-shadow",  # 2026-10-30: DEMOTED (user decision). Fails G1
+                                  # (cost 0.146R > 0.10R) and G3 (n<30); 21y BUY +0.003R ≈0;
+                                  # live breakout all-time −8.58R/15t. History below.
+                                  # Was: LIVE breakout. RE-PROMOTED 2026-08-13. Demoted 07-24 on
                                   # walk-forward quarters 1.49 → 1.70 → 1.01 → 0.89, an
                                   # explicitly conditional demotion ("re-promote if the
                                   # quarterly record recovers", full-period PF 1.44).

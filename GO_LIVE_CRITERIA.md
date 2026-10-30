@@ -124,6 +124,15 @@ actual state of knowledge, and no analysis available closes it.
 
 ---
 
+### Status update 2026-10-30 (recorded per §7.1; no gate changed)
+- **GBP/USD, EUR/USD and Crude breakout demoted to breakout-shadow** (user decision). All three
+  were live as a USER TEST, not on gate evidence. All three fail G3 (n<30), GBP/USD also fails
+  G1 (0.146R), and the 21y replay shows ≈0 edge on the BUY side (+0.003 / +0.020 / +0.055R).
+  Since BUY-only (10-08): Crude 4 losers in 5, GBP 0/1. This tightens the live set, so the
+  window does not reset.
+- **Live now:** Gold breakout (BUY-only), Gold daily-trend, S&P 500 and NASDAQ 100 pullback.
+  Since 09-09 the breakout SELL arms, now off, accounted for −10.4R / −£296 of the loss.
+
 ## 5. Sizing and the risk budget
 
 - **Cumulative loss limit: £500.** Hard stop. On reaching it the live experiment ENDS and
