@@ -38,12 +38,13 @@ import pandas as pd
 
 import main
 
-GOLD = "CS.D.USCGC.TODAY.IP"      # live breakout, BUY-only since 2026-10-08
+GOLD = "CS.D.USCGC.TODAY.IP"      # live breakout; BUY-only 10-08 → 11-18, both directions since
 CRUDE = "CC.D.CL.USS.IP"          # BUY-only since 2026-10-08; breakout-shadow since 2026-10-30
 DXY = "CC.D.DX.USS.IP"            # breakout-shadow, no direction restriction
-# Every breakout arm that is BUY-only, live or not: a /mode flip back to live must
-# still refuse shorts. Only Gold is live by config since 2026-10-30.
-BUY_ONLY_BREAKOUT = (GOLD, "CS.D.GBPUSD.TODAY.IP", "CS.D.EURUSD.TODAY.IP", CRUDE)
+# Every breakout arm that is BUY-only: a /mode flip back to live must still refuse
+# shorts. Gold (the only arm live by config since 2026-10-30) left this set on
+# 2026-11-18 when the user re-opened its shorts.
+BUY_ONLY_BREAKOUT = ("CS.D.GBPUSD.TODAY.IP", "CS.D.EURUSD.TODAY.IP", CRUDE)
 LIVE_BREAKOUT = (GOLD,)
 DEMOTED_BREAKOUT = ("CS.D.GBPUSD.TODAY.IP", "CS.D.EURUSD.TODAY.IP", CRUDE)
 SPX = "IX.D.SPTRD.DAILY.IP"       # allowed_direction="BUY" but momentum-shadow only
@@ -149,7 +150,7 @@ class HourClosePath(_Base):
         snap.assert_not_called()
 
     def test_live_configs_refuse_shorts_and_keep_measuring_them(self):
-        """2026-10-08: on the LIVE configs (not a copy) a SELL break on any of the four
+        """2026-10-08: on the LIVE configs (not a copy) a SELL break on any of the three
         BUY-only breakout arms never reaches the order funnel, and is snapshotted instead."""
         for epic in BUY_ONLY_BREAKOUT:
             name = self._cfg(epic).name
@@ -163,6 +164,13 @@ class HourClosePath(_Base):
     def test_unrestricted_market_short_still_executes(self):
         _, execute = self._run(DXY, "SELL", "breakout", name="Dollar Index (DXY)")
         execute.assert_called_once()
+
+    def test_gold_live_config_short_reaches_the_order_funnel(self):
+        """2026-11-18: on the LIVE Gold config a SELL break is executed, not shadowed."""
+        for d in ("SELL", "BUY"):
+            snap, execute = self._run(GOLD, d, "breakout", name="Gold")
+            execute.assert_called_once()
+            snap.assert_not_called()
 
     def test_shadow_mode_short_keeps_the_original_reject_prefix(self):
         """scripts/backfill_breakout_shadow.py filters `Breakout-shadow:%` with a LIKE.
@@ -201,13 +209,15 @@ class OrderFunnelBackstop(_Base):
 
 
 class ConfigCoherence(_Base):
-    def test_live_breakout_arms_are_buy_only(self):
-        """2026-10-08 user decision: every live breakout arm is long-only. Live by
-        config, not by a /mode override; since 2026-10-30 that is Gold alone."""
+    def test_gold_is_live_and_trades_both_directions(self):
+        """2026-11-18 user decision: Gold breakout shorts re-opened (DEMO test). Gold is
+        the only arm live by config, and it carries no direction restriction."""
         for epic in LIVE_BREAKOUT:
             cfg = self._cfg(epic)
             self.assertEqual(cfg.default_mode, "breakout", f"{cfg.name} is not live by config")
-            self.assertEqual(cfg.allowed_direction, "BUY", f"{cfg.name} is not BUY-only")
+            self.assertEqual(cfg.allowed_direction, "", f"{cfg.name} is direction-restricted")
+            for d in ("BUY", "SELL"):
+                self.assertFalse(main._breakout_direction_blocked(cfg, self._sig(epic, d)))
 
     def test_demoted_arms_are_shadow_and_stay_buy_only(self):
         """2026-10-30 user decision: GBP/USD, EUR/USD and Crude back to breakout-shadow

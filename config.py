@@ -1120,14 +1120,14 @@ MARKETS = [
                                 # (daily_trend_max_risk_gbp). User decision after the 22y study
                                 # (research_notes "Optimum strategy per instrument"): live on the
                                 # DEMO account from the first signal, coexisting with the 1h breakout.
-        allowed_direction="BUY",   # 2026-10-08: BREAKOUT LONG-ONLY (user decision, 10-08 audit).
-                                   # 21y Dukascopy replay, live gate, net of costs: BUY +0.326R
-                                   # (t 3.24, n=614) vs SELL +0.047R (t 0.43, n=415), SELL
-                                   # -0.31R over 2016-26: the whole edge is the long leg.
-                                   # Live since the 09-25 revert: 5 SELLs 1W -2.46R. Blocked
-                                   # SELLs are still snapshotted in R (Breakout-shadow
-                                   # [direction-restricted]). research_notes.md "Audit: live
-                                   # breakout book per EPIC" (2026-10-08).
+        # allowed_direction REMOVED 2026-11-18 (user decision, DEMO test): the 1h breakout
+        # trades BOTH directions again; a SELL still needs HTF=BEARISH. Evidence FOR:
+        # direction-restricted shadow SELLs since 10-08 = +8.08R over 5 (-0.47, -1.0,
+        # +3.79, +1.19, +4.57). Evidence AGAINST (why it was BUY-only from 10-08): 21y
+        # Dukascopy replay, live gate, net of costs: BUY +0.326R (t 3.24, n=614) vs SELL
+        # +0.047R (t 0.43, n=415), SELL -0.31R over 2016-26; live 09-25→10-08: 5 SELLs
+        # 1W -2.46R. n=5 does not overturn that — judge the short leg at the 12-09
+        # review. research_notes.md 2026-11-18. Daily-trend stays long-only by design.
         min_stop_distance=2.0,  # Raised from 1.0 — cap was 20pts (20x), ATR*2.5 = 25-35, every trade capped
         default_size=1.0,      # IG minimum is 1.0 per point (was 0.1 - all trades rejected!)
         min_confidence=0.55,   # Lowered 0.60→0.55 (2026-06-30): the 0.60 gate threw away
