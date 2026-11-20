@@ -5539,3 +5539,141 @@ freed slot re-enters a ≈0-edge trade and pays cost again. Post-hoc cells not t
 **Confidence.** H2 is HIGH: the loss is concentrated in arms with ≈0 or negative measured edge. H1 is MEDIUM-HIGH for everything except Gold BUY and the S&P/NASDAQ pullback. H3 is LOW.
 
 **Next.** Proposed demoting GBP, EUR and Crude breakout to shadow (a tightening, so §7 is not triggered). Awaiting the user's decision. LEARNING_ENHANCEMENT.md was reviewed; see the chat reply for its conflicts.
+
+---
+
+# 2026-11-13 — Break-even stop on the S&P pullback arm
+
+**Question.** The user holds S&P pullback #376 at about +1.4R with a fixed stop 3×ATR below entry and asks whether moving the stop to break-even after X profit has merit. Sub-questions: (Q1) how often does a trade that reached +X R end at a loss; (Q2) does a break-even stop raise net R; (Q3) does it lower risk (drawdown, worst year) even if it does not raise R.
+
+**Hypotheses.** H1: BE helps, because give-backs from +X R are common and large. H2: BE hurts, because this is a mean-reversion entry whose winners routinely revisit the entry before working, so BE converts winners to scratches. H3: no measurable difference in mean R, but a smaller drawdown (a risk trade-off, not an edge).
+
+**Pre-registration (written before the run).** Data `data/backtest_cache/GSPC_1d_full.csv`, 1985→2026-09, costs as `scripts/spy_pullback_walkforward.py` (0.6pt spread, (bench+2.5%)/365 per night), R = 2×ATR20 at entry. Baseline = live 5/5/10/200, 3×ATR stop. Arms: trigger X ∈ {0.5, 1.0, 1.5, 2.0}R, two trigger modes — C: session close ≥ entry + X·R (what the 21:05 job could do); H: session high ≥ entry + X·R (an intraday manager). In both the stop moves to entry from the NEXT bar; fill min(open, entry). Full engine re-run per arm (a scratched trade frees the slot). 8 arms. PASS = total net R above baseline in BOTH halves (1985–2003, 2004–26) AND a bootstrap 95% CI on the mean per-year R difference that excludes 0. No variants after the fact. Risk metrics (max DD, worst year, trade SD) are reported for H3 but do not make a PASS.
+
+**Evidence (`scripts/pullback_breakeven_test.py`, engine parity with `src.pullback.replay` exact, 363 trades).**
+- Q1 give-back, baseline: of 157 trades that reached +0.5R at a close, 15.3% ended ≤0 (mean final +0.72R). Of 31 that reached +1.0R, 6.5% (2 trades) ended ≤0 (mean final +1.23R). Only 3 of 363 ever closed at +1.5R; none at +2.0R.
+- Q2 net R, baseline 73.8R total, +0.203R/trade, PF as before. Close-triggered: 0.5R 73.9R (H1 +5.3 / H2 −5.2), 1.0R 71.0R, 1.5R 72.9R, 2.0R identical (never arms). High-triggered: 0.5R 63.2R (H2 −15.8), 1.0R 69.9R, 1.5R 72.9R, 2.0R identical. **8/8 FAIL**; no arm beats baseline in both halves, every yearly-difference CI includes 0.
+- Q3 risk: max DD −9.2R baseline vs −8.0R (C 0.5R, H 1.0R) and −8.6R (H 0.5R); worst year unchanged at −6.6R except H 0.5R −5.9R. Hit rate falls 69% → 63% / 54% on the 0.5R arms.
+
+**Confidence.** H1 REFUTED — HIGH that BE adds no R on this rule at daily resolution. H2 supported for low triggers (MEDIUM: H 0.5R costs 10.6R but its CI includes 0). H3: at most a ~1R smaller drawdown on two arms, MEDIUM-LOW, not consistent across arms.
+
+**Self-critique / gaps.** Daily bars: the stop moves from the bar AFTER the trigger, so a same-day intraday reversal through entry is not modelled (that would add scratches, not remove them). S&P only; NASDAQ not run. Yahoo cash bars, not IG session bars.
+
+**Conclusion.** No break-even stop on the pullback arm. The losses in this rule come from trades that never get far into profit, which BE cannot touch; trades that do reach +1R almost always finish positive anyway. Not to be re-run with other trigger levels.
+
+## 2026-11-18 — "Why doesn't the bot short and win in the sell-off?" (discussion, no change)
+
+**Question:** S&P pullback #376 gave back ~+1R of open profit; would shorts have made money in the 10-28 → 11-17 decline?
+**Hypotheses:** (a) shorts are switched off and would have won; (b) the bot's short signals fired in shadow and lost; (c) mixed by asset class.
+**Evidence (journal `benched_outcomes`, resolved only):**
+- Since 10-08, index SELL: breakout-shadow −4.27R (n=30, 10 wins), momentum shadow −5.18R (n=33). Since 11-02: −5.07R (n=10) and −0.86R (n=17).
+- Gold SELL breakout-shadow since 10-08: +8.08R over 5 (−0.47, −1.0, +3.79, +1.19, +4.57), one open from 3821.7. FX SELL +0.85R (n=11), almost all one EUR trade (+6.46R).
+- Index BUY breakout-shadow −14.47R (n=17) — the gates kept the bot out of these.
+- Move size: S&P 7783 (10-28 high) → 7366 (11-17 close) = −5.4%; NASDAQ −9.5%; Gold 4147 → 3849 = −7%.
+- #376: entry 7337.86 (11-05), £0.54/pt, stop 277.7. Best close 7621 (11-12) ≈ +£153; 11-17 close 7366 ≈ +£15. Exit (close > prior 5-session high) never triggered because the 11-05 entry bar's 7710 high sat in the window.
+**Confidence:** (c) HIGH for "index shorts lost in this decline"; LOW that Gold shorts are an edge (n=5, 21y audit −0.31R 2016-26, t n/a at this n).
+**Next:** carry Gold SELL shadow tally into the 12-09 review; no change before then (user decision 10-25 / 11-02).
+**Decision 2026-11-18 (user, same day):** "Turn on Gold shorts for the breakout" — `allowed_direction` removed from Gold; live 1h breakout trades both directions (SELL needs HTF=BEARISH), exit unchanged (2xATR stop + 27-bar Donchian trail, no TP). DEMO test against the 21y evidence; judge the short leg at the 12-09 review on shorts taken from today.
+
+## 2026-11-20 — Faster Donchian trail for Gold breakout SHORTS (PRE-REGISTERED before any outcome was seen)
+
+**Question (user, 11-20):** #378 short is +4R with the M27 trail still at break-even. Gold falls faster than it rises — does a faster trail suit the short leg? All earlier exit tests (08-xx profit-protect, 10-10 ATR arms) were BUY-only.
+**Sub-questions:** (1) does M13 beat M27 on Gold SELLs over 21y; (2) is the short leg worth trading under ANY trail; (3) is any gain one parameter / one era / a few quarters.
+**Hypotheses:** H1 a faster trail keeps more of fast declines; H0 it clips the tail like every other tightening tested; H2 the short leg has no edge whatever the trail.
+**Design:** `scripts/replay_gold_short_trail.py`. Engine = `replay_breakout_atr_exit.run` logic with M as a parameter (M=27 must reproduce that script's baseline SELL trades exactly). Gold only, SELL only, live config (N55, 2xATR stop, DAY HTF=BEARISH, trading hours), Dukascopy 1h 2005-01-01 → 2026-08-31, net of spread + financing. Arms: **M27 (base), M20, M13 (PRIMARY), M8**. No other M, no stop variants, no profit-conditioned tightening.
+**Statistic:** quarterly net-R difference vs base, 10k bootstrap over quarters (same as 10-10).
+**Power gate (outcome-blind `--count`):** base Gold SELL n ≥ 100.
+**Criteria — PASS needs 5/5:**
+1. Δ(M13 − M27) > 0 and 95% CI excludes 0
+2. M13 own mean R > 0 with t ≥ 2.0 (the short leg is worth trading at all)
+3. Δ > 0 in both halves (2005-15, 2016-26)
+4. Δ > 0 after dropping the 3 best quarters
+5. M8 and M20 both Δ > 0 (not a single-parameter spike)
+**Decision rule:** PASS → propose M13-for-shorts at the 12-09 review (no deploy before). FAIL → keep M27; no further M variants on this history. Criterion 2 is reported for all four arms regardless.
+**Exploratory (labelled as such, no decision attached):** why the 8 closed live Gold SELL losers (09-09 → 11-18) lost — per trade from the IG 5m archive: entry vs break level, time to stop, MFE before the stop, and where price stood 24h/72h/5d later in R. Competing explanations: (a) late/chased entry, (b) right direction, stop inside the noise, (c) false break that reversed.
+
+### RESULT 2026-11-20 — FAIL 0/5 (`scripts/replay_gold_short_trail.py --outcomes`, `data/news_events/gold_short_trail_outcomes.json`)
+Fidelity: M27 reproduces the 10-10 engine's 415 Gold SELL trades exactly. Data 2005-01-01 → 2026-08-31.
+
+| Arm | n | net R | mean R | t | win % | 2005-15 | 2016-26 | Δ vs M27 (95% CI) | runner kept share |
+|---|---|---|---|---|---|---|---|---|---|
+| M27 (live) | 415 | +19.44 | +0.047 | 0.43 | 29.9 | +88.83 | −69.38 | — | 0.18 |
+| M20 | 481 | +22.69 | +0.047 | 0.50 | 32.4 | +85.34 | −62.65 | +3.25 (−33…+40) | 0.26 |
+| **M13 (primary)** | 557 | +12.18 | +0.022 | 0.29 | 33.4 | +75.45 | −62.13 | **−7.26 (−55…+39)** | 0.32 |
+| M8 | 632 | +19.24 | +0.030 | 0.47 | 34.2 | +60.39 | −40.02 | −0.20 (−53…+53) | 0.40 |
+
+Criteria: 1 ✗ (Δ −7.26, CI spans 0) · 2 ✗ (t 0.29) · 3 ✗ (halves −14.51 / +7.25) · 4 ✗ (−24.66 without top-3 quarters) · 5 ✗ (M8 −0.20).
+**Reading (HIGH):** a faster trail keeps more of each runner (kept share 0.18 → 0.40) and wins more often, but total R does not move — more, smaller trades. H0/H2 supported: no trail makes the short leg significant (t 0.29–0.50 in all four arms), and every arm is negative over 2016-26. BUY M27 under the same engine: +200.19R, t 3.24, positive in both halves. **Decision per the rule: keep M27; no further M variants.**
+
+### Exploratory — why the 8 live Gold SELL losers lost (IG 5m archive; n=8, descriptive only, LOW-MEDIUM)
+All eight closed at the initial 2xATR stop (33–44 pts ≈ 0.8–1.0% of price). Entry rule identical to the winners (#354 +£55.93, #378 open ≈ +4R, shadow +8.08R/5).
+- **4 of 8 never worked at all:** #345, #360, #361, #377 had MFE ≤ 0.07R and were stopped in 0.8–4.5h — immediate snap-back from the break.
+- **Direction was right, the path was not:** in 7 of 8, price traded ≥1R BELOW the entry within 5 days of the stop-out (median ~2R). Only #365 (10-07) was simply wrong.
+- **Entries came after an extended fall:** price had already dropped 0.95–3.8R (1–4 stop-widths) in the 24h before entry — a 55-bar-low break is by construction a sale into a stretched move, and the rebound exceeded 2xATR.
+- Entry vs break level: −0.46R…+0.41R, no pattern (not a "chased entry" story).
+- **Base rate (21y, same engine):** 52% of SELLs end at the initial stop; 48% of those stopped SELLs then see price go 1R beyond entry within 120 bars (BUY: 59%). So "stopped, then right" is the normal texture of this strategy on both sides, not a short-side defect; 7/8 live is above base rate on a tiny n.
+- Explanation (b) "right direction, stop inside the noise" fits 7/8; (a) late entry: no; (c) plain false break: 1/8.
+**Not tested (and not to be inferred from n=8):** a wider stop for shorts. All-signals tally since 09-09 (live + direction-restricted shadow + open #378): ≈ +5R over 15, all of it from 3 trades.
+**Open question for 12-09:** keep or re-close the short leg — judged on shorts taken from 11-18, per the 11-18 decision.
+
+## 2026-11-20 — Wider initial stop for Gold breakout SHORTS (PRE-REGISTERED before any outcome was seen)
+
+**Question (user, 11-20):** 7 of 8 live Gold SELL losers were stopped by a rebound and then proved right. Does a wider initial stop fix the short leg?
+**Hypotheses:** H1 a wider stop survives the post-break rebound and converts stopped-then-right trades into winners; H0 the extra room costs as much as it saves once risk is normalised (each loss is bigger / size is smaller); H2 the short leg has no edge at any stop width.
+**Design:** `scripts/replay_gold_short_trail.py --stop-count / --stop-outcomes`. Same engine, Gold SELL only, N55, M27 trail (unchanged — the 11-20 trail test closed that), DAY HTF=BEARISH, 2005-01-01 → 2026-08-31, net of spread + financing. Arms, stop = k×ATR14: **k=2.0 (base, live), 2.5, 3.0 (PRIMARY), 4.0**. No other k, no trail changes, no entry changes.
+**Primary metric:** R in each arm's OWN stop units (constant £ risk per trade — the honest comparison; a wider stop means a smaller position). Quarterly net-R difference vs base, 10k bootstrap over quarters.
+**Secondary, reported regardless:** fixed-size result (net points ÷ the base 2×ATR stop) — what a £1/pt minimum-size position would actually bank; and the share of entries whose stop would exceed the £45 risk cap at IG's £1/pt minimum (those are SKIPPED live, so a wider stop cannot be deployed without raising the cap).
+**Criteria — PASS needs 5/5:**
+1. Δ(k3.0 − k2.0) > 0 and 95% CI excludes 0
+2. k3.0 own mean R > 0 with t ≥ 2.0
+3. Δ > 0 in both halves (2005-15, 2016-26)
+4. Δ > 0 after dropping the 3 best quarters
+5. k2.5 and k4.0 both Δ > 0
+**Decision rule:** PASS → propose at the 12-09 review together with the cap question. FAIL → keep 2×ATR; no further stop variants for Gold shorts on this history.
+
+### RESULT 2026-11-20 — FAIL 0/5 (`scripts/replay_gold_short_trail.py --stop-outcomes`, `data/news_events/gold_short_stop_outcomes.json`)
+| Stop | n | net R (own-stop units) | t | win % | ended at initial stop | 2005-15 | 2016-26 | Δ vs 2×ATR (95% CI) | fixed £1/pt net (base-R) | over £45 cap since 2025 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2.0×ATR (live) | 415 | +19.44 | 0.43 | 29.9 | 52.0% | +88.83 | −69.38 | — | +19.44 | 21.7% |
+| 2.5×ATR | 393 | +10.01 | 0.27 | 32.1 | 42.5% | +68.92 | −58.91 | −9.44 (−33…+14) | +12.51 | 47.8% |
+| **3.0×ATR (primary)** | 378 | +8.03 | 0.26 | 33.6 | 32.0% | +57.53 | −49.50 | **−11.41 (−47…+22)** | +12.05 | 72.7% |
+| 4.0×ATR | 369 | +2.74 | 0.11 | 34.7 | 16.5% | +40.68 | −37.95 | −16.71 (−67…+28) | +5.48 | 77.3% |
+
+Criteria: 1 ✗ · 2 ✗ (t 0.26) · 3 ✗ (halves −31.30 / +19.89) · 4 ✗ (−22.70) · 5 ✗ (both neighbours negative).
+**Reading (HIGH):** a wider stop does what it says — far fewer trades end at the initial stop (52% → 16.5%) and the "stopped, then right" share falls (48% → 28%) — but net R falls monotonically with stop width, in risk-normalised AND fixed-size terms. The saved trades do not pay for the bigger losses on the ones that still fail. Every arm is negative over 2016-26. Also undeployable as-is: at IG's £1/pt minimum, 73% of 3×ATR entries since 2025 would exceed the £45 cap and be skipped. H0/H2 supported. **Decision per the rule: keep 2×ATR; no further stop variants for Gold shorts.**
+**Combined with the trail test (same day):** neither exit lever (trail length 8–27, stop 2–4×ATR) gives the Gold short leg a t above 0.50. The short leg's problem is the entry population, not trade management.
+
+## 2026-11-20 — Sell the REBOUND after a bearish break, Gold shorts (PRE-REGISTERED before any outcome was seen)
+
+**Question (user, 11-20):** in 7 of 8 live Gold SELL losers price bounced more than a stop-width and then fell through the entry. Is the short edge in the rebound entry rather than the break entry? Trail (M8–27) and stop (2–4×ATR) are closed (both 0/5 today).
+**Hypotheses:** H1 entering on the bounce gives a better price and sidesteps the snap-back, producing a real short edge; H0 the bounce entry misses the runaway declines that carry the tail and catches the breaks that are failing; H2 no short edge whatever the entry (prior: Gold 5m momentum pullback entry was negative both ways, 2026-07).
+**ONE rule, fixed here (`scripts/replay_gold_short_rebound.py`):**
+- Signal bar i = the live break condition exactly (low[i] ≤ prior 55-bar low, DAY HTF = BEARISH, inside trading hours, ATR14 valid).
+- At its close, rest a SELL LIMIT at L = close[i] + x·ATR14[i], valid for the next W = 24 bars. A later qualifying break bar while flat REPLACES the order (new L, new window).
+- Fill at max(open, L) on the first bar whose high ≥ L. Stop = fill + 2×ATR14[i] (checked from the fill bar; a fill bar whose high reaches the stop is a full −1R). From the next bar the live M27 Donchian trail applies. One position at a time. Net of spread + financing. R = net points ÷ (2×ATR14[i]).
+- Gold only, SELL only, Dukascopy 1h, 2005-01-01 → 2026-08-31.
+**Arms:** x = 0.5, **1.0 (PRIMARY)**, 1.5. Comparator: the live break entry (415 trades, +19.44R, t 0.43). No other x, W, stop, trail or filter.
+**Power gate (outcome-blind `--count`):** primary n ≥ 100.
+**Criteria — PASS needs 5/5:**
+1. Primary mean R > 0 with t ≥ 2.0
+2. Δ net R vs the break entry > 0, 95% CI (quarterly bootstrap) excludes 0
+3. Primary net R > 0 in BOTH halves (2005-15, 2016-26) — the short leg's standing failure is 2016-26
+4. Primary net R > 0 without its 3 best quarters
+5. x0.5 and x1.5 both have net R > 0 and Δ > 0
+**Reported regardless (exploratory):** fill rate per signal episode, and the break-entry R of the baseline trades whose rebound order never filled (the cost of missing the runaways).
+**Decision rule:** PASS → propose at the 12-09 review (needs a resting-order entry path, i.e. full pre-flight). FAIL → the Gold short leg has no edge we can find on this history; no further entry variants; 12-09 decides keep-as-tail-bet vs re-close.
+
+### RESULT 2026-11-20 — FAIL 0/5 (`scripts/replay_gold_short_rebound.py --outcomes`, `data/news_events/gold_short_rebound_outcomes.json`)
+| Entry | n | net R | mean R | t | win % | 2005-15 | 2016-26 | Δ vs break entry (95% CI) | fill rate |
+|---|---|---|---|---|---|---|---|---|---|
+| Break (live) | 415 | +19.44 | +0.047 | 0.43 | 29.9 | +88.83 | −69.38 | — | — |
+| Rebound 0.5×ATR | 396 | +6.06 | +0.015 | 0.15 | 29.5 | +77.68 | −71.62 | −13.39 (−43…+16) | 53.8% |
+| **Rebound 1.0×ATR (primary)** | 386 | **−20.80** | −0.054 | −0.53 | 26.4 | +45.55 | −66.34 | **−40.24 (−86…+7)** | 33.6% |
+| Rebound 1.5×ATR | 363 | −36.66 | −0.101 | −1.01 | 23.1 | +8.94 | −44.30 | −56.10 (−122…+5) | 25.1% |
+
+Criteria: 1 ✗ (t −0.53) · 2 ✗ · 3 ✗ · 4 ✗ (−63.74 without top-3 quarters) · 5 ✗.
+**Reading (HIGH for the verdict):** monotone — the deeper the bounce you wait for, the worse the short. H0 confirmed and it is adverse selection: the bounce fills pick out the breaks that are failing, and the declines that pay never offer the bounce. Exploratory split of the 415 break-entry trades by whether the primary rebound order from that signal bar filled (MEDIUM — matching is by signal date and orders re-arm): filled 126 trades = −70.0R at the break entry; never filled 289 trades = +89.4R (+0.31R/trade). The live losers' "bounced, then fell" pattern is real in hindsight but is not a tradeable entry.
+**Decision per the rule:** no rebound entry; no further entry variants for Gold shorts on this history.
+
+### Gold short leg — state of the evidence after three pre-registered tests on 2026-11-20
+Trail M8–27: 0/5. Stop 2–4×ATR: 0/5. Rebound entry 0.5–1.5×ATR: 0/5. No arm in any test reaches t 0.5; every arm is negative over 2016-26. Untested and deliberately left so: other channel lengths, other timeframes, extra indicators — these are a parameter search, not hypotheses. **12-09 review question:** keep the Gold short leg as a tail bet on the DEMO account, or re-close it (the 10-08 position).
