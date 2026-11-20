@@ -5677,3 +5677,40 @@ Criteria: 1 ✗ (t −0.53) · 2 ✗ · 3 ✗ · 4 ✗ (−63.74 without top-3 q
 
 ### Gold short leg — state of the evidence after three pre-registered tests on 2026-11-20
 Trail M8–27: 0/5. Stop 2–4×ATR: 0/5. Rebound entry 0.5–1.5×ATR: 0/5. No arm in any test reaches t 0.5; every arm is negative over 2016-26. Untested and deliberately left so: other channel lengths, other timeframes, extra indicators — these are a parameter search, not hypotheses. **12-09 review question:** keep the Gold short leg as a tail bet on the DEMO account, or re-close it (the 10-08 position).
+
+## 2026-11-20 — Long-term REGIME filter for Gold breakout SHORTS (PRE-REGISTERED before any filtered outcome was seen)
+
+**Question (user, 11-20):** "I would expect slightly different long v short with regards to parameters/indicators which decide on whether to trade". Should Gold shorts trade only when Gold is in a long-term downtrend?
+**What I have already seen (contamination, stated up front):** the unfiltered SELL leg by calendar year — positive 2005-06, 2008, 2010-15 (2013 +30.5R), negative every year 2016-2025, +10.3R in 2026 to August — and Gold's year-end closes. I have NOT seen any SMA-conditioned split. The hypothesis is post-hoc on the yearly table, so criteria 4 and 6 are there to stop "it just re-finds 2013" passing.
+**Hypotheses:** H1 the short edge exists only in a long-term bear regime and a slow trend filter isolates it; H0 the filter just keeps 2013-15 and removes trades at random elsewhere (2018/2021/2022 spent long stretches below the long average and shorts still lost); H2 the filter lags, so it is late into the bear and still short through the recovery — worse than unfiltered.
+**ONE rule, fixed here (`scripts/replay_gold_short_regime.py`):**
+- Daily bars = 1h Dukascopy bars resampled by calendar date; dates with fewer than 12 hourly bars (Sunday stubs, holidays) dropped. SMA_L = mean of the last L daily closes.
+- Regime flag for every 1h bar on date D = (close < SMA_L) on the last daily bar dated strictly before D. Undefined SMA (warm-up) = not in regime.
+- A SELL break is taken only if the live rule fires (low ≤ prior 55-bar low, DAY HTF BEARISH, in hours) AND the regime flag is true. Everything else is the live engine: close entry, 2×ATR stop, M27 trail, one position at a time, net of spread + financing.
+- Gold only, SELL only, 2005-01-01 → 2026-08-31.
+**Arms:** L = 100, **200 (PRIMARY)**, 300. Comparator: unfiltered live rule (415 trades, +19.44R, t 0.43). No slope condition, no other L, no other indicator.
+**Power gate (outcome-blind `--count`):** primary n ≥ 100 AND ≥ 30 primary trades dated 2016-01-01 or later.
+**Criteria — PASS needs 6/6:**
+1. Primary mean R > 0 with t ≥ 2.0
+2. Δ net R vs unfiltered > 0, 95% CI (quarterly bootstrap) excludes 0
+3. Primary net R > 0 in BOTH halves (2005-15, 2016-26)
+4. Primary net R > 0 with its best calendar year removed AND with its 3 best quarters removed
+5. L100 and L300 both have net R > 0 and Δ > 0
+6. Rotation null: the regime flag series is rotated circularly by a random offset of at least one year (2,000 draws, seed 0) and applied to the 415 unfiltered trades by entry bar; the true flag's kept-minus-dropped mean R must beat 95% of rotations (one-sided p < 0.05). Same statistic for true and rotated flags.
+**Reported regardless:** share of bars in regime, n and net R by year, dropped-trade net R.
+**Decision rule:** PASS → propose at the 12-09 review as the condition for keeping the short leg (config/order-path change, full pre-flight). FAIL → the Gold short leg is closed as a research question; 12-09 decides tail-bet vs re-close on the live trades alone. No second filter either way.
+
+### RESULT 2026-11-20 — FAIL 0/6 (`scripts/replay_gold_short_regime.py --outcomes`, `data/news_events/gold_short_regime_outcomes.json`)
+Outcome-blind count first: L100 n=294, L200 n=221 (109 dated 2016+), L300 n=188; power gate PASS.
+| Filter | n | net R | mean R | t | win % | 2005-15 | 2016-26 | Δ vs unfiltered (95% CI) |
+|---|---|---|---|---|---|---|---|---|
+| None (live) | 415 | +19.44 | +0.047 | 0.43 | 29.9 | +88.83 | −69.38 | — |
+| close < SMA100 | 294 | +0.19 | +0.001 | 0.01 | 28.6 | +53.88 | −53.69 | −19.25 (−76…+31) |
+| **close < SMA200 (primary)** | 221 | **+6.84** | +0.031 | 0.20 | 25.8 | +47.84 | −40.99 | **−12.60 (−73…+42)** |
+| close < SMA300 | 188 | +10.27 | +0.055 | 0.31 | 27.7 | +47.70 | −37.42 | −9.17 (−70…+46) |
+
+Criteria: 1 ✗ (t 0.20) · 2 ✗ · 3 ✗ · 4 ✗ (−21.69 without 2013; −36.55 without top-3 quarters) · 5 ✗ · 6 ✗ (rotation p 0.43; kept-minus-dropped +0.068R vs null 95th pct +0.457R).
+Primary by year: 2008 +11.35 (n10), 2013 +28.54 (n26), 2014 +2.85, 2015 +8.79; then 2016 −7.72 (n15), 2018 −11.54 (n25), 2021 −6.90 (n24), 2022 −12.14 (n23) — the filter is IN regime for exactly the post-2016 years that lose.
+**Reading (HIGH for the verdict):** H0. Below-the-long-average does not separate 2013 from 2018/2021/2022: the filter keeps both. It also throws away +41R of 2005-15 shorts taken above the average (2005-06, 2010-11). The kept trades are no better than a randomly shifted regime flag would keep (p 0.43). The whole short record is one bear market (2013, plus 2008) and no slow trend indicator identifies that kind of year in advance on this history.
+**Self-critique:** one family of filter (price vs SMA) tested; a slope or a macro variable (real yields, DXY) is untested — but with a single paying episode in 21 years there is nothing to validate any such filter against, so a "pass" would be uninterpretable. That is the gap, and it is a data limit, not a missing parameter.
+**Decision per the rule:** Gold short leg is CLOSED as a research question (four pre-registered tests, 0 criteria met in total). 12-09 decides tail-bet vs re-close on the live trades alone. No second filter.
