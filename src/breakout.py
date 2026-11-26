@@ -33,8 +33,11 @@ class BreakoutConfig:
     n: int                      # entry channel lookback
     stop_atr_mult: float = 2.0  # k×ATR initial stop (Turtle "N")
     htf_filter: bool = True     # only break WITH the higher-timeframe trend
-    # NB: breakout runs NO take-profit — the Donchian-M trail is the only exit, so
-    # fat-tail winners (the whole point) can run. limit_distance is emitted as 0.
+    # NB: breakout runs NO take-profit by default — the Donchian-M trail is the only
+    # exit, so fat-tail winners (the whole point) can run; limit_distance is emitted
+    # as 0. The one exception is sell_limit_points: a fixed take-profit, in points,
+    # attached to SHORT entries only (0 = none). Longs never carry a target.
+    sell_limit_points: float = 0.0
 
     @property
     def m(self) -> int:
@@ -89,7 +92,16 @@ BREAKOUT_CONFIGS: dict[str, BreakoutConfig] = {
     #             2026-10). AI Index is an unsuitable instrument for a Donchian
     #             channel (530 1h bars, EDITS_ONLY much of the day), not a
     #             measured edge. See research_notes.md 2026-08-31(c).
-    "CS.D.USCGC.TODAY.IP":    BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Gold
+    # Gold shorts take profit at 50 points (2026-11-27, USER DECISION, DEMO trial).
+    # The 21y replay does NOT support a target (research_notes 2026-11-26/27: Gold
+    # SELL has no edge under any exit since 2016); the trial rests on May→Nov 2026,
+    # where a ~1R target beat the trail on Gold shorts by 5–9R on 15–30 trades, and
+    # on shadow #554 (+98 pts → −43 pts). Longs keep the naked trail — they are the
+    # arm with the measured edge and every target below 5R cut it. Judge with
+    # scripts/score_breakout_exits.py at the reviews; trades after this commit are
+    # a new era for Gold shorts in the journal.
+    "CS.D.USCGC.TODAY.IP":    BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True,
+                                             sell_limit_points=50.0),               # Gold
     "IX.D.SPTRD.DAILY.IP":    BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # S&P 500
     "IX.D.NASDAQ.CASH.IP":    BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # NASDAQ 100
     "IX.D.DOW.DAILY.IP":      BreakoutConfig(n=55, stop_atr_mult=2.0, htf_filter=True),  # Wall Street
@@ -105,6 +117,16 @@ BREAKOUT_CONFIGS: dict[str, BreakoutConfig] = {
 
 def has_breakout_config(epic: str) -> bool:
     return epic in BREAKOUT_CONFIGS
+
+
+def limit_distance_for(epic: str, direction: str) -> float:
+    """Take-profit distance (points) a breakout entry carries: the config's
+    sell_limit_points for a SELL, 0.0 (no target) for a BUY or an unknown epic.
+    Single source for BOTH entry routes (hour-close and tick-cross)."""
+    cfg = BREAKOUT_CONFIGS.get(epic)
+    if cfg is None or direction != "SELL":
+        return 0.0
+    return float(cfg.sell_limit_points or 0.0)
 
 
 def _hold(market: MarketConfig, current_price: float, reason: str) -> TradeSignal:
@@ -143,7 +165,6 @@ def analyze_breakout(df, market: MarketConfig, current_price: float, htf_trend: 
     high, low = float(last["high"]), float(last["low"])
 
     stop_distance = max(atr * cfg.stop_atr_mult, market.min_stop_distance)
-    limit_distance = 0.0  # no take-profit — the Donchian-M trail is the only exit
 
     if high >= upper:
         if cfg.htf_filter and htf_trend != "BULLISH":
@@ -158,6 +179,10 @@ def analyze_breakout(df, market: MarketConfig, current_price: float, htf_trend: 
     else:
         return _hold(market, current_price,
                      f"No break ({cfg.n}-bar channel {lower:.1f}–{upper:.1f}, last {low:.1f}–{high:.1f})")
+
+    # 0.0 = no take-profit (the Donchian-M trail is the only exit) unless the config
+    # sets a target for this direction.
+    limit_distance = limit_distance_for(market.epic, direction.value)
 
     return TradeSignal(
         signal=direction, epic=market.epic, market_name=market.name,

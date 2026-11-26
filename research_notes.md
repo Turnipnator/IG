@@ -5816,3 +5816,13 @@ Two sources. (a) IG's own candles and the bot's entries: the archive starts 2026
 | Others SELL | −0.4 (n 32) | +3.8 (n 60) | −3.2 (n 45) | −0.7 | +3.1 | −0.3 |
 
 Gold 50 pts: BUY +2.4R, SELL +2.1R. Reading: with costs and re-entries charged, the shadow-table advantage of targets mostly disappears. The one consistent cell across both sources is Gold SELL with a tight target (≈1R / 50 pts): +5…+9R better than the trail since May, on 15–30 trades. Four months, single-digit R: LOW confidence, and it is the cell the forward rule is already set up to judge.
+
+---
+
+# 2026-11-27 — Gold breakout shorts: 50-point take-profit LIVE on demo (user decision)
+
+Change: `BreakoutConfig.sell_limit_points=50.0` on Gold only; both entry routes read it through `breakout.limit_distance_for`. Longs, other markets, sizing, stop and trail unchanged. Tests: `tests/test_breakout_sell_target.py` (11), incl. that the trail amendment re-sends the limit.
+
+Basis, stated honestly: the 21y replay does not support it (Gold SELL has no edge under any exit since 2016). The trial rests on 2026-05→11 (≈1R target +5…+9R vs trail on 15–30 Gold shorts) and on shadow #554 (peak +98 pts, closed −43 pts). Trades after this commit are a new era for Gold shorts in the journal. Judged by the forward-scoring rule above.
+
+**TODO next session (user, 2026-11-27):** look at the equivalent for the other breakout markets. Start from `scripts/score_breakout_exits.py` output per market; a points target does not transfer (FX/Crude/indices have different scales), so express it in R or ATR; other-market LONGS lose under every exit since May, so the candidates are other-market SHORTS (target 1R / break-even 1R were ahead since May, small samples).

@@ -1605,7 +1605,8 @@ def _check_breakout_tick_trigger(epic: str, market: MarketStream) -> None:
     sig = TradeSignal(
         signal=Signal.BUY if direction == "BUY" else Signal.SELL,
         epic=epic, market_name=market_config.name, confidence=0.7,
-        entry_price=exec_price, stop_distance=ch.stop_distance, limit_distance=0.0,
+        entry_price=exec_price, stop_distance=ch.stop_distance,
+        limit_distance=breakout.limit_distance_for(epic, direction),
         reason=(f"Breakout: {direction} tick-cross of channel @ {level:.1f} "
                 f"(stop {ch.stop_distance}={breakout.BREAKOUT_CONFIGS[epic].stop_atr_mult}xATR, "
                 f"HTF={ch.htf_trend})"),
