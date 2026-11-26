@@ -5714,3 +5714,105 @@ Primary by year: 2008 +11.35 (n10), 2013 +28.54 (n26), 2014 +2.85, 2015 +8.79; t
 **Reading (HIGH for the verdict):** H0. Below-the-long-average does not separate 2013 from 2018/2021/2022: the filter keeps both. It also throws away +41R of 2005-15 shorts taken above the average (2005-06, 2010-11). The kept trades are no better than a randomly shifted regime flag would keep (p 0.43). The whole short record is one bear market (2013, plus 2008) and no slow trend indicator identifies that kind of year in advance on this history.
 **Self-critique:** one family of filter (price vs SMA) tested; a slope or a macro variable (real yields, DXY) is untested — but with a single paying episode in 21 years there is nothing to validate any such filter against, so a "pass" would be uninterpretable. That is the gap, and it is a data limit, not a missing parameter.
 **Decision per the rule:** Gold short leg is CLOSED as a research question (four pre-registered tests, 0 criteria met in total). 12-09 decides tail-bet vs re-close on the live trades alone. No second filter.
+
+---
+
+# 2026-11-26 — Fixed take-profit on breakout (50 pts / 0.5× 40-day ATR)
+
+**Question.** User: breakouts start well and give the profit back; would a fixed target (e.g. 50 points, or 50% of the 40-day ATR) do better? Gold first, other breakout markets too.
+
+**Hypotheses.** H1: a target banks the typical run and beats the trail. H2: the profit is in the few trades that run far past any target, so a target loses. H3: a far target (≥5R) is neutral.
+
+**Not covered before.** 08-13 and 10-10 tested lock / partial / tighten / chandelier. A plain full-exit target on the 21y set had not been run. NOT pre-registered; grid fixed before the run: 1R, 1.5R, 2R, 3R, 5R, 0.5× and 1.0× prior-day daily ATR40, 50 pts (Gold only).
+
+**Method.** `scripts/replay_breakout_fixed_tp.py` — the 10-10 engine (21y Dukascopy 1h, N55, 2×ATR14 stop, M27 trail, DAY HTF gate, measured spread + financing, re-entries pay cost) plus a limit exit; stop checked before the target inside a bar. Baseline sums to the 10-10 figure (+235.5R BUY-only pooled).
+
+**Evidence (net R, 2005→2026-09).**
+- Gold BUY: baseline +200.2R (n 614, WR 36%, max +21.2R). TP 1R +79.6 · 1.5R +113.3 · 2R +114.8 · 3R +125.1 · 5R +212.6 · 0.5×D-ATR40 (≈1R) +30.8 · 1.0×D-ATR40 (≈2R) +115.2 · 50 pts +191.7 (median 6R over 21y; ≈1.7R at 2025-26 prices). Same order in both halves and since 2023. WR rises to 54–55% at ≈1R.
+- Gold 2025-01→2026-09, BUY: baseline +59.0R; 50 pts +41.5R; 0.5×D-ATR40 +30.2R; 5R +60.6R.
+- Gold BUY concentration: the 30 best trades (5%) sum to +248.7R; the other 584 sum to −48.5R. 14% of trades reach 5R.
+- Gold SELL: baseline +19.4R; every target between −10 and +14R (no edge to shape).
+- GBP/EUR/Crude BUY: baseline ≈0 (+1.6 / +11.2 / +22.5R); targets −64…+8R, signs flip between halves.
+- GBP SELL baseline +56.2R, all targets lower. Crude SELL TP 2R +30.7 vs +13.3 — one cell of ~60, halves disagree with neighbours; not actionable.
+
+**Confidence.** H2 HIGH for Gold BUY (every target below 5R costs 75–170R of 200R, both halves). H3 MEDIUM: 5R is +12R on Gold BUY, within noise, and not consistent on other markets. H1 ruled out.
+
+**Self-critique.** Not pre-registered; 1h bars cannot order stop/target inside a bar (stop-first assumed, slightly against the target). Re-entry after a target is immediate when the next bar breaks again; a cooldown variant was not run.
+
+**Next.** No change to the bot. Naked Donchian-27 trail stays. Open: none on this history.
+
+---
+
+# 2026-11-27 — Break-even stop on breakout (PRE-REGISTRATION, written before any outcome)
+
+**Question.** User: a trade that reaches a profit and then reverses into a loss is the thing to remove. Does moving the stop to entry once the trade is at +X R improve the breakout? Longs and shorts may get different rules.
+
+**Already known (disclosed).** Gold BUY baseline: of 344 trades reaching +1R, 35% end at a loss (sum −97R); of 222 reaching +2R, 13% (−25R). Fixed targets lost (11-26). Lock at half/full trigger lost (08-13). Break-even on S&P pullback failed (11-13). Gold SELL has no edge since 2016 (11-20). Fixed targets on shorts were already seen on 11-26 (Gold SELL every target −10…+14R vs +19R), so a short target cannot be pre-registered; it is reported as description only. My prior: small effect, more likely negative.
+
+**Hypotheses.** H1: the stop at entry removes the round-trip losers and keeps the runners → gain. H2: the big runners dip back through entry before running, so the stop cuts them and the re-entry is worse → loss. H0: ≈0.
+
+**Engine (fixed).** `replay_breakout_atr_exit` engine and data unchanged (21y Dukascopy 1h, N55, 2×ATR14 stop, M27 trail, DAY HTF gate, hours, measured spread + financing, one position, re-entries pay cost), entries from 2005-01-01.
+
+**Rule (fixed).** MFE measured on CLOSED bars. From the bar after MFE ≥ X × initial stop distance, the stop is the better of its current level and the entry price. Fill at the stop, or the bar open if it gaps through. Arms: **BE1 (X=1, PRIMARY)**, BE2 (X=2). No other X, no offset, no buffer.
+
+**Populations.** PRIMARY: Gold BUY. Also reported: Gold SELL, and GBP/EUR/Crude each direction.
+
+**Statistic.** Net R per calendar quarter of entry; Δ = arm − baseline; bootstrap of quarterly differences (10,000, seed 0), 95% CI.
+
+**PASS (BE1, Gold BUY) requires ALL:** (1) Δ > 0 and CI excludes 0; (2) Δ > 0 in both halves (2005–15, 2016–26); (3) Δ > 0 after deleting the 3 quarters with the largest Δ. A secondary risk reading is reported regardless: max drawdown in R and worst calendar year, arm vs baseline. FAIL ⇒ no break-even stop; no variant is run to rescue it. PASS ⇒ log-only shadow first; an order-path change needs its own pre-flight.
+
+**Shorts.** Same criteria applied to Gold SELL BE1 as a separate, secondary test. A long-run/short-target split is only on the table if Gold SELL shows a positive arm in BOTH halves; the 11-26 target table already says it does not.
+
+## RESULTS (run 2026-11-27) → **FAIL on Gold BUY (0 of 3) and on Gold SELL (2 of 3). No break-even stop.** Confidence MEDIUM-HIGH.
+
+`scripts/replay_breakout_breakeven.py`. Baseline reproduces the 10-10 engine per market and direction.
+
+| population | arm | n | net R | Δ vs base | 95% CI | halves | ex-top-3 q | BE exits | max DD |
+|---|---|---|---|---|---|---|---|---|---|
+| **Gold BUY** | base | 614 | +200.2 | | | | | | 40.3R |
+| | **BE1 (PRIMARY)** | 676 | +179.3 | **−20.9** | −56…+13 | −7.2 / −13.7 | −31.1 | 184 | 30.9R |
+| | BE2 | 624 | +196.8 | −3.4 | −23…+13 | −5.3 / +1.9 | −8.4 | 42 | 36.3R |
+| Gold SELL | base | 415 | +19.4 | | | | | | 84.3R |
+| | BE1 | 461 | +29.5 | +10.0 | −14…+33 | +3.3 / +6.7 | +2.0 | 145 | 78.8R |
+| | BE2 | 419 | +26.4 | +6.9 | −6…+19 | +2.3 / +4.6 | +0.5 | 38 | 79.4R |
+
+Other markets: BE1 Δ −16.0…+11.3R, BE2 Δ −1.8…+5.2R; every CI includes 0; no population passes.
+
+- Gold BUY BE1: criteria (1) ✗ (2) ✗ (3) ✗. The stop at entry fired 184 times; baseline losers after +1R summed to −97R, yet net R fell 21R, so the trades it scratched included runners worth more than the losses it removed. Win rate falls 36% → 28% (a scratch at entry is a small loss after spread). Max drawdown improves 40.3 → 30.9R; worst year slightly worse (−17.1 vs −15.8R).
+- Gold BUY BE2: ≈0 (−3.4R). Harmless, useless.
+- Gold SELL BE1: positive in both halves and ex-top-3, CI includes 0. Even with it, Gold SELL 2016–26 is ≈ −63R (baseline −69.4R). It trims a losing arm; it does not make one.
+- Long-run / short-target split: not supported. Short targets (11-26) and short break-even both leave Gold SELL negative since 2016 (targets −37…−80R, BE1 ≈ −63R).
+
+**Self-critique.** Hourly bars: the stop moves one bar after +X R is touched, as the bot would. CIs are wide; "BE1 hurts Gold BUY" is not individually significant, "BE1 does not help" is. Not tested: a stop at entry plus a buffer below it (excluded by the pre-registration).
+
+**Conclusion.** H2/H0. Runners do dip back through entry. Naked trail stays on longs; nothing found that makes shorts pay. Next action: none in the bot.
+
+---
+
+# 2026-11-27 — Forward scoring of breakout exits (set-up + decision rule)
+
+**Why.** User: 21 years of history does not dictate next week. Agreed remedy: score the alternatives on the bot's own entries from here on.
+
+**Tool.** `scripts/score_breakout_exits.py`, run inside the container, read-only (`docker exec -i ig-trading-bot python3 - < scripts/score_breakout_exits.py`). Every breakout entry in `trades` (live) and `benched_outcomes` (`breakout-shadow`, `-bf`) is replayed on the IG candle archive (5m bars where archived, hourly Donchian trail) under 7 exits: trail (now), target 1R (≈0.5× 40-day ATR), target 2R, target 50 pts (Gold), break-even at 1R / 2R, tighten M→8 at 1R. Entry price and initial stop are the journal's. Paired per entry, gross R (spread is identical per arm; financing ignored). No bot change.
+
+**Limits (stated now).** (1) Entries are those of the current trail; an arm that exits early would in reality re-enter sooner and pay cost again — not modelled, which flatters the early-exit arms. (2) Shadow rows are mostly markets with no measured edge. (3) Fidelity at set-up: replayed trail vs recorded result — live n=56 −3.1R vs −6.5R (corr 0.92, median |diff| 0.00R); shadow n=285 −21.5R vs −7.1R (corr 0.96; the shadow resolver fills at the stop on hourly bars and caps at 240 bars).
+
+**Background seen at set-up (2026-06 → 11-26, NOT for decisions; the rule below was written after seeing it, which is why it is excluded).** Pooled 341 entries: trail −24.5R; target 2R +15.6R (Δ +40.2, CI +1…+78); target 1R Δ +27.8 (CI includes 0); break-even 1R Δ +17.2; tighten Δ +23.1. The gain is in non-Gold markets, mostly shadow SELL (target 2R Δ +37.4, n 184). Live trades only (n 56): every alternative ≤ +0.2R vs trail. Gold BUY (n 8): trail +6.8R, every alternative lower or equal. Gold SELL (n 22): all within ±6R. Reading: over these five months the no-edge markets chopped and a target lost less there; on the arm with an edge the trail led. Five months cannot contain the tail (the 08-13 archive result flipped sign on the long window). LOW confidence either way.
+
+**Decision rule (fixed now, forward sample = entries from 2026-11-27).**
+- Read at each review; no verdict before **≥100 forward entries pooled and ≥20 on Gold**.
+- An exit earns a LIVE DEMO TRIAL on a market group only if, on the forward sample: Δ vs trail > 0 with the 95% bootstrap range excluding 0 for that group, AND Δ ≥ 0 on Gold BUY, AND the arm's own total R is > 0 after charging the measured cost per trade (≈0.10–0.15R).
+- Groups: Gold BUY, Gold SELL, other markets BUY, other markets SELL (long and short may differ, per the user).
+- Otherwise the trail stays. Any order-path change needs its own pre-flight.
+
+### Follow-up 2026-11-27: "from May this year" (user request; descriptive, tiny samples)
+Two sources. (a) IG's own candles and the bot's entries: the archive starts 2026-06-08/12 and breakout entries start 06-22, so "from May" on IG data IS the background table above (341 entries). (b) Dukascopy replay with costs and re-entries, entries 2026-05-01 → data end (Gold 09-01, others 09-22), net R:
+
+| group | trail | target 1R | target 2R | 0.5×D-ATR40 | break-even 1R | break-even 2R |
+|---|---|---|---|---|---|---|
+| Gold BUY | +4.8 (n 3) | +1.8 (n 12) | +4.2 (n 6) | +2.2 | +4.8 | +4.8 |
+| Gold SELL | −3.4 (n 15) | +5.1 (n 30) | −2.7 (n 22) | +2.6 | −1.6 | −3.6 |
+| Others BUY | −11.8 (n 32) | −15.8 (n 64) | −15.3 (n 47) | −11.6 | −12.3 | −10.8 |
+| Others SELL | −0.4 (n 32) | +3.8 (n 60) | −3.2 (n 45) | −0.7 | +3.1 | −0.3 |
+
+Gold 50 pts: BUY +2.4R, SELL +2.1R. Reading: with costs and re-entries charged, the shadow-table advantage of targets mostly disappears. The one consistent cell across both sources is Gold SELL with a tight target (≈1R / 50 pts): +5…+9R better than the trail since May, on 15–30 trades. Four months, single-digit R: LOW confidence, and it is the cell the forward rule is already set up to judge.
